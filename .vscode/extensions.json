@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "ms-python.python",
+    "charliermarsh.ruff",
+    "platformio.platformio-ide",
+    "bradlc.vscode-tailwindcss"
+  ]
+}
