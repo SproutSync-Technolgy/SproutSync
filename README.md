@@ -47,7 +47,7 @@ docker compose up --build -d
 npm.cmd run dev
 ```
 
-Open http://localhost:5173 and the API documentation at http://localhost:8000/docs. The dashboard proxies /api to the local backend. Docker services bind only to loopback. Stop services with `docker compose down`; database data persists in a named volume.
+Open http://localhost:5173 and the API documentation at http://localhost:8000/docs. The dashboard proxies /api to the local backend. The public landing page is at `/`, the administrator workspace is at `/admin`, and the grower workspace is at `/grower`. Docker services bind only to loopback. Stop services with `docker compose down`; database data persists in a named volume.
 
 ### Backend without Docker
 

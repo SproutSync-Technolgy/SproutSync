@@ -53,6 +53,222 @@ const features: Feature[] = [
  * Renders the public product landing page and its lightweight onboarding actions.
  */
 export function App() {
+  const pathname = window.location.pathname;
+
+  if (pathname === '/admin' || pathname.startsWith('/admin/')) {
+    return <Workspace role="admin" />;
+  }
+
+  if (pathname === '/grower' || pathname.startsWith('/grower/')) {
+    return <Workspace role="grower" />;
+  }
+
+  return <LandingPage />;
+}
+
+/**
+ * Renders the public marketing page while keeping its state isolated from
+ * authenticated workspaces.
+ */
+type WorkspaceRole = 'admin' | 'grower';
+
+type WorkspaceConfig = {
+  label: string;
+  title: string;
+  subtitle: string;
+  nav: string[];
+  accent: string;
+};
+
+const workspaceConfig: Record<WorkspaceRole, WorkspaceConfig> = {
+  admin: {
+    label: 'Admin workspace',
+    title: 'System overview',
+    subtitle: 'Keep every device, grower, and batch moving safely.',
+    nav: ['Overview', 'Devices', 'Growers', 'Batches', 'Alerts', 'Settings'],
+    accent: 'admin',
+  },
+  grower: {
+    label: 'Grower workspace',
+    title: 'Good morning, grower',
+    subtitle: 'Here is everything happening in your growing chamber today.',
+    nav: ['Overview', 'My batches', 'Watering', 'Conditions', 'Alerts'],
+    accent: 'grower',
+  },
+};
+
+/**
+ * Renders a role-specific workspace with a separate login gate and navigation.
+ */
+function Workspace({ role }: { role: WorkspaceRole }) {
+  const config = workspaceConfig[role];
+  const [authenticated, setAuthenticated] = useState(false);
+  const [activeNav, setActiveNav] = useState(config.nav[0]);
+
+  if (!authenticated) {
+    return <WorkspaceLogin role={role} onContinue={() => setAuthenticated(true)} />;
+  }
+
+  return (
+    <div className={`workspace-shell workspace-${config.accent}`}>
+      <aside className="workspace-sidebar">
+        <a className="workspace-brand" href="/" aria-label="Return to SproutSync home">
+          <SproutLogo />
+          <span>SproutSync</span>
+        </a>
+        <div className="workspace-role">{config.label}</div>
+        <nav className="workspace-nav" aria-label={`${role} navigation`}>
+          {config.nav.map((item, index) => (
+            <button className={activeNav === item ? 'active' : ''} key={item} onClick={() => setActiveNav(item)}>
+              <WorkspaceNavIcon index={index} />
+              {item}
+            </button>
+          ))}
+        </nav>
+        <button className="workspace-signout" onClick={() => setAuthenticated(false)}>
+          <span>↪</span> Sign out
+        </button>
+      </aside>
+      <main className="workspace-main">
+        <header className="workspace-header">
+          <div>
+            <span className="workspace-breadcrumb">SproutSync / {config.label}</span>
+            <h1>{config.title}</h1>
+            <p>{config.subtitle}</p>
+          </div>
+          <div className="workspace-user">
+            <span className="preview-pill">Preview data</span>
+            <span className="user-avatar">{role === 'admin' ? 'AD' : 'GR'}</span>
+            <span className="user-name">{role === 'admin' ? 'Admin user' : 'Grower user'}</span>
+          </div>
+        </header>
+        {role === 'admin' ? <AdminOverview activeNav={activeNav} /> : <GrowerOverview activeNav={activeNav} />}
+      </main>
+    </div>
+  );
+}
+
+/**
+ * Displays the dedicated entry screen for each role before Google session
+ * enforcement is enabled against the live `/auth/me` response.
+ */
+function WorkspaceLogin({ role, onContinue }: { role: WorkspaceRole; onContinue: () => void }) {
+  const isAdmin = role === 'admin';
+  /**
+   * Starts the shared Google OAuth flow for the selected workspace.
+   */
+  function startWorkspaceAuth() {
+    window.location.assign('/api/v1/auth/google');
+  }
+
+  return (
+    <main className={`workspace-login workspace-${role}`}>
+      <div className="workspace-login-card">
+        <a className="workspace-brand centered" href="/" aria-label="Return to SproutSync home">
+          <SproutLogo /><span>SproutSync</span>
+        </a>
+        <span className="workspace-login-kicker">{isAdmin ? 'Admin access' : 'Grower access'}</span>
+        <h1>{isAdmin ? 'Welcome to command center' : 'Welcome back, grower'}</h1>
+        <p>{isAdmin ? 'Manage devices, people, and system health from one secure workspace.' : 'Follow your batches, conditions, and watering schedule in one calm view.'}</p>
+        <button className="google-login-button" onClick={startWorkspaceAuth}><GoogleIcon /> Continue with Google <ArrowIcon /></button>
+        <button className="preview-login-button" onClick={onContinue}>Preview dashboard</button>
+        <small>Google authentication is required for {isAdmin ? 'administrators' : 'growers'}.</small>
+        <a className="back-home" href="/">← Back to SproutSync home</a>
+      </div>
+    </main>
+  );
+}
+
+/**
+ * Provides the admin overview cards and system monitoring panels.
+ */
+function AdminOverview({ activeNav }: { activeNav: string }) {
+  if (activeNav !== 'Overview') return <WorkspacePlaceholder title={activeNav} role="admin" />;
+  return (
+    <div className="dashboard-content">
+      <div className="dashboard-toolbar"><span className="live-status"><i /> All systems operational</span><button className="dashboard-action">+ Add device</button></div>
+      <section className="metric-grid">
+        <MetricCard label="Active devices" value="12" detail="+2 this month" icon="▣" tone="green" />
+        <MetricCard label="Active growers" value="28" detail="+8% this month" icon="♧" tone="blue" />
+        <MetricCard label="Batches growing" value="64" detail="Across 12 devices" icon="◌" tone="mint" />
+        <MetricCard label="Open alerts" value="3" detail="2 need attention" icon="!" tone="orange" />
+      </section>
+      <section className="dashboard-columns">
+        <div className="panel panel-wide"><PanelHeading title="Device health" action="View all" /><div className="device-list"><DeviceRow name="Chamber A-01" status="Healthy" detail="Last seen 2 min ago" value="4 trays" tone="healthy" /><DeviceRow name="Chamber A-02" status="Healthy" detail="Last seen 5 min ago" value="6 trays" tone="healthy" /><DeviceRow name="Chamber B-01" status="Needs attention" detail="Low water level" value="3 trays" tone="warning" /></div></div>
+        <div className="panel"><PanelHeading title="Recent alerts" action="View alerts" /><AlertItem title="Low water level" detail="Chamber B-01 · 12 min ago" tone="warning" /><AlertItem title="Batch ready to harvest" detail="Tray A-01-03 · 1 hr ago" tone="success" /><AlertItem title="Device back online" detail="Chamber C-02 · 3 hrs ago" tone="info" /></div>
+      </section>
+    </div>
+  );
+}
+
+/**
+ * Provides the grower overview cards and batch monitoring panels.
+ */
+function GrowerOverview({ activeNav }: { activeNav: string }) {
+  if (activeNav !== 'Overview') return <WorkspacePlaceholder title={activeNav} role="grower" />;
+  return (
+    <div className="dashboard-content">
+      <div className="dashboard-toolbar"><span className="live-status"><i /> Chamber A-01 is online</span><button className="dashboard-action">+ New batch</button></div>
+      <section className="metric-grid">
+        <MetricCard label="Growing batches" value="8" detail="3 ready this week" icon="◌" tone="green" />
+        <MetricCard label="Water used today" value="18.4 L" detail="12% less than average" icon="♢" tone="blue" />
+        <MetricCard label="Avg. temperature" value="24.6°" detail="Within ideal range" icon="°" tone="mint" />
+        <MetricCard label="Your alerts" value="1" detail="Low water level" icon="!" tone="orange" />
+      </section>
+      <section className="dashboard-columns">
+        <div className="panel panel-wide"><PanelHeading title="Your active batches" action="View all" /><div className="batch-list"><BatchRow code="B-2408" type="Mung beans" stage="Growing · Day 3" progress={68} eta="Harvest in 2 days" /><BatchRow code="B-2407" type="Mung beans" stage="Ready to harvest" progress={100} eta="Ready now" /><BatchRow code="B-2409" type="Mung beans" stage="Rinsing · Day 1" progress={24} eta="Harvest in 4 days" /></div></div>
+        <div className="panel"><PanelHeading title="Today’s schedule" action="View schedule" /><ScheduleItem time="08:00" title="Morning watering" detail="3 trays · 1.8 L" done /><ScheduleItem time="12:00" title="Condition check" detail="Temperature and humidity" /><ScheduleItem time="18:00" title="Evening watering" detail="3 trays · 1.8 L" /></div>
+      </section>
+    </div>
+  );
+}
+
+/** Shows a consistent empty state for workspace sections not yet connected. */
+function WorkspacePlaceholder({ title, role }: { title: string; role: WorkspaceRole }) {
+  return <div className="workspace-placeholder"><span className="placeholder-icon">◌</span><h2>{title}</h2><p>The {role} {title.toLowerCase()} workspace is ready for the next API slice.</p><button className="dashboard-action">Return to overview</button></div>;
+}
+
+/** Renders a compact summary metric used by both role dashboards. */
+function MetricCard({ label, value, detail, icon, tone }: { label: string; value: string; detail: string; icon: string; tone: string }) {
+  return <article className="metric-card"><span className={`metric-icon ${tone}`}>{icon}</span><div><p>{label}</p><strong>{value}</strong><small>{detail}</small></div></article>;
+}
+
+/** Renders a dashboard section title with a lightweight action link. */
+function PanelHeading({ title, action }: { title: string; action: string }) {
+  return <div className="panel-heading"><h2>{title}</h2><button>{action} →</button></div>;
+}
+
+/** Renders a device health row for the admin workspace. */
+function DeviceRow({ name, status, detail, value, tone }: { name: string; status: string; detail: string; value: string; tone: string }) {
+  return <div className="device-row"><span className={`device-status ${tone}`} /><div><strong>{name}</strong><small>{detail}</small></div><span className={`row-status ${tone}`}>{status}</span><b>{value}</b></div>;
+}
+
+/** Renders an alert row with severity styling. */
+function AlertItem({ title, detail, tone }: { title: string; detail: string; tone: string }) {
+  return <div className="alert-item"><span className={`alert-dot ${tone}`} /><div><strong>{title}</strong><small>{detail}</small></div></div>;
+}
+
+/** Renders a batch progress row for the grower workspace. */
+function BatchRow({ code, type, stage, progress, eta }: { code: string; type: string; stage: string; progress: number; eta: string }) {
+  return <div className="batch-row"><span className="batch-mark">♧</span><div className="batch-details"><strong>{code} · {type}</strong><small>{stage}</small><span className="progress-track"><i style={{ width: `${progress}%` }} /></span></div><b>{eta}</b></div>;
+}
+
+/** Renders a scheduled watering or inspection activity. */
+function ScheduleItem({ time, title, detail, done = false }: { time: string; title: string; detail: string; done?: boolean }) {
+  return <div className={`schedule-item ${done ? 'done' : ''}`}><time>{time}</time><span className="schedule-line" /><div><strong>{title}</strong><small>{detail}</small></div><span className="schedule-check">{done ? '✓' : '○'}</span></div>;
+}
+
+/** Draws the navigation symbol for a workspace menu item. */
+function WorkspaceNavIcon({ index }: { index: number }) {
+  return <span className="nav-icon" aria-hidden="true">{['⌂', '▣', '♧', '◌', '!', '⚙'][index] ?? '•'}</span>;
+}
+
+/**
+ * Closes the authentication dialog and clears its transient status message.
+ */
+
+
+function LandingPage() {
   const [dialogMode, setDialogMode] = useState<DialogMode>(null);
   const [apiStatus, setApiStatus] = useState('Checking local system');
   const [notice, setNotice] = useState('');
@@ -85,9 +301,6 @@ export function App() {
     setNotice('');
   }
 
-  /**
-   * Closes the authentication dialog and clears its transient status message.
-   */
   function closeDialog() {
     setDialogMode(null);
     setNotice('');
