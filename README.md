@@ -71,10 +71,10 @@ Prototype: https://sproutsync-prototype.figma.site/ . The current dashboard impl
 
 ## Start development
 
-Read [architecture](docs/architecture.md), [backlog](docs/backlog.md), [team](docs/team.md), [testing](docs/testing.md), and [contribution rules](CONTRIBUTING.md).
+Read [architecture](docs/architecture.md), [MVP scope](docs/mvp.md), [planning structure](docs/planning-structure.md), [backlog](docs/backlog.md), [team](docs/team.md), [testing](docs/testing.md), and [contribution rules](CONTRIBUTING.md).
 
 For a precise dependency and environment checklist, read [development setup](docs/development-setup.md) and the [technology stack](docs/tech-stack.md). They record what is installed, what is optional, and which planned features still require additional libraries or hardware decisions.
 
-Git is initialized locally on main. No GitHub remote, repository publication, branch protection, or initial commit is created automatically. See [GitHub setup](docs/github-setup.md).
+The repository is published at [SproutSync-Technolgy/SproutSync](https://github.com/SproutSync-Technolgy/SproutSync). Branch protection, collaborator access, licensing, and deployment secrets remain team setup tasks. See [GitHub setup](docs/github-setup.md).
 
 Licensing remains a team decision; no open-source license is assumed.
