@@ -15,7 +15,7 @@ dependencies = [
   "uvicorn[standard]>=0.34,<1"
 ]
 [project.optional-dependencies]
-dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
+dev = ["pytest>=9.1.1,<10", "ruff>=0.11,<1"]
 [tool.setuptools.packages.find]
 include = ["app*"]
 [tool.pytest.ini_options]
