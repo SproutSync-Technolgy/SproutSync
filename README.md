@@ -8,9 +8,9 @@ Development monorepo based on the supplied Software Development Plan dated Augus
 
 ```text
 SPROUTSYNC/
-??? apps/dashboard/             React + Vite + TypeScript + Tailwind
-??? services/backend/api/       Python + FastAPI
-??? firmware/esp32/             PlatformIO + Arduino + C++
+??? frontend/dashboard/         React + Vite + TypeScript + Tailwind
+??? backend/api/                Python + FastAPI + PostgreSQL auth
+??? iot/esp32/                  PlatformIO + Arduino + C++
 ??? packages/contracts/         Shared integration specifications
 ??? database/                   Data model and migration conventions
 ??? infrastructure/mosquitto/   Local MQTT configuration
@@ -23,6 +23,12 @@ SPROUTSYNC/
 ??? REPOSITORY-STANDARDS-CHECKLIST.md
 ??? PR-COMPLIANCE-TRACKER.md
 ```
+
+The top-level code folders are intentionally separated by responsibility:
+[frontend](frontend/), [backend](backend/), and [iot](iot/). Shared contracts,
+database guidance, infrastructure, scripts, and documentation stay at the
+repository root so contributors can find them without crossing application
+boundaries.
 
 ## Quick start (PowerShell)
 
@@ -42,9 +48,9 @@ Open http://localhost:5173 and the API documentation at http://localhost:8000/do
 Install Python 3.12+; from the repository root:
 
 ```powershell
-py -3.12 -m venv services/backend/api/.venv
-services/backend/api/.venv/Scripts/python.exe -m pip install -e "./services/backend/api[dev]"
-services/backend/api/.venv/Scripts/python.exe -m uvicorn app.main:app --app-dir services/backend/api --reload --host 127.0.0.1
+py -3.12 -m venv backend/api/.venv
+backend/api/.venv/Scripts/python.exe -m pip install -e "./backend/api[dev]"
+backend/api/.venv/Scripts/python.exe -m uvicorn app.main:app --app-dir backend/api --reload --host 127.0.0.1
 ```
 
 ### Validation
@@ -52,11 +58,11 @@ services/backend/api/.venv/Scripts/python.exe -m uvicorn app.main:app --app-dir 
 ```powershell
 npm.cmd run build
 node scripts/verify-repository.mjs
-Push-Location services/backend/api
+Push-Location backend/api
 .venv/Scripts/python.exe -m ruff check .
 .venv/Scripts/python.exe -m pytest
 Pop-Location
-pio run --project-dir firmware/esp32
+pio run --project-dir iot/esp32
 ```
 
 Install PlatformIO Core 6.1.18 for the last command. Compilation does not upload firmware. Verify actual board and pin mapping before implementing hardware outputs.

@@ -19,7 +19,7 @@ services:
     volumes:
       - ./infrastructure/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
   api:
-    build: ./services/backend/api
+    build: ./backend/api
     environment:
       DATABASE_URL: ${DATABASE_URL:?Copy .env.example to .env first}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}

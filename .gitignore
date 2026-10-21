@@ -3,6 +3,8 @@ dist/
 .env
 .env.*
 !.env.example
+.env.local
+.env.*.local
 .venv/
 __pycache__/
 *.py[cod]
@@ -11,5 +13,8 @@ __pycache__/
 *.egg-info/
 .pio/
 *.log
+coverage/
+.coverage
+supabase/.temp/
 .DS_Store
 Thumbs.db

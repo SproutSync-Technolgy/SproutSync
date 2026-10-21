@@ -53,9 +53,9 @@ Open `http://localhost:5173`. The dashboard proxies `/api` requests to
 If Docker is unavailable, run the API directly:
 
 ```powershell
-py -3.12 -m venv services\backend\api\.venv
-services\backend\api\.venv\Scripts\python.exe -m pip install -e ".\services\backend\api[dev]"
-services\backend\api\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir services\backend\api --reload --host 127.0.0.1
+py -3.12 -m venv backend\api\.venv
+backend\api\.venv\Scripts\python.exe -m pip install -e ".\backend\api[dev]"
+backend\api\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend\api --reload --host 127.0.0.1
 ```
 
 ## Validation commands
@@ -64,11 +64,11 @@ services\backend\api\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir 
 npm.cmd run typecheck
 npm.cmd run build
 node scripts\verify-repository.mjs
-Push-Location services\backend\api
+Push-Location backend\api
 .venv\Scripts\python.exe -m ruff check .
 .venv\Scripts\python.exe -m pytest
 Pop-Location
-pio run --project-dir firmware\esp32
+pio run --project-dir iot\esp32
 ```
 
 The firmware command compiles only. Do not connect pumps or valves until the

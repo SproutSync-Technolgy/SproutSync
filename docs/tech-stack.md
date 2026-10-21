@@ -36,8 +36,8 @@ Install the VS Code extensions recommended by
 | Tailwind CSS | `4.x` | CSS utility foundation |
 | Recharts | `3.x` | Planned telemetry, water-use, and yield charts |
 
-Dashboard source is in [`apps/dashboard/`](../apps/dashboard/). Dependencies are
-declared in [`apps/dashboard/package.json`](../apps/dashboard/package.json) and
+Dashboard source is in [`frontend/dashboard/`](../frontend/dashboard/). Dependencies are
+declared in [`frontend/dashboard/package.json`](../frontend/dashboard/package.json) and
 installed from the repository root.
 
 ### Backend API
@@ -57,9 +57,9 @@ installed from the repository root.
 | httpx | `0.28+` | FastAPI test client transport |
 | Ruff | `0.11+` | Python linting |
 
-Backend source is in [`services/backend/api/`](../services/backend/api/).
+Backend source is in [`backend/api/`](../backend/api/).
 Python dependencies are defined in
-[`services/backend/api/pyproject.toml`](../services/backend/api/pyproject.toml).
+[`backend/api/pyproject.toml`](../backend/api/pyproject.toml).
 
 ### Firmware
 
@@ -70,7 +70,7 @@ Python dependencies are defined in
 | PlatformIO | `6.1.18+` | Build, upload, and board environment management |
 | Arduino core for ESP32 | PlatformIO-managed | ESP32 runtime APIs |
 
-Firmware source is in [`firmware/esp32/`](../firmware/esp32/). GPIO mappings,
+Firmware source is in [`iot/esp32/`](../iot/esp32/). GPIO mappings,
 relay polarity, sensor models, pump limits, and board variant must be confirmed
 before hardware libraries or actuator code are added.
 
@@ -121,15 +121,15 @@ Open the dashboard at `http://localhost:5173` and API documentation at
 ### Backend without Docker
 
 ```powershell
-py -3.12 -m venv services\backend\api\.venv
-services\backend\api\.venv\Scripts\python.exe -m pip install -e ".\services\backend\api[dev]"
-services\backend\api\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir services\backend\api --reload --host 127.0.0.1
+py -3.12 -m venv backend\api\.venv
+backend\api\.venv\Scripts\python.exe -m pip install -e ".\backend\api[dev]"
+backend\api\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend\api --reload --host 127.0.0.1
 ```
 
 ### Firmware build
 
 ```powershell
-pio run --project-dir firmware\esp32
+pio run --project-dir iot\esp32
 ```
 
 This compiles the firmware only. Uploading or energizing hardware requires a
@@ -141,11 +141,11 @@ validated board, wiring diagram, GPIO map, calibration record, and safety review
 npm.cmd run typecheck
 npm.cmd run build
 node scripts\verify-repository.mjs
-Push-Location services\backend\api
+Push-Location backend\api
 .venv\Scripts\python.exe -m ruff check .
 .venv\Scripts\python.exe -m pytest
 Pop-Location
-pio run --project-dir firmware\esp32
+pio run --project-dir iot\esp32
 ```
 
 ## Future libraries and integrations

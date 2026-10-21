@@ -12,14 +12,14 @@ Document backup/restore and retention before collecting real records. Supabase r
 
 SproutSync uses PostgreSQL for persistent application data. Database schema
 changes are managed with Alembic migrations in
-[`services/backend/api/migrations/`](../services/backend/api/migrations/).
+[`backend/api/migrations/`](../backend/api/migrations/).
 
 ## First migration
 
 After starting PostgreSQL:
 
 ```powershell
-Push-Location services\backend\api
+Push-Location backend\api
 .venv\Scripts\alembic.exe upgrade head
 Pop-Location
 ```

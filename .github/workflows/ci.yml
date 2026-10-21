@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: services/backend/api
+        working-directory: backend/api
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -34,4 +34,4 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install platformio==6.1.18
-      - run: pio run --project-dir firmware/esp32
+      - run: pio run --project-dir iot/esp32
