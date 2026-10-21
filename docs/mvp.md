@@ -35,14 +35,16 @@ delegated to the browser or API.
 
 ### 1. Local authentication
 
-- Local user account with email and password.
-- Password hashing and session expiration.
+- Local user record created through Google OAuth.
+- Server-side session storage and session expiration.
 - Roles: `operator` and `admin`.
 - Protected API routes and dashboard route guards.
 - No public registration in the production deployment.
 
-**Acceptance:** an unauthenticated request cannot read or modify operational
-data; an expired session requires sign-in again.
+**Acceptance:** a user can complete the Google OAuth callback, an
+unauthenticated request cannot read or modify operational data, and an expired
+session requires sign-in again. Local password login is deferred until there
+is a confirmed product requirement for it.
 
 ### 2. Device and tray management
 
@@ -205,4 +207,3 @@ The MVP is done only when:
 - Exported data can be traced to a batch and its source events.
 - Security review covers authentication, MQTT, secrets, and local deployment.
 - UAT evidence is recorded for the core operator workflow.
-

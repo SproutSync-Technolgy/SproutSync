@@ -29,6 +29,23 @@ docker compose up --build -d
 npm.cmd run dev
 ```
 
+The API container applies the Alembic migrations automatically before it
+starts. To use the created Supabase project instead of the local PostgreSQL
+container, replace `DATABASE_URL` in `.env` with the PostgreSQL connection
+string from Supabase **Connect → ORMs → SQLAlchemy**. Use the pooler
+connection for local development when Supabase recommends it, and URL-encode
+special characters in the database password.
+
+Google sign-in requires a Google Cloud OAuth 2.0 Web client. Add the client ID
+and secret to `.env` and register this redirect URI:
+
+```text
+http://localhost:8000/api/v1/auth/google/callback
+```
+
+Restart the API after changing `.env`. Credentials are read only from the
+environment and must never be committed.
+
 Open `http://localhost:5173`. The dashboard proxies `/api` requests to
 `http://127.0.0.1:8000`; the API documentation is at
 `http://localhost:8000/docs`.

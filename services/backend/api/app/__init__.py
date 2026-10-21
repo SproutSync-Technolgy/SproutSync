@@ -1,1 +1,1 @@
-
+"""SproutSync FastAPI application package."""

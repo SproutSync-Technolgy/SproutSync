@@ -106,6 +106,13 @@ export function App() {
     setNotice('Account services are being connected in the next development slice.');
   }
 
+  /**
+   * Starts the configured Google OAuth flow through the backend.
+   */
+  function startGoogleAuth() {
+    window.location.assign('/api/v1/auth/google');
+  }
+
   return (
     <div className="site-shell">
       <header className="site-header">
@@ -204,6 +211,10 @@ export function App() {
                 {dialogMode === 'signup' ? 'Create account' : 'Sign in'} <ArrowIcon />
               </button>
             </form>
+            <div className="auth-divider"><span>or</span></div>
+            <button className="google-button" type="button" onClick={startGoogleAuth}>
+              <GoogleIcon /> Continue with Google
+            </button>
             {notice && <p className="dialog-notice" role="status">{notice}</p>}
           </div>
         </div>
@@ -240,6 +251,11 @@ function WifiIcon() {
 /** Draws the water-use glyph. */
 function DropIcon() {
   return <span aria-hidden="true">♢</span>;
+}
+
+/** Draws the Google brand mark for the OAuth action. */
+function GoogleIcon() {
+  return <span className="google-icon" aria-hidden="true">G</span>;
 }
 
 /** Renders the illustrative chamber used in the hero section. */

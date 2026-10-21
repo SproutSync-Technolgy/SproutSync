@@ -65,7 +65,13 @@ Install PlatformIO Core 6.1.18 for the last command. Compilation does not upload
 
 Implemented: responsive dashboard landing slice aligned to the reference prototype, working sign-in/sign-up and mobile-app prototype actions, API connection status, typed health endpoint and contract test, local infrastructure configuration, serial-only firmware starter, and GitHub CI configuration.
 
-Planned: authentication, PostgreSQL persistence/migrations, telemetry ingestion, WebSockets, production batches/trays, irrigation scheduling/interlocks, MicroSD event replay, alerts, yield, analytics and reports. API health is process liveness only. PostgreSQL and MQTT are provisioned but not yet used by the API. No sensors or actuators are connected by this starter.
+Implemented foundation: Google OAuth configuration, PostgreSQL users/sessions
+schema, Alembic migration, server-side HTTP-only sessions, and authenticated
+identity endpoints. Planned next: device/batch persistence, telemetry
+ingestion, WebSockets, production batches/trays, irrigation
+scheduling/interlocks, MicroSD event replay, alerts, yield, analytics and
+reports. API health is process liveness only. MQTT is provisioned but not yet
+used by the API. No sensors or actuators are connected by this starter.
 
 Prototype: https://sproutsync-prototype.figma.site/ . The current dashboard implements the public landing-page content and responsive layout from this reference. Product authentication, mobile distribution, device data, and production imagery remain future slices.
 

@@ -48,6 +48,11 @@ installed from the repository root.
 | FastAPI | `0.115+` | REST API framework and OpenAPI documentation |
 | Uvicorn | `0.34+` | ASGI development and production server |
 | Pydantic | FastAPI dependency | Request and response validation |
+| SQLAlchemy | `2.x` | PostgreSQL ORM and database sessions |
+| Alembic | `1.15+` | Versioned database migrations |
+| psycopg | `3.x` | PostgreSQL driver |
+| httpx | `0.28+` | Google OAuth code exchange and profile lookup |
+| pydantic-settings | `2.x` | Environment-based configuration |
 | pytest | `8.x` | API tests |
 | httpx | `0.28+` | FastAPI test client transport |
 | Ruff | `0.11+` | Python linting |
@@ -82,6 +87,22 @@ Compose configuration is in [`compose.yaml`](../compose.yaml). PostgreSQL and
 Mosquitto are provisioned now, but the API does not yet consume either service.
 The current MQTT configuration is for loopback development only; production
 deployment requires TLS, credentials, and per-device ACLs.
+
+### Google authentication
+
+Google OAuth is configured through the backend, not the browser. The API
+stores users and hashed server-side session tokens in PostgreSQL. Configure a
+Google Cloud OAuth 2.0 Web application client with this authorized redirect
+URI:
+
+```text
+http://localhost:8000/api/v1/auth/google/callback
+```
+
+Copy its client ID and secret into `.env` as `GOOGLE_CLIENT_ID` and
+`GOOGLE_CLIENT_SECRET`. Never commit those values. The dashboard's
+“Continue with Google” button opens `/api/v1/auth/google`; the callback creates
+or updates the local user and redirects back with an HTTP-only session cookie.
 
 ## Setup
 
