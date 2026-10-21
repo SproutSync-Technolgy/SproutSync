@@ -30,6 +30,12 @@ database guidance, infrastructure, scripts, and documentation stay at the
 repository root so contributors can find them without crossing application
 boundaries.
 
+Root-level files are limited to repository-wide configuration and governance:
+`package.json` and `package-lock.json` manage frontend workspaces,
+`compose.yaml` manages local services, `.env.example` documents required
+configuration, `.github/` contains automation, and the Markdown files describe
+contribution, security, architecture, setup, and planning rules.
+
 ## Quick start (PowerShell)
 
 Install Node.js 22.12+ and Docker Desktop with Compose. Copy the environment template:
