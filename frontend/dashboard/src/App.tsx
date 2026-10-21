@@ -3,44 +3,46 @@ import { useEffect, useState, type FormEvent } from 'react';
 type DialogMode = 'signin' | 'signup' | null;
 
 type Feature = {
-  icon: string;
+  icon: FeatureIconName;
   title: string;
   description: string;
 };
 
+type FeatureIconName = 'water' | 'batch' | 'conditions' | 'offline' | 'usage' | 'alert';
+
 const features: Feature[] = [
   {
-    icon: '💧',
+    icon: 'water',
     title: 'Automatic watering',
     description:
       'Waters each tray one by one on a set schedule, checks it drains properly, then moves to the next — hands-free.',
   },
   {
-    icon: '▣',
+    icon: 'batch',
     title: 'Track every batch',
     description:
       'See where each batch is in its journey — from soaking to harvest-ready — in a single, easy-to-read view.',
   },
   {
-    icon: '◌',
+    icon: 'conditions',
     title: 'Live condition checks',
     description:
       'Keeps tabs on temperature, humidity, water levels, and more so your sprouts always have the right environment.',
   },
   {
-    icon: '⌁',
+    icon: 'offline',
     title: 'Works without internet',
     description:
       'If the connection drops, SproutSync keeps tracking everything on its own — and catches up the moment you are back online.',
   },
   {
-    icon: '◒',
+    icon: 'usage',
     title: 'Water use tracking',
     description:
       'Logs how much water each tray uses so you can manage resources wisely and review water use alongside your yield.',
   },
   {
-    icon: '!',
+    icon: 'alert',
     title: 'Smart alerts',
     description:
       'Sends a heads-up the moment something needs attention — like a low water tank, a drainage issue, or an offline device.',
@@ -161,7 +163,7 @@ export function App() {
         <section className="feature-grid" aria-label="SproutSync features">
           {features.map((feature) => (
             <article className="feature-card" key={feature.title}>
-              <span className="feature-icon" aria-hidden="true">{feature.icon}</span>
+              <span className="feature-icon" aria-hidden="true"><FeatureIcon name={feature.icon} /></span>
               <h2>{feature.title}</h2>
               <p>{feature.description}</p>
             </article>
@@ -225,7 +227,7 @@ export function App() {
 
 /** Draws the reusable SproutSync mark without introducing an image dependency. */
 function SproutLogo() {
-  return <span className="sprout-logo" aria-hidden="true"><span>✦</span></span>;
+  return <span className="sprout-logo" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M16 25V13M16 17c-4-5-8-5-10-4 1 5 4 7 10 7M16 14c2-6 6-8 10-8 0 6-3 10-10 11" /></svg></span>;
 }
 
 /** Draws the arrow used by primary calls to action. */
@@ -235,27 +237,40 @@ function ArrowIcon() {
 
 /** Draws the small leaf mark used in the product descriptor. */
 function LeafIcon() {
-  return <span aria-hidden="true">♧</span>;
+  return <svg className="inline-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M16 4C9 4 4 8 4 15c5 1 11-3 12-11ZM4 15l5-5" /></svg>;
 }
 
 /** Draws the phone glyph used for the future mobile app action. */
 function PhoneIcon() {
-  return <span aria-hidden="true">▯</span>;
+  return <svg className="inline-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="6" y="2.5" width="8" height="15" rx="1.5" /><path d="M9 15h2" /></svg>;
 }
 
 /** Draws the offline capability glyph. */
 function WifiIcon() {
-  return <span aria-hidden="true">⌁</span>;
+  return <svg className="inline-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 8a10 10 0 0 1 14 0M6 11a6 6 0 0 1 8 0M9 14a2 2 0 0 1 2 0" /></svg>;
 }
 
 /** Draws the water-use glyph. */
 function DropIcon() {
-  return <span aria-hidden="true">♢</span>;
+  return <svg className="inline-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3C8 6 5 9 5 12a5 5 0 0 0 10 0c0-3-3-6-5-9Z" /></svg>;
 }
 
 /** Draws the Google brand mark for the OAuth action. */
 function GoogleIcon() {
   return <span className="google-icon" aria-hidden="true">G</span>;
+}
+
+/** Renders a consistent line icon for each product capability card. */
+function FeatureIcon({ name }: { name: FeatureIconName }) {
+  const paths = {
+    water: <><path d="M10 2C8 5 5 8 5 12a5 5 0 0 0 10 0c0-4-3-7-5-10Z" /><path d="M8 13c.5 1 1 1.5 2 1.5" /></>,
+    batch: <><rect x="3" y="4" width="14" height="12" rx="2" /><path d="M3 8h14M7 4v4M13 4v4M7 12h6" /></>,
+    conditions: <><circle cx="10" cy="10" r="6.5" /><path d="M10 6v4l3 2M10 2v1M18 10h-1M10 18v-1M2 10h1" /></>,
+    offline: <><path d="M3 8a10 10 0 0 1 14 0M6 11a6 6 0 0 1 8 0M9 14a2 2 0 0 1 2 0" /><path d="m3 3 14 14" /></>,
+    usage: <><path d="M5 4h10M5 8h10M5 12h6M5 16h5" /><path d="m14 12 3 3-3 3M17 15h-7" /></>,
+    alert: <><path d="M10 3 18 17H2L10 3Z" /><path d="M10 8v4M10 14v.5" /></>,
+  }[name];
+  return <svg viewBox="0 0 20 20">{paths}</svg>;
 }
 
 /** Renders the illustrative chamber used in the hero section. */
