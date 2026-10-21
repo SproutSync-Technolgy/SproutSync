@@ -11,6 +11,7 @@ SPROUTSYNC/
 ??? frontend/dashboard/         React + Vite + TypeScript + Tailwind
 ??? backend/api/                Python + FastAPI + PostgreSQL auth
 ??? iot/esp32/                  PlatformIO + Arduino + C++
+??? mobile/                     Flutter + Dart mobile scaffold
 ??? packages/contracts/         Shared integration specifications
 ??? database/                   Data model and migration conventions
 ??? infrastructure/mosquitto/   Local MQTT configuration
@@ -29,6 +30,8 @@ The top-level code folders are intentionally separated by responsibility:
 database guidance, infrastructure, scripts, and documentation stay at the
 repository root so contributors can find them without crossing application
 boundaries.
+The future mobile client is isolated in [mobile](mobile/) and does not change
+the current web-first development workflow.
 
 Root-level files are limited to repository-wide configuration and governance:
 `package.json` and `package-lock.json` manage frontend workspaces,

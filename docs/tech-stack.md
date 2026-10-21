@@ -74,6 +74,19 @@ Firmware source is in [`iot/esp32/`](../iot/esp32/). GPIO mappings,
 relay polarity, sensor models, pump limits, and board variant must be confirmed
 before hardware libraries or actuator code are added.
 
+### Mobile (future)
+
+| Technology | Version/source | Purpose |
+| --- | --- | --- |
+| Flutter | Stable channel | Cross-platform mobile application |
+| Dart | Bundled with Flutter | Mobile application language |
+| Android Studio/Xcode | Current supported release | Android/iOS SDKs and device tooling |
+
+The initial scaffold is in [`mobile/`](../mobile/). Mobile development is
+intentionally deferred while the web dashboard and API contracts are built.
+Flutter will consume the same backend API and shared contract definitions; it
+will not duplicate database or device-control logic.
+
 ## Local infrastructure
 
 | Service | Technology | Local address | Purpose |

@@ -12,11 +12,18 @@ distinguishing working code from planned integrations.
 | Python | `3.12+` | FastAPI service and API tests when Docker is not used |
 | Docker Desktop | Current Compose-supporting release | Local PostgreSQL, Mosquitto, and API container |
 | PlatformIO Core | `6.1.18+` | ESP32 firmware compilation |
+| Flutter | Stable channel | Future Android/iOS mobile client |
+| Android Studio/Xcode | Current supported release | Mobile SDK and emulator/device tooling |
 
 The current repository does not require an additional frontend library for the
 landing slice. React, Vite, TypeScript, Tailwind CSS, and Recharts are already
 declared in the workspace. Recharts is reserved for the planned telemetry and
 water-use screens.
+
+Flutter is scaffolded under `mobile/` but is not required for the current web
+workflow. Install Flutter later, then run `flutter pub get` and `flutter run`
+from that directory. Run `flutter create .` there to generate platform host
+folders once Android or iOS development begins.
 
 ## Windows setup
 
