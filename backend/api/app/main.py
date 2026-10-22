@@ -89,11 +89,6 @@ def health() -> HealthResponse:
     return HealthResponse(status="ok", service="sproutsync-api")
 
 
-def _batch_scope(user: User):
-    """Return the ownership predicate used by batch read and write routes."""
-    return Batch.owner_id == user.id if user.role != "admin" else True
-
-
 @app.get("/api/v1/batches", response_model=list[BatchResponse], tags=["batches"])
 def list_batches(
     user: User = Depends(get_current_user),
@@ -128,7 +123,10 @@ def update_batch(
     db: Session = Depends(get_db),
 ) -> BatchResponse:
     """Update a visible batch while preserving its owner."""
-    batch = db.scalar(select(Batch).where(Batch.id == batch_id, _batch_scope(user)))
+    query = select(Batch).where(Batch.id == batch_id)
+    if user.role != "admin":
+        query = query.where(Batch.owner_id == user.id)
+    batch = db.scalar(query)
     if batch is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found")
     for field, value in payload.model_dump(exclude_unset=True).items():
@@ -145,7 +143,10 @@ def archive_batch(
     db: Session = Depends(get_db),
 ) -> BatchResponse:
     """Archive a visible batch without deleting its history."""
-    batch = db.scalar(select(Batch).where(Batch.id == batch_id, _batch_scope(user)))
+    query = select(Batch).where(Batch.id == batch_id)
+    if user.role != "admin":
+        query = query.where(Batch.owner_id == user.id)
+    batch = db.scalar(query)
     if batch is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found")
     batch.status = "archived"
