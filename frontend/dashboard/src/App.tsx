@@ -205,22 +205,97 @@ function AdminOverview({ activeNav }: { activeNav: string }) {
  * Provides the grower overview cards and batch monitoring panels.
  */
 function GrowerOverview({ activeNav }: { activeNav: string }) {
+  const [batches, setBatches] = useState<BatchSummary[]>([]);
+  const [batchState, setBatchState] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
+  const [showBatchModal, setShowBatchModal] = useState(false);
+
+  useEffect(() => {
+    if (activeNav !== 'Overview') return;
+    const controller = new AbortController();
+    fetch('/api/v1/batches', { credentials: 'include', signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error('Batches unavailable');
+        return response.json() as Promise<BatchSummary[]>;
+      })
+      .then((data) => {
+        setBatches(data);
+        setBatchState(data.length ? 'ready' : 'empty');
+      })
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.name === 'AbortError') return;
+        setBatchState('error');
+      });
+    return () => controller.abort();
+  }, [activeNav]);
+
   if (activeNav !== 'Overview') return <WorkspacePlaceholder title={activeNav} role="grower" />;
   return (
     <div className="dashboard-content">
-      <div className="dashboard-toolbar"><span className="live-status"><i /> Chamber A-01 is online</span><button className="dashboard-action">+ New batch</button></div>
+      <div className="dashboard-toolbar"><span className="live-status"><i /> Chamber status will appear when connected</span><button className="dashboard-action" onClick={() => setShowBatchModal(true)}>＋ New batch</button></div>
       <section className="metric-grid">
-        <MetricCard label="Growing batches" value="8" detail="3 ready this week" icon="◌" tone="green" />
-        <MetricCard label="Water used today" value="18.4 L" detail="12% less than average" icon="♢" tone="blue" />
-        <MetricCard label="Avg. temperature" value="24.6°" detail="Within ideal range" icon="°" tone="mint" />
-        <MetricCard label="Your alerts" value="1" detail="Low water level" icon="!" tone="orange" />
+        <MetricCard label="Growing batches" value={batchState === 'ready' ? String(batches.length) : '—'} detail="Live API data" icon="▣" tone="green" />
+        <MetricCard label="Water used today" value="—" detail="Telemetry not connected" icon="◌" tone="blue" />
+        <MetricCard label="Avg. temperature" value="—" detail="Telemetry not connected" icon="⌁" tone="mint" />
+        <MetricCard label="Your alerts" value="—" detail="Alerts API next" icon="!" tone="orange" />
       </section>
       <section className="dashboard-columns">
-        <div className="panel panel-wide"><PanelHeading title="Your active batches" action="View all" /><div className="batch-list"><BatchRow code="B-2408" type="Mung beans" stage="Growing · Day 3" progress={68} eta="Harvest in 2 days" /><BatchRow code="B-2407" type="Mung beans" stage="Ready to harvest" progress={100} eta="Ready now" /><BatchRow code="B-2409" type="Mung beans" stage="Rinsing · Day 1" progress={24} eta="Harvest in 4 days" /></div></div>
-        <div className="panel"><PanelHeading title="Today’s schedule" action="View schedule" /><ScheduleItem time="08:00" title="Morning watering" detail="3 trays · 1.8 L" done /><ScheduleItem time="12:00" title="Condition check" detail="Temperature and humidity" /><ScheduleItem time="18:00" title="Evening watering" detail="3 trays · 1.8 L" /></div>
+        <div className="panel panel-wide"><PanelHeading title="Your active batches" action="View all" /><div className="batch-list">
+          {batchState === 'loading' && <WorkspaceMessage icon="◌" title="Loading batches" detail="Getting the latest records from the API." />}
+          {batchState === 'empty' && <WorkspaceMessage icon="＋" title="No batches yet" detail="Create your first batch to start tracking production." action="Create batch" onAction={() => setShowBatchModal(true)} />}
+          {batchState === 'error' && <WorkspaceMessage icon="!" title="Batches are unavailable" detail="The API is not connected. Try again when the backend is running." />}
+          {batchState === 'ready' && batches.map((batch) => <BatchRow key={batch.id} code={batch.code} type={batch.seed_type} stage={`${batch.stage} · ${batch.status}`} progress={batch.stage === 'ready' ? 100 : 35} eta={batch.target_harvest_at ? `Target ${new Date(batch.target_harvest_at).toLocaleDateString()}` : 'No target date'} />)}
+        </div></div>
+        <div className="panel"><PanelHeading title="Today’s schedule" action="View schedule" /><WorkspaceMessage icon="◷" title="Watering not connected" detail="Manual watering records are planned for the next slice." /></div>
       </section>
+      {showBatchModal && <CreateBatchModal onClose={() => setShowBatchModal(false)} onCreated={(batch) => { setBatches((current) => [batch, ...current]); setBatchState('ready'); setShowBatchModal(false); }} />}
     </div>
   );
+}
+
+type BatchSummary = {
+  id: number;
+  code: string;
+  seed_type: string;
+  stage: string;
+  status: string;
+  target_harvest_at: string | null;
+};
+
+function WorkspaceMessage({ icon, title, detail, action, onAction }: { icon: string; title: string; detail: string; action?: string; onAction?: () => void }) {
+  return <div className="workspace-message"><span className="placeholder-icon" aria-hidden="true">{icon}</span><div><strong>{title}</strong><small>{detail}</small>{action && <button className="dashboard-action compact-action" onClick={onAction}>{action}</button>}</div></div>;
+}
+
+function CreateBatchModal({ onClose, onCreated }: { onClose: () => void; onCreated: (batch: BatchSummary) => void }) {
+  const [code, setCode] = useState('');
+  const [startedAt, setStartedAt] = useState(new Date().toISOString().slice(0, 10));
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch('/api/v1/batches', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, started_at: new Date(`${startedAt}T00:00:00Z`).toISOString() }),
+      });
+      if (!response.ok) throw new Error('Unable to create batch. Sign in and try again.');
+      onCreated(await response.json() as BatchSummary);
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'Unable to create batch.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="auth-dialog batch-dialog" role="dialog" aria-modal="true" aria-labelledby="create-batch-title" onMouseDown={(event) => event.stopPropagation()}>
+    <button className="close-button" aria-label="Close create batch dialog" onClick={onClose}>×</button>
+    <span className="feature-icon" aria-hidden="true">＋</span><h2 id="create-batch-title">Create a batch</h2><p>Start a traceable growing record. More production fields will be added in the next slice.</p>
+    <form onSubmit={submit}><label htmlFor="batch-code">Batch code</label><input id="batch-code" required maxLength={64} placeholder="e.g. B-2410" value={code} onChange={(event) => setCode(event.target.value)} /><label htmlFor="batch-start">Start date</label><input id="batch-start" required type="date" value={startedAt} onChange={(event) => setStartedAt(event.target.value)} />{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button full-width" disabled={saving}>{saving ? 'Creating…' : 'Create batch'}</button></form>
+  </section></div>;
 }
 
 /** Shows a consistent empty state for workspace sections not yet connected. */

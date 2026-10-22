@@ -36,3 +36,25 @@ class SessionRecord(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     user: Mapped[User] = relationship(back_populates="sessions")
+
+
+class Batch(Base):
+    """A grower's production batch and its current lifecycle state."""
+
+    __tablename__ = "batches"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    code: Mapped[str] = mapped_column(String(64), index=True)
+    seed_type: Mapped[str] = mapped_column(String(120), default="Mung beans")
+    seed_weight_grams: Mapped[float | None]
+    stage: Mapped[str] = mapped_column(String(32), default="soaking")
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    started_at: Mapped[datetime]
+    target_harvest_at: Mapped[datetime | None]
+    notes: Mapped[str | None]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    owner: Mapped[User] = relationship()
