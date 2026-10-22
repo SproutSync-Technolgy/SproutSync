@@ -16,6 +16,12 @@ clear exceptions and traceability without exposing unsafe device controls.
 - Keep primary actions visible near the task they affect.
 - Use familiar SVG icons with text labels; do not rely on emoji or glyph
   characters whose meaning changes across operating systems.
+- Prefer a warm neutral canvas, one green action color, and low-contrast
+  borders so the interface feels quiet while status colors remain meaningful.
+- Use a compact left navigation for workspaces, a single clear page heading,
+  and a small number of summary cards before operational lists.
+- Treat the root URL as the grower entry point; keep `/admin` as the explicit
+  administrative entry point and do not expose a redundant `/grower` route.
 
 ## Interaction rules
 

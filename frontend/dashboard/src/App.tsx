@@ -60,10 +60,36 @@ export function App() {
   }
 
   if (pathname === '/grower' || pathname.startsWith('/grower/')) {
-    return <Workspace role="grower" />;
+    window.location.replace('/');
+    return null;
   }
 
-  return <LandingPage />;
+  return <GrowerEntry />;
+}
+
+/**
+ * Resolves the grower session at the public root route before selecting the
+ * landing page or the authenticated grower workspace.
+ */
+function GrowerEntry() {
+  const [authState, setAuthState] = useState<'checking' | 'signed-out' | 'signed-in'>('checking');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch('/api/v1/auth/me', { credentials: 'include', signal: controller.signal })
+      .then((response) => setAuthState(response.ok ? 'signed-in' : 'signed-out'))
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.name === 'AbortError') return;
+        setAuthState('signed-out');
+      });
+    return () => controller.abort();
+  }, []);
+
+  if (authState === 'checking') {
+    return <main className="workspace-loading" aria-live="polite">Loading your SproutSync workspace…</main>;
+  }
+
+  return authState === 'signed-in' ? <Workspace role="grower" authenticated /> : <LandingPage />;
 }
 
 /**
@@ -100,13 +126,13 @@ const workspaceConfig: Record<WorkspaceRole, WorkspaceConfig> = {
 /**
  * Renders a role-specific workspace with a separate login gate and navigation.
  */
-function Workspace({ role }: { role: WorkspaceRole }) {
+function Workspace({ role, authenticated = false }: { role: WorkspaceRole; authenticated?: boolean }) {
   const config = workspaceConfig[role];
-  const [authenticated, setAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(authenticated);
   const [activeNav, setActiveNav] = useState(config.nav[0]);
 
-  if (!authenticated) {
-    return <WorkspaceLogin role={role} onContinue={() => setAuthenticated(true)} />;
+  if (!isAuthenticated) {
+    return <WorkspaceLogin role={role} onContinue={() => setIsAuthenticated(true)} />;
   }
 
   return (
@@ -125,7 +151,7 @@ function Workspace({ role }: { role: WorkspaceRole }) {
             </button>
           ))}
         </nav>
-        <button className="workspace-signout" onClick={() => setAuthenticated(false)}>
+        <button className="workspace-signout" onClick={() => setIsAuthenticated(false)}>
           <span>↪</span> Sign out
         </button>
       </aside>
@@ -158,7 +184,8 @@ function WorkspaceLogin({ role, onContinue }: { role: WorkspaceRole; onContinue:
    * Starts the shared Google OAuth flow for the selected workspace.
    */
   function startWorkspaceAuth() {
-    window.location.assign('/api/v1/auth/google');
+    const destination = isAdmin ? '?next=%2Fadmin' : '';
+    window.location.assign(`/api/v1/auth/google${destination}`);
   }
 
   return (

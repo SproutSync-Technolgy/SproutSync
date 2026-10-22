@@ -156,9 +156,10 @@ def archive_batch(
 
 
 @app.get("/api/v1/auth/google", tags=["auth"])
-def google_login() -> RedirectResponse:
+def google_login(next: str = "/") -> RedirectResponse:
     """Start Google OAuth after validating that credentials are configured."""
     require_google_configuration()
+    destination = next if next in {"/", "/admin"} else "/"
     state = secrets.token_urlsafe(32)
     response = RedirectResponse(
         google_authorization_url(state),
@@ -167,6 +168,15 @@ def google_login() -> RedirectResponse:
     response.set_cookie(
         "sproutsync_oauth_state",
         state,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite="lax",
+        max_age=600,
+        path="/",
+    )
+    response.set_cookie(
+        "sproutsync_oauth_destination",
+        destination,
         httponly=True,
         secure=settings.session_cookie_secure,
         samesite="lax",
@@ -207,9 +217,13 @@ async def google_callback(
     db.commit()
     db.refresh(user)
     token = create_session(db, user)
-    response = RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+    destination = request.cookies.get("sproutsync_oauth_destination", "/")
+    if destination not in {"/", "/admin"}:
+        destination = "/"
+    response = RedirectResponse(f"{settings.frontend_url}{destination}", status_code=status.HTTP_303_SEE_OTHER)
     set_session_cookie(response, token)
     response.delete_cookie("sproutsync_oauth_state", path="/")
+    response.delete_cookie("sproutsync_oauth_destination", path="/")
     return response
 
 
