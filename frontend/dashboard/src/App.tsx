@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { apiFetch, supabase } from './supabase';
 import { ProtoLanding } from './components/ProtoLanding';
 import { ProtoMobileApp } from './components/ProtoMobileApp';
 import { ProtoGrowerDashboard, type AuthenticatedUser } from './components/ProtoGrowerDashboard';
@@ -82,7 +83,7 @@ function GrowerEntry() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch('/api/v1/auth/me', { credentials: 'include', signal: controller.signal })
+    apiFetch('/api/v1/auth/me', { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) {
           setUser(null);
@@ -102,19 +103,19 @@ function GrowerEntry() {
   }, []);
 
   async function handleLogout() {
-    try {
-      await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'include' });
-    } catch {
-      // Continue to signed-out state even if network request fails
-    }
+    await supabase.auth.signOut();
     setUser(null);
     setAuthState('signed-out');
     setView('landing');
   }
 
-  function handleGetStarted() {
-    window.location.assign('/api/v1/auth/google');
+  async function handleGetStarted() {
+    await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: `${window.location.origin}/` },
+    });
   }
+
 
   if (authState === 'checking') {
     return <main className="workspace-loading" aria-live="polite">Loading your SproutSync workspace…</main>;
@@ -202,7 +203,7 @@ function Workspace({ role, authenticated = false }: { role: WorkspaceRole; authe
             </button>
           ))}
         </nav>
-        <button className="workspace-signout" onClick={() => setIsAuthenticated(false)}>
+        <button className="workspace-signout" onClick={async () => { await supabase.auth.signOut(); setIsAuthenticated(false); }}>
           <span>↪</span> Sign out
         </button>
       </aside>
@@ -231,12 +232,17 @@ function Workspace({ role, authenticated = false }: { role: WorkspaceRole; authe
  */
 function WorkspaceLogin({ role, onContinue }: { role: WorkspaceRole; onContinue: () => void }) {
   const isAdmin = role === 'admin';
+  const [authError, setAuthError] = useState('');
   /**
    * Starts the shared Google OAuth flow for the selected workspace.
    */
-  function startWorkspaceAuth() {
-    const destination = isAdmin ? '?next=%2Fadmin' : '';
-    window.location.assign(`/api/v1/auth/google${destination}`);
+  async function startWorkspaceAuth() {
+    setAuthError('');
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: `${window.location.origin}${isAdmin ? '/admin' : '/'}` },
+    });
+    if (error) setAuthError(error.message);
   }
 
   return (
@@ -250,6 +256,7 @@ function WorkspaceLogin({ role, onContinue }: { role: WorkspaceRole; onContinue:
         <p>{isAdmin ? 'Manage devices, people, and system health from one secure workspace.' : 'Follow your batches, conditions, and watering schedule in one calm view.'}</p>
         <button className="google-login-button" onClick={startWorkspaceAuth}><GoogleIcon /> Continue with Google <ArrowIcon /></button>
         <button className="preview-login-button" onClick={onContinue}>Preview dashboard</button>
+        {authError && <small className="form-error" role="alert">{authError}</small>}
         <small>Google authentication is required for {isAdmin ? 'administrators' : 'growers'}.</small>
         <a className="back-home" href="/">← Back to SproutSync home</a>
       </div>
@@ -290,7 +297,7 @@ function GrowerOverview({ activeNav }: { activeNav: string }) {
   useEffect(() => {
     if (activeNav !== 'Overview') return;
     const controller = new AbortController();
-    fetch('/api/v1/batches', { credentials: 'include', signal: controller.signal })
+    apiFetch('/api/v1/batches', { signal: controller.signal })
       .then((response) => {
         if (!response.ok) throw new Error('Batches unavailable');
         return response.json() as Promise<BatchSummary[]>;
@@ -354,7 +361,7 @@ function CreateBatchModal({ onClose, onCreated }: { onClose: () => void; onCreat
     setSaving(true);
     setError('');
     try {
-      const response = await fetch('/api/v1/batches', {
+      const response = await apiFetch('/api/v1/batches', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -477,8 +484,13 @@ function LandingPage() {
   /**
    * Starts the configured Google OAuth flow through the backend.
    */
-  function startGoogleAuth() {
-    window.location.assign('/api/v1/auth/google');
+  async function startGoogleAuth() {
+    setNotice('');
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: `${window.location.origin}/` },
+    });
+    if (error) setNotice(error.message);
   }
 
   return (

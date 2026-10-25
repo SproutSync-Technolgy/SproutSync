@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, type FormEvent } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { apiFetch } from '../supabase';
 import {
   LayoutDashboard,
   Boxes,
@@ -131,9 +132,8 @@ function CreateBatchModal({
     setSaving(true);
     setError('');
     try {
-      const response = await fetch('/api/v1/batches', {
+      const response = await apiFetch('/api/v1/batches', {
         method: 'POST',
-        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           code,
@@ -230,7 +230,7 @@ export function ProtoGrowerDashboard({
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch('/api/v1/batches', { credentials: 'include', signal: controller.signal })
+    apiFetch('/api/v1/batches', { signal: controller.signal })
       .then((res) => {
         if (!res.ok) return [];
         return res.json() as Promise<LiveBatch[]>;
