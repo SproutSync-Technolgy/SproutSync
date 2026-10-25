@@ -39,6 +39,15 @@ if not exist "node_modules" (
         pause
         exit /b 1
     )
+) else if not exist "node_modules\@supabase\supabase-js" (
+    echo [INFO] Updating frontend dependencies for @supabase/supabase-js...
+    call npm.cmd install
+    if errorlevel 1 (
+        echo.
+        echo [ERROR] npm install failed.
+        pause
+        exit /b 1
+    )
 ) else if not exist "node_modules\lucide-react" (
     echo [INFO] Updating frontend dependencies for lucide-react and motion...
     call npm.cmd install
