@@ -1,8 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import { apiFetch, supabase } from './supabase';
 import { ProtoLanding } from './components/ProtoLanding';
 import { ProtoMobileApp } from './components/ProtoMobileApp';
 import { ProtoGrowerDashboard, type AuthenticatedUser } from './components/ProtoGrowerDashboard';
+import { ProtoAuth, type AuthMode } from './components/ProtoAuth';
 import { normalizeAccountRole } from './data/prototypeFixtures';
 
 type DialogMode = 'signin' | 'signup' | null;
@@ -80,26 +82,121 @@ function GrowerEntry() {
   const [authState, setAuthState] = useState<'checking' | 'signed-out' | 'signed-in'>('checking');
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
   const [view, setView] = useState<'landing' | 'mobileApp'>('landing');
+  const [authDialog, setAuthDialog] = useState<AuthMode | null>(null);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    apiFetch('/api/v1/auth/me', { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) {
-          setUser(null);
-          setAuthState('signed-out');
+  async function syncSession(session: Session | null) {
+    if (!session?.access_token || !session.user) {
+      setUser(null);
+      setAuthState('signed-out');
+      return;
+    }
+
+    const cleanEmail = session.user.email?.toLowerCase().trim() || '';
+    const meta = session.user.user_metadata || {};
+    const fallbackDisplayName =
+      meta.full_name || meta.name || cleanEmail.split('@')[0] || 'Grower';
+    const fallbackAvatar = meta.avatar_url || meta.picture || null;
+
+    // 1. Query Supabase database 'users' table directly (source of truth in PostgreSQL)
+    try {
+      const { data: dbUser, error: dbError } = await supabase
+        .from('users')
+        .select('id, email, display_name, avatar_url, role')
+        .eq('email', cleanEmail)
+        .maybeSingle();
+
+      if (!dbError && dbUser) {
+        setUser({
+          id: dbUser.id,
+          email: dbUser.email,
+          display_name: dbUser.display_name || fallbackDisplayName,
+          avatar_url: dbUser.avatar_url || fallbackAvatar,
+          role: dbUser.role || 'evaluator',
+        });
+        setAuthState('signed-in');
+        setAuthDialog(null);
+        return;
+      }
+
+      // If user signed up but record is not in users table yet, create as evaluator
+      if (!dbError && !dbUser && cleanEmail) {
+        const { data: createdUser } = await supabase
+          .from('users')
+          .insert({
+            google_subject: session.user.id,
+            email: cleanEmail,
+            display_name: fallbackDisplayName,
+            avatar_url: fallbackAvatar,
+            role: 'evaluator',
+          })
+          .select()
+          .maybeSingle();
+
+        if (createdUser) {
+          setUser({
+            id: createdUser.id,
+            email: createdUser.email,
+            display_name: createdUser.display_name,
+            avatar_url: createdUser.avatar_url,
+            role: createdUser.role,
+          });
+          setAuthState('signed-in');
+          setAuthDialog(null);
           return;
         }
+      }
+    } catch (dbErr) {
+      console.warn('Direct Supabase users table query error:', dbErr);
+    }
+
+    // 2. Secondary check via backend /api/v1/auth/me
+    try {
+      const response = await apiFetch('/api/v1/auth/me');
+      if (response.ok) {
         const data = (await response.json()) as AuthenticatedUser;
-        setUser(data);
-        setAuthState('signed-in');
-      })
-      .catch((error: unknown) => {
-        if (error instanceof Error && error.name === 'AbortError') return;
-        setUser(null);
-        setAuthState('signed-out');
-      });
-    return () => controller.abort();
+        if (data.role) {
+          setUser(data);
+          setAuthState('signed-in');
+          setAuthDialog(null);
+          return;
+        }
+      }
+    } catch (error) {
+      console.warn('Backend /api/v1/auth/me call error:', error);
+    }
+
+    // 3. Fallback only if database and backend are completely unreachable
+    const fallbackUser: AuthenticatedUser = {
+      id: 0,
+      email: cleanEmail,
+      display_name: fallbackDisplayName,
+      avatar_url: fallbackAvatar,
+      role: 'evaluator',
+    };
+    setUser(fallbackUser);
+    setAuthState('signed-in');
+    setAuthDialog(null);
+  }
+
+  useEffect(() => {
+    let active = true;
+
+    // 1. Initial session check
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (active) syncSession(session);
+    });
+
+    // 2. Reactive subscription to all auth state changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (active) syncSession(session);
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   async function handleLogout() {
@@ -108,14 +205,6 @@ function GrowerEntry() {
     setAuthState('signed-out');
     setView('landing');
   }
-
-  async function handleGetStarted() {
-    await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: `${window.location.origin}/` },
-    });
-  }
-
 
   if (authState === 'checking') {
     return <main className="workspace-loading" aria-live="polite">Loading your SproutSync workspace…</main>;
@@ -136,10 +225,21 @@ function GrowerEntry() {
   }
 
   return (
-    <ProtoLanding
-      onGetStarted={handleGetStarted}
-      onDownload={() => setView('mobileApp')}
-    />
+    <>
+      <ProtoLanding
+        onSignIn={() => setAuthDialog('login')}
+        onSignUp={() => setAuthDialog('register')}
+        onDownload={() => setView('mobileApp')}
+      />
+      {authDialog && (
+        <ProtoAuth
+          isModal={true}
+          initialMode={authDialog}
+          onClose={() => setAuthDialog(null)}
+          onSuccess={() => setAuthDialog(null)}
+        />
+      )}
+    </>
   );
 }
 

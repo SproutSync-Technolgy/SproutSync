@@ -112,7 +112,7 @@ export const PERMISSIONS: Record<Role, Record<Capability, boolean>> = {
     recordMaintenance: true,
     manageAccounts: false,
     manageProfiles: false,
-    manageServices: false,
+    manageServices: true,
     reviewEvidence: true,
     editOwnProfile: true,
   },
@@ -132,13 +132,14 @@ export const can = (role: Role, cap: Capability): boolean => PERMISSIONS[role][c
 
 /**
  * Normalizes backend account role from /api/v1/auth/me into the 3 dashboard roles.
+ * Defaults new/unassigned users to 'evaluator' (read-only tier).
  */
 export function normalizeAccountRole(apiRole?: string | null): Role {
-  if (!apiRole) return 'operator';
+  if (!apiRole) return 'evaluator';
   const cleaned = apiRole.toLowerCase().trim();
   if (cleaned === 'admin') return 'admin';
-  if (cleaned === 'evaluator') return 'evaluator';
-  return 'operator'; // maps 'grower', 'operator', etc.
+  if (cleaned === 'operator') return 'operator';
+  return 'evaluator';
 }
 
 /* ------------------------------------------------------------------ */

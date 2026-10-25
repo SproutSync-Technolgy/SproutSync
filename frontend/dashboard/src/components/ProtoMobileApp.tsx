@@ -23,6 +23,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { Logo, Btn, Card, Badge, Toggle, Lifecycle, FaqList } from './ProtoPrimitives';
+import { supabase } from '../supabase';
 import { BarChart, Ring, Donut } from './ProtoCharts';
 import {
   SENSORS,
@@ -213,8 +214,12 @@ export function ProtoMobileApp({ onExit }: { onExit: () => void }) {
             <div className="h-px flex-1 bg-border" /> or <div className="h-px flex-1 bg-border" />
           </div>
           <button
+            type="button"
             onClick={() => {
-              window.location.assign('/api/v1/auth/google');
+              supabase.auth.signInWithOAuth({
+                provider: 'google',
+                options: { redirectTo: `${window.location.origin}/` },
+              });
             }}
             className="flex w-full items-center justify-center gap-3 rounded-xl border border-border py-3 text-sm font-semibold hover:bg-secondary"
           >

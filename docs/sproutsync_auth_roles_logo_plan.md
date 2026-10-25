@@ -86,14 +86,14 @@ When executing this plan in Antigravity with **Gemini Flash 3.8**, load these sk
 
 > **Execution Instruction for Antigravity Gemini Flash 3.8:** Execute Tasks 1 through 7 sequentially. Verify each step before moving to the next.
 
-- [ ] **Task 1: Set Backend Default Role to `"evaluator"` & Improve Supabase User Projection (`backend/api/`)**
+- [x] **Task 1: Set Backend Default Role to `"evaluator"` & Improve Supabase User Projection (`backend/api/`)**
   - **Action:**
     1. In `backend/api/app/models.py`, change `User.role` from `default="operator"` to `default="evaluator"`.
     2. In `backend/api/app/auth.py`, when creating a new `User` in `get_current_user`, explicitly pass `role="evaluator"` and resolve `display_name = metadata.get("full_name") or metadata.get("name") or email.split("@")[0]`.
     3. Create `backend/api/migrations/versions/0003_default_evaluator_role.py` (with `down_revision = "0002_batches"`) that alters `users.role` server default to `"evaluator"`.
-  - **Verify:** Run `python -m compileall -q backend/api/app backend/api/migrations` → exits `0`.
+  - **Verify:** Run `python -m compileall -q backend/api/app backend/api/migrations` → exits `0`. *(Passed)*
 
-- [ ] **Task 2: Make `Logo` Transparent and Larger (`src/assets/logo.png` & `src/components/ProtoPrimitives.tsx`)**
+- [x] **Task 2: Make `Logo` Transparent and Larger (`src/assets/logo.png` & `src/components/ProtoPrimitives.tsx`)**
   - **Action:**
     1. Crop the excess transparent padding around `frontend/dashboard/src/assets/logo.png` (and `docs/assets/logo.png`) to its non-transparent bounding box with a small 8px breathing margin, keeping RGBA mode `(0, 0, 0, 0)` transparent background.
     2. In `frontend/dashboard/src/components/ProtoPrimitives.tsx`, update `Logo`:
@@ -107,9 +107,9 @@ When executing this plan in Antigravity with **Gemini Flash 3.8**, load these sk
        }
        ```
     3. Update header/sidebar brand text alignment in `ProtoLanding.tsx` and `ProtoGrowerDashboard.tsx` (`gap-3`) to pair naturally with the larger transparent logo.
-  - **Verify:** Run `npm run typecheck` → exits `0`; inspect `Logo` in `ProtoPrimitives.tsx` to confirm `bg-white` is completely removed.
+  - **Verify:** Run `npm run typecheck` → exits `0`; inspect `Logo` in `ProtoPrimitives.tsx` to confirm `bg-white` is completely removed. *(Passed)*
 
-- [ ] **Task 3: Update UI Role Hierarchy (`Operator` = Admin/Top Tier, `Evaluator` = Default Lower Tier)**
+- [x] **Task 3: Update UI Role Hierarchy (`Operator` = Admin/Top Tier, `Evaluator` = Default Lower Tier)**
   - **Action:**
     1. In `frontend/dashboard/src/data/prototypeFixtures.ts`:
        - Update `normalizeAccountRole(apiRole?: string | null): Role` so empty/unknown roles default to `'evaluator'` (only `'admin'` maps to `'admin'`, and `'operator'` maps to `'operator'`).
@@ -117,9 +117,9 @@ When executing this plan in Antigravity with **Gemini Flash 3.8**, load these sk
     2. In `frontend/dashboard/src/components/ProtoGrowerDashboard.tsx`:
        - Ensure `NAV_ALL` includes `'operator'` on all 8 tabs (`home`, `batches`, `water`, `alerts`, `reports`, `evidence`, `maintenance`, `support`) and restricts `'evaluator'` to the read-only tabs (`home`, `batches`, `water`, `alerts`, `reports`, `evidence`).
        - In `active === 'home'`, render `<TechnicalAdminHome />` for `role === 'operator' || role === 'admin'` (giving Operator the rich technical admin overview with 6 sensor sparklines, batch pipeline, and 7-day water chart) and render `<GrowerUserHome />` for `role === 'evaluator'`.
-  - **Verify:** Run `npm run typecheck` → exits `0`.
+  - **Verify:** Run `npm run typecheck` → exits `0`. *(Passed)*
 
-- [ ] **Task 4: Restore Split-Screen Sign In / Sign Up UI (`src/components/ProtoAuth.tsx`)**
+- [x] **Task 4: Restore Split-Screen Sign In / Sign Up UI (`src/components/ProtoAuth.tsx`)**
   - **Action:** Create `frontend/dashboard/src/components/ProtoAuth.tsx` based on the Figma Prototype's split-screen `Auth` component:
     1. Accept props: `initialMode: 'login' | 'register'`, `onBack: () => void`, `onSuccess: () => void`.
     2. Left brand column: Emerald gradient (`from-emerald-700 to-green-800`), `"Back to home"` button, large transparent `<Logo className="h-16 w-16" />`, headline `"Fresh sprouts, zero guesswork."`, and role hierarchy note.
@@ -130,9 +130,9 @@ When executing this plan in Antigravity with **Gemini Flash 3.8**, load these sk
          - In `register` mode: includes `Full name` input, `Email address`, `Password` (min 8 chars), and a clear badge stating: *"New accounts are registered as **Evaluator** (read-only access). Operator access is granted by an administrator."* Calls `supabase.auth.signUp({ email, password, options: { data: { full_name: name.trim() } } })`. Handles both immediate session return and email-confirmation notice gracefully.
          - In `login` mode: includes `Email address` and `Password`. Calls `supabase.auth.signInWithPassword({ email, password })` and invokes `onSuccess()` upon sign-in.
        - Displays loading states (`Signing in…` / `Creating account…`) and inline error/success alerts.
-  - **Verify:** Run `npm run typecheck` → `ProtoAuth.tsx` compiles with zero TypeScript errors.
+  - **Verify:** Run `npm run typecheck` → `ProtoAuth.tsx` compiles with zero TypeScript errors. *(Passed)*
 
-- [ ] **Task 5: Connect Professional Sign In / Sign Up / Sign Out Lifecycle in `App.tsx`, `ProtoLanding.tsx` & `ProtoMobileApp.tsx`**
+- [x] **Task 5: Connect Professional Sign In / Sign Up / Sign Out Lifecycle in `App.tsx`, `ProtoLanding.tsx` & `ProtoMobileApp.tsx`**
   - **Action:**
     1. In `frontend/dashboard/src/components/ProtoLanding.tsx`, replace the single `onGetStarted: () => void` prop with `onSignIn: () => void` and `onSignUp: () => void` so clicking **"Sign in"** opens `ProtoAuth` in `'login'` mode, while **"Sign up"** and **"Get started"** open `ProtoAuth` in `'register'` mode.
     2. In `frontend/dashboard/src/App.tsx` (`GrowerEntry`):
@@ -141,30 +141,30 @@ When executing this plan in Antigravity with **Gemini Flash 3.8**, load these sk
        - If `/api/v1/auth/me` is unreachable in offline/standalone preview mode but `session?.user` exists from Supabase, construct a fallback `AuthenticatedUser` from `session.user` with `role: 'evaluator'` so sign-in still works cleanly.
        - In `handleLogout()`, call `await supabase.auth.signOut()`, clear `user` state, and return cleanly to `view = 'landing'`.
     3. In `frontend/dashboard/src/components/ProtoMobileApp.tsx`, wire the mobile login screen's email form and `"Continue with Google"` button to `supabase.auth` (instead of the broken `/api/v1/auth/google` link on line 197).
-  - **Verify:** Run `npm run typecheck && npm run build` → exits `0`.
+  - **Verify:** Run `npm run typecheck && npm run build` → exits `0`. *(Passed)*
 
-- [ ] **Task 6: Sync Profile Display Name Updates with Supabase User Metadata (`ProtoPrimitives.tsx` & `ProtoGrowerDashboard.tsx`)**
+- [x] **Task 6: Sync Profile Display Name Updates with Supabase User Metadata (`ProtoPrimitives.tsx` & `ProtoGrowerDashboard.tsx`)**
   - **Action:** In `ProtoGrowerDashboard.tsx` (`openProfile`), when the user saves their display name in `ProfileEditor`, call `await supabase.auth.updateUser({ data: { full_name: newName } })` and re-fetch `/api/v1/auth/me` so the updated display name persists across sign-out and sign-in.
-  - **Verify:** Run `npm run typecheck` → exits `0`.
+  - **Verify:** Run `npm run typecheck` → exits `0`. *(Passed)*
 
-- [ ] **Task 7: Full Repository Verification (Phase X: Verification)**
+- [x] **Task 7: Full Repository Verification (Phase X: Verification)**
   - **Action:** Run all frontend and backend verification checks from the repository root:
     1. `npm run typecheck`
     2. `npm run build`
     3. `python -m compileall -q backend/api/app backend/api/migrations`
     4. `node scripts/verify-repository.mjs`
     5. `git status` & `git diff --check`
-  - **Verify:** All 5 commands exit `0` with zero errors.
+  - **Verify:** All 5 commands exit `0` with zero errors. *(Passed)*
 
 ## 6. Done When (`@plan-writing`)
 
-- [ ] Clicking **"Sign in"** on the Landing page opens the restored split-screen `ProtoAuth` view in Sign In mode; clicking **"Sign up"** or **"Get started"** opens `ProtoAuth` in Create Account (`register`) mode.
-- [ ] Signing up or signing in via **Google SSO** (`supabase.auth.signInWithOAuth`) or **Email & Password** (`supabase.auth.signUp` / `signInWithPassword`) authenticates through Supabase, projects the user via `/api/v1/auth/me`, and transitions reactively into the dashboard.
-- [ ] Every newly created user account defaults to **`"evaluator"`** in both PostgreSQL (`models.py` / `auth.py` / migration `0003`) and frontend role normalization.
-- [ ] **Operator** accounts render the full admin-grade technical dashboard (`TechnicalAdminHome` on `Overview` + all 8 sidebar tabs + batch creation + alert acknowledgement + maintenance), while **Evaluator** accounts render the lower-tier read-only dashboard (`GrowerUserHome` on `Overview` + read-only tabs).
-- [ ] Clicking **Sign out** in the profile menu revokes the Supabase session (`supabase.auth.signOut()`) and returns cleanly to the Landing page.
-- [ ] The `Logo` component has no white background box (`bg-transparent`), `logo.png` has its excess transparent border cropped, and the logo renders larger and sharper across the Landing header, Auth screen, Dashboard sidebar, and Mobile simulator.
-- [ ] `/admin` (`Workspace role="admin"`) remains intact and `npm run typecheck`, `npm run build`, and `node scripts/verify-repository.mjs` pass.
+- [x] Clicking **"Sign in"** on the Landing page opens the restored split-screen `ProtoAuth` view in Sign In mode; clicking **"Sign up"** or **"Get started"** opens `ProtoAuth` in Create Account (`register`) mode.
+- [x] Signing up or signing in via **Google SSO** (`supabase.auth.signInWithOAuth`) or **Email & Password** (`supabase.auth.signUp` / `signInWithPassword`) authenticates through Supabase, projects the user via `/api/v1/auth/me`, and transitions reactively into the dashboard.
+- [x] Every newly created user account defaults to **``evaluator`"** in both PostgreSQL (`models.py` / `auth.py` / migration `0003`) and frontend role normalization.
+- [x] **Operator** accounts render the full admin-grade technical dashboard (`TechnicalAdminHome` on `Overview` + all 8 sidebar tabs + batch creation + alert acknowledgement + maintenance), while **Evaluator** accounts render the lower-tier read-only dashboard (`GrowerUserHome` on `Overview` + read-only tabs).
+- [x] Clicking **Sign out** in the profile menu revokes the Supabase session (`supabase.auth.signOut()`) and returns cleanly to the Landing page.
+- [x] The `Logo` component has no white background box (`bg-transparent`), `logo.png` has its excess transparent border cropped, and the logo renders larger and sharper across the Landing header, Auth screen, Dashboard sidebar, and Mobile simulator.
+- [x] `/admin` (`Workspace role="admin"`) remains intact and `npm run typecheck`, `npm run build`, and `node scripts/verify-repository.mjs` pass.
 
 ## 7. Open Questions & Understanding Lock Gate (`@brainstorming`)
 

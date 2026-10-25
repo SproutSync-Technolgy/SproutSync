@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, type FormEvent } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { apiFetch } from '../supabase';
+import { apiFetch, supabase } from '../supabase';
 import {
   LayoutDashboard,
   Boxes,
@@ -106,7 +106,7 @@ const NAV_ALL: NavItem[] = [
   { key: 'water', label: 'Irrigation', icon: Droplets, roles: ['admin', 'operator', 'evaluator'] },
   { key: 'alerts', label: 'Alerts', icon: Bell, roles: ['admin', 'operator', 'evaluator'] },
   { key: 'reports', label: 'Reports', icon: FileBarChart, roles: ['admin', 'operator', 'evaluator'] },
-  { key: 'evidence', label: 'Acceptance evidence', icon: ShieldCheck, roles: ['admin', 'evaluator'] },
+  { key: 'evidence', label: 'Acceptance evidence', icon: ShieldCheck, roles: ['admin', 'operator', 'evaluator'] },
   { key: 'maintenance', label: 'Maintenance', icon: Wrench, roles: ['admin', 'operator'] },
   { key: 'support', label: 'Operational logs', icon: MessageSquare, roles: ['admin', 'operator'] },
 ];
@@ -346,9 +346,16 @@ export function ProtoGrowerDashboard({
           role={role}
           name={displayName}
           email={user.email}
-          onSave={(n) => {
+          onSave={async (n) => {
             setDisplayName(n);
             setModal(null);
+            try {
+              await supabase.auth.updateUser({
+                data: { full_name: n },
+              });
+            } catch (err) {
+              console.warn('Failed to sync display name to Supabase user metadata:', err);
+            }
           }}
           onCancel={() => setModal(null)}
         />
@@ -393,9 +400,9 @@ export function ProtoGrowerDashboard({
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="flex items-center gap-2 px-5 py-5">
+        <div className="flex items-center gap-3 px-5 py-5">
           <Logo />
-          <span className="text-lg font-bold">SproutSync</span>
+          <span className="text-xl font-bold">SproutSync</span>
           <button
             onClick={() => setSidebarOpen(false)}
             className="ml-auto rounded-lg p-1 hover:bg-sidebar-accent lg:hidden"
@@ -612,14 +619,14 @@ export function ProtoGrowerDashboard({
               ) : (
                 <>
                   {active === 'home' && (
-                    role === 'operator' ? (
-                      <GrowerUserHome openSensor={openSensor} />
-                    ) : (
+                    role === 'operator' || role === 'admin' ? (
                       <TechnicalAdminHome
                         openSensor={openSensor}
                         openBatch={openBatch}
                         goAlerts={() => setActive('alerts')}
                       />
+                    ) : (
+                      <GrowerUserHome openSensor={openSensor} />
                     )
                   )}
 

@@ -18,7 +18,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(200))
     avatar_url: Mapped[str | None] = mapped_column(String(1000))
-    role: Mapped[str] = mapped_column(String(32), default="operator")
+    role: Mapped[str] = mapped_column(String(32), default="evaluator", server_default="evaluator")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

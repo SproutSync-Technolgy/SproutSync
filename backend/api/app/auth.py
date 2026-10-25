@@ -49,19 +49,29 @@ async def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Supabase profile is incomplete")
 
     metadata = profile.get("user_metadata") or {}
-    user = db.scalar(select(User).where(User.google_subject == subject))
+    display_name = metadata.get("full_name") or metadata.get("name") or email.split("@")[0]
+    normalized_email = email.lower().strip()
+    user = db.scalar(
+        select(User).where(
+            (User.google_subject == subject) | (User.email == normalized_email)
+        )
+    )
     if user is None:
         user = User(
             google_subject=subject,
-            email=email.lower(),
-            display_name=metadata.get("full_name") or metadata.get("name") or email,
+            email=normalized_email,
+            display_name=display_name,
             avatar_url=metadata.get("avatar_url") or metadata.get("picture"),
+            role="evaluator",
         )
         db.add(user)
     else:
-        user.email = email.lower()
-        user.display_name = metadata.get("full_name") or metadata.get("name") or user.display_name
-        user.avatar_url = metadata.get("avatar_url") or metadata.get("picture") or user.avatar_url
+        user.google_subject = subject
+        user.email = normalized_email
+        if metadata.get("full_name") or metadata.get("name"):
+            user.display_name = metadata.get("full_name") or metadata.get("name")
+        if metadata.get("avatar_url") or metadata.get("picture"):
+            user.avatar_url = metadata.get("avatar_url") or metadata.get("picture")
     db.commit()
     db.refresh(user)
     if not user.is_active:

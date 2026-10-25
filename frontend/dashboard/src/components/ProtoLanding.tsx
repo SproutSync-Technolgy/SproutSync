@@ -14,10 +14,12 @@ import chamberModel from '../assets/chamber-model.png';
 import { Logo, Btn, Card, Badge } from './ProtoPrimitives';
 
 export function ProtoLanding({
-  onGetStarted,
+  onSignIn,
+  onSignUp,
   onDownload,
 }: {
-  onGetStarted: () => void;
+  onSignIn: () => void;
+  onSignUp: () => void;
   onDownload: () => void;
 }) {
   const [apiStatus, setApiStatus] = useState<'checking' | 'ready' | 'offline'>('checking');
@@ -41,15 +43,15 @@ export function ProtoLanding({
       {/* Header */}
       <header className="sticky top-0 z-30 border-b border-border/70 bg-background/80 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <Logo />
-            <span className="text-lg font-bold tracking-tight">SproutSync</span>
+            <span className="text-xl font-bold tracking-tight">SproutSync</span>
           </div>
           <div className="flex items-center gap-2">
-            <Btn variant="ghost" onClick={onGetStarted} className="hidden sm:inline-flex">
+            <Btn variant="ghost" onClick={onSignIn} className="hidden sm:inline-flex">
               Sign in
             </Btn>
-            <Btn onClick={onGetStarted}>
+            <Btn onClick={onSignUp}>
               Sign up <ArrowRight className="h-4 w-4" />
             </Btn>
           </div>
@@ -77,7 +79,7 @@ export function ProtoLanding({
               growing, not constant monitoring.
             </p>
             <div className="mt-7 flex flex-col gap-3 sm:flex-row">
-              <Btn onClick={onGetStarted} className="px-6 py-3">
+              <Btn onClick={onSignUp} className="px-6 py-3">
                 Get started <ArrowRight className="h-4 w-4" />
               </Btn>
               <Btn variant="outline" onClick={onDownload} className="px-6 py-3">
