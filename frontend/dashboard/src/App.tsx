@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { apiFetch, supabase } from './supabase';
 
 type DialogMode = 'signin' | 'signup' | null;
 
@@ -76,7 +77,7 @@ function GrowerEntry() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch('/api/v1/auth/me', { credentials: 'include', signal: controller.signal })
+    apiFetch('/api/v1/auth/me', { signal: controller.signal })
       .then((response) => setAuthState(response.ok ? 'signed-in' : 'signed-out'))
       .catch((error: unknown) => {
         if (error instanceof Error && error.name === 'AbortError') return;
@@ -151,7 +152,7 @@ function Workspace({ role, authenticated = false }: { role: WorkspaceRole; authe
             </button>
           ))}
         </nav>
-        <button className="workspace-signout" onClick={() => setIsAuthenticated(false)}>
+        <button className="workspace-signout" onClick={async () => { await supabase.auth.signOut(); setIsAuthenticated(false); }}>
           <span>↪</span> Sign out
         </button>
       </aside>
@@ -180,12 +181,17 @@ function Workspace({ role, authenticated = false }: { role: WorkspaceRole; authe
  */
 function WorkspaceLogin({ role, onContinue }: { role: WorkspaceRole; onContinue: () => void }) {
   const isAdmin = role === 'admin';
+  const [authError, setAuthError] = useState('');
   /**
    * Starts the shared Google OAuth flow for the selected workspace.
    */
-  function startWorkspaceAuth() {
-    const destination = isAdmin ? '?next=%2Fadmin' : '';
-    window.location.assign(`/api/v1/auth/google${destination}`);
+  async function startWorkspaceAuth() {
+    setAuthError('');
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: `${window.location.origin}${isAdmin ? '/admin' : '/'}` },
+    });
+    if (error) setAuthError(error.message);
   }
 
   return (
@@ -199,6 +205,7 @@ function WorkspaceLogin({ role, onContinue }: { role: WorkspaceRole; onContinue:
         <p>{isAdmin ? 'Manage devices, people, and system health from one secure workspace.' : 'Follow your batches, conditions, and watering schedule in one calm view.'}</p>
         <button className="google-login-button" onClick={startWorkspaceAuth}><GoogleIcon /> Continue with Google <ArrowIcon /></button>
         <button className="preview-login-button" onClick={onContinue}>Preview dashboard</button>
+        {authError && <small className="form-error" role="alert">{authError}</small>}
         <small>Google authentication is required for {isAdmin ? 'administrators' : 'growers'}.</small>
         <a className="back-home" href="/">← Back to SproutSync home</a>
       </div>
@@ -239,7 +246,7 @@ function GrowerOverview({ activeNav }: { activeNav: string }) {
   useEffect(() => {
     if (activeNav !== 'Overview') return;
     const controller = new AbortController();
-    fetch('/api/v1/batches', { credentials: 'include', signal: controller.signal })
+    apiFetch('/api/v1/batches', { signal: controller.signal })
       .then((response) => {
         if (!response.ok) throw new Error('Batches unavailable');
         return response.json() as Promise<BatchSummary[]>;
@@ -303,7 +310,7 @@ function CreateBatchModal({ onClose, onCreated }: { onClose: () => void; onCreat
     setSaving(true);
     setError('');
     try {
-      const response = await fetch('/api/v1/batches', {
+      const response = await apiFetch('/api/v1/batches', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -426,8 +433,13 @@ function LandingPage() {
   /**
    * Starts the configured Google OAuth flow through the backend.
    */
-  function startGoogleAuth() {
-    window.location.assign('/api/v1/auth/google');
+  async function startGoogleAuth() {
+    setNotice('');
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: `${window.location.origin}/` },
+    });
+    if (error) setNotice(error.message);
   }
 
   return (

@@ -22,14 +22,12 @@ mobile features are not represented as complete by the current UI.
 - Landing-page sign-in, sign-up, and get-started actions are grower actions.
 - `/admin` remains the separate administrative entry point.
 - The legacy `/grower` route redirects to `/`.
-- Google OAuth uses the configured localhost callback and validates the
-  short-lived state cookie.
-- OAuth destination state returns growers to `/` and administrators to
-  `/admin`.
-- Successful OAuth creates or updates the user in Supabase PostgreSQL and
-  creates a server-side session.
-- The backend redirects successful login to the frontend rather than the API
-  root.
+- Google login is now initiated by Supabase Auth from the browser using the
+  PKCE flow.
+- FastAPI no longer exposes an OAuth callback or accepts Google client
+  secrets. It verifies Supabase bearer tokens through the Supabase Auth API.
+- Successful Supabase authentication is projected into the local `users` table
+  for ownership and role checks.
 - Supabase pooler connectivity and migrations `0001_identity` and
   `0002_batches` have been verified.
 - The dashboard visual system was refined for alignment: shared icon boxes,
@@ -81,10 +79,9 @@ tests, review evidence, and focused pull requests are complete.
    `docs/design-brief.md`, `docs/database-schema.md`, and
    `docs/implementation-plan.md`.
 2. Never place credentials in source control. Runtime secrets belong in the
-   ignored repository-root `.env`.
-3. Use `localhost` consistently for local Google OAuth testing:
-   `http://localhost:5173` and
-   `http://localhost:8000/api/v1/auth/google/callback`.
+   ignored repository-root `.env`. The Supabase anon key may be used in the
+   browser; service-role keys, Google secrets, and database passwords may not.
+3. Use `http://localhost:5173` as the Supabase Auth site and redirect URL.
 4. Treat preview data as preview data until the corresponding API and tests
    are complete.
 5. Before closing an issue, update the relevant documentation and include

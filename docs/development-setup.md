@@ -43,15 +43,27 @@ string from Supabase **Connect → ORMs → SQLAlchemy**. Use the pooler
 connection for local development when Supabase recommends it, and URL-encode
 special characters in the database password.
 
-Google sign-in requires a Google Cloud OAuth 2.0 Web client. Add the client ID
-and secret to `.env` and register this redirect URI:
+Google sign-in is managed by Supabase Auth. In Supabase Dashboard, enable the
+Google provider and enter the Google OAuth client ID and secret there. In
+Google Cloud Console, register the Supabase callback URI:
 
 ```text
-http://localhost:8000/api/v1/auth/google/callback
+https://egbocohxklbefxcewtlg.supabase.co/auth/v1/callback
 ```
 
-Restart the API after changing `.env`. Credentials are read only from the
-environment and must never be committed.
+Set the Supabase project URL and anon key in the ignored root `.env`:
+
+```env
+SUPABASE_URL=https://egbocohxklbefxcewtlg.supabase.co
+SUPABASE_ANON_KEY=your_supabase_anon_key
+VITE_SUPABASE_URL=https://egbocohxklbefxcewtlg.supabase.co
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
+
+The anon key is intentionally available to the browser; never put the service
+role key, Google client secret, or database password in a `VITE_` variable.
+Restart Vite and the API after changing `.env`. Credentials are read only from
+the environment and must never be committed.
 
 Open `http://localhost:5173`. The dashboard proxies `/api` requests to
 `http://127.0.0.1:8000`; the API documentation is at

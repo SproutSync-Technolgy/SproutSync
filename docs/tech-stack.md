@@ -101,21 +101,20 @@ Mosquitto are provisioned now, but the API does not yet consume either service.
 The current MQTT configuration is for loopback development only; production
 deployment requires TLS, credentials, and per-device ACLs.
 
-### Google authentication
+### Supabase Google authentication
 
-Google OAuth is configured through the backend, not the browser. The API
-stores users and hashed server-side session tokens in PostgreSQL. Configure a
-Google Cloud OAuth 2.0 Web application client with this authorized redirect
-URI:
+Google OAuth is managed by Supabase Auth using the browser PKCE flow. Configure
+the Google provider in Supabase and register this callback in the Google Cloud
+OAuth Web application:
 
 ```text
-http://localhost:8000/api/v1/auth/google/callback
+https://egbocohxklbefxcewtlg.supabase.co/auth/v1/callback
 ```
 
-Copy its client ID and secret into `.env` as `GOOGLE_CLIENT_ID` and
-`GOOGLE_CLIENT_SECRET`. Never commit those values. The dashboard's
-“Continue with Google” button opens `/api/v1/auth/google`; the callback creates
-or updates the local user and redirects back with an HTTP-only session cookie.
+The dashboard uses `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to start
+login. The API verifies the resulting bearer token through Supabase Auth and
+projects the identity into the local `users` table. The service-role key,
+Google client secret, and database password must remain server-side.
 
 ## Setup
 
