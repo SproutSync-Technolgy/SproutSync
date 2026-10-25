@@ -21,5 +21,9 @@ mobile/build/
 coverage/
 .coverage
 supabase/.temp/
-.DS_Store
 Thumbs.db
+
+# Prototypes and temporary reference exports
+docs/prototype/
+docs/*.zip
+docs/sproutsync_frontend_migration_plan.md

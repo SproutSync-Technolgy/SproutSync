@@ -4,8 +4,15 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+def _find_repo_root() -> Path:
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / ".git").exists() or (parent / "compose.yaml").exists():
+            return parent
+    return current.parent.parent
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+
+REPOSITORY_ROOT = _find_repo_root()
 
 
 class Settings(BaseSettings):

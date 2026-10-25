@@ -1,4 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { ProtoLanding } from './components/ProtoLanding';
+import { ProtoMobileApp } from './components/ProtoMobileApp';
+import { ProtoGrowerDashboard, type AuthenticatedUser } from './components/ProtoGrowerDashboard';
+import { normalizeAccountRole } from './data/prototypeFixtures';
 
 type DialogMode = 'signin' | 'signup' | null;
 
@@ -69,28 +73,75 @@ export function App() {
 
 /**
  * Resolves the grower session at the public root route before selecting the
- * landing page or the authenticated grower workspace.
+ * prototype landing page, mobile simulator, or the authenticated grower dashboard.
  */
 function GrowerEntry() {
   const [authState, setAuthState] = useState<'checking' | 'signed-out' | 'signed-in'>('checking');
+  const [user, setUser] = useState<AuthenticatedUser | null>(null);
+  const [view, setView] = useState<'landing' | 'mobileApp'>('landing');
 
   useEffect(() => {
     const controller = new AbortController();
     fetch('/api/v1/auth/me', { credentials: 'include', signal: controller.signal })
-      .then((response) => setAuthState(response.ok ? 'signed-in' : 'signed-out'))
+      .then(async (response) => {
+        if (!response.ok) {
+          setUser(null);
+          setAuthState('signed-out');
+          return;
+        }
+        const data = (await response.json()) as AuthenticatedUser;
+        setUser(data);
+        setAuthState('signed-in');
+      })
       .catch((error: unknown) => {
         if (error instanceof Error && error.name === 'AbortError') return;
+        setUser(null);
         setAuthState('signed-out');
       });
     return () => controller.abort();
   }, []);
 
+  async function handleLogout() {
+    try {
+      await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'include' });
+    } catch {
+      // Continue to signed-out state even if network request fails
+    }
+    setUser(null);
+    setAuthState('signed-out');
+    setView('landing');
+  }
+
+  function handleGetStarted() {
+    window.location.assign('/api/v1/auth/google');
+  }
+
   if (authState === 'checking') {
     return <main className="workspace-loading" aria-live="polite">Loading your SproutSync workspace…</main>;
   }
 
-  return authState === 'signed-in' ? <Workspace role="grower" authenticated /> : <LandingPage />;
+  if (authState === 'signed-in' && user) {
+    return (
+      <ProtoGrowerDashboard
+        user={user}
+        role={normalizeAccountRole(user.role)}
+        onLogout={handleLogout}
+      />
+    );
+  }
+
+  if (view === 'mobileApp') {
+    return <ProtoMobileApp onExit={() => setView('landing')} />;
+  }
+
+  return (
+    <ProtoLanding
+      onGetStarted={handleGetStarted}
+      onDownload={() => setView('mobileApp')}
+    />
+  );
 }
+
 
 /**
  * Renders the public marketing page while keeping its state isolated from
