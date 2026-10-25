@@ -4,6 +4,7 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 def _find_repo_root() -> Path:
     current = Path(__file__).resolve()
     for parent in current.parents:

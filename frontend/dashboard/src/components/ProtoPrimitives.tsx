@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useDialog } from './useDialog';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   X,
@@ -142,20 +143,8 @@ export function Modal({
   title: string;
   children: React.ReactNode;
 }) {
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', h);
-    return () => window.removeEventListener('keydown', h);
-  }, [onClose]);
-
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
+  const dialogRef = useDialog(open, onClose);
+  const titleId = React.useId();
 
   return (
     <AnimatePresence>
@@ -166,19 +155,26 @@ export function Modal({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={onClose}
+          role="presentation"
         >
           <motion.div
+            ref={dialogRef}
+            tabIndex={-1}
             className="max-h-[90vh] w-full overflow-y-auto overscroll-contain rounded-t-3xl border border-border bg-card p-6 sm:max-w-lg sm:rounded-2xl"
             initial={{ y: 40, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 40, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 320, damping: 30 }}
             onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
           >
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-bold text-foreground">{title}</h3>
+              <h3 id={titleId} className="text-lg font-bold text-foreground">{title}</h3>
               <button
                 onClick={onClose}
+                aria-label="Close dialog"
                 className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary"
               >
                 <X className="h-5 w-5" />

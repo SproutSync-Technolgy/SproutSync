@@ -21,9 +21,14 @@ async def get_current_user(
 ) -> User:
     """Verify a Supabase access token and project its identity into local users."""
     if credentials is None or credentials.scheme.lower() != "bearer":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required"
+        )
     if not settings.supabase_url or not settings.supabase_anon_key:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Supabase Auth is not configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Supabase Auth is not configured",
+        )
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -35,21 +40,37 @@ async def get_current_user(
                 },
             )
         if response.status_code == 401:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired or invalid")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session expired or invalid",
+            )
         response.raise_for_status()
         profile = response.json()
     except HTTPException:
         raise
     except httpx.HTTPError as auth_error:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Unable to verify Supabase session") from auth_error
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to verify Supabase session",
+        ) from auth_error
 
     subject = profile.get("id")
     email = profile.get("email")
     if not subject or not email:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Supabase profile is incomplete")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Supabase profile is incomplete",
+        )
+    if not profile.get("email_confirmed_at"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Verify your email before continuing",
+        )
 
     metadata = profile.get("user_metadata") or {}
-    display_name = metadata.get("full_name") or metadata.get("name") or email.split("@")[0]
+    display_name = (
+        metadata.get("full_name") or metadata.get("name") or email.split("@")[0]
+    )
     normalized_email = email.lower().strip()
     user = db.scalar(
         select(User).where(
@@ -68,12 +89,12 @@ async def get_current_user(
     else:
         user.google_subject = subject
         user.email = normalized_email
-        if metadata.get("full_name") or metadata.get("name"):
-            user.display_name = metadata.get("full_name") or metadata.get("name")
         if metadata.get("avatar_url") or metadata.get("picture"):
             user.avatar_url = metadata.get("avatar_url") or metadata.get("picture")
     db.commit()
     db.refresh(user)
     if not user.is_active:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User account is inactive")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="User account is inactive"
+        )
     return user

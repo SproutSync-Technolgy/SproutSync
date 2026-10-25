@@ -200,7 +200,8 @@ export function WaterUseChart({
 }) {
   const [showTable, setShowTable] = useState(false);
   const total = +data.reduce((s, d) => s + d.L, 0).toFixed(1);
-  const pcts = barPct(data.map((d) => d.L));
+  const maximum = Math.max(1, ...data.map((d) => d.L));
+  const pcts = data.map((d) => (d.L / maximum) * 100);
 
   if (!data.length) {
     return (

@@ -1,0 +1,16 @@
+import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+const base = process.argv[2] || 'http://127.0.0.1:4174';
+const manifestResponse = await fetch(new URL('/downloads/mobile-release.json', base));
+if (!manifestResponse.ok) throw new Error('Download manifest is not served');
+const manifest = await manifestResponse.json();
+if (!manifest.available || !manifest.url.startsWith('/downloads/')) throw new Error('No verified APK release is available');
+const response = await fetch(new URL(manifest.url, base));
+if (!response.ok) throw new Error('APK download failed');
+const apk = Buffer.from(await response.arrayBuffer());
+if (apk[0] !== 0x50 || apk[1] !== 0x4b) throw new Error('Download is not an APK/ZIP package');
+if (apk.length !== manifest.size_bytes) throw new Error('Served APK size does not match its manifest');
+if (createHash('sha256').update(apk).digest('hex') !== manifest.sha256) throw new Error('Served APK checksum mismatch');
+const built = await readFile(new URL('../frontend/dashboard/dist/downloads/sproutsync-preview.apk', import.meta.url));
+if (!apk.equals(built)) throw new Error('Server did not return the packaged APK');
+console.log(`Verified HTTP download: ${manifest.filename}, ${apk.length} bytes, SHA-256 matches.`);

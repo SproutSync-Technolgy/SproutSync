@@ -1,4 +1,3 @@
-import { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import {
   Leaf,
@@ -22,33 +21,21 @@ export function ProtoLanding({
   onSignUp: () => void;
   onDownload: () => void;
 }) {
-  const [apiStatus, setApiStatus] = useState<'checking' | 'ready' | 'offline'>('checking');
-
-  useEffect(() => {
-    const controller = new AbortController();
-    fetch('/api/v1/health', { signal: controller.signal })
-      .then((res) => {
-        if (res.ok) setApiStatus('ready');
-        else setApiStatus('offline');
-      })
-      .catch((err: unknown) => {
-        if (err instanceof Error && err.name === 'AbortError') return;
-        setApiStatus('offline');
-      });
-    return () => controller.abort();
-  }, []);
-
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="sticky top-0 z-30 border-b border-border/70 bg-background/80 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
-          <div className="flex items-center gap-3">
-            <Logo />
-            <span className="text-xl font-bold tracking-tight">SproutSync</span>
-          </div>
+          <a
+            href="/"
+            aria-label="SproutSync home"
+            className="group flex items-center gap-3 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          >
+            <Logo className="h-16 w-16 transition-transform duration-200 group-hover:scale-105 sm:h-20 sm:w-20" />
+            <span className="hidden text-xl font-bold tracking-tight sm:inline">SproutSync</span>
+          </a>
           <div className="flex items-center gap-2">
-            <Btn variant="ghost" onClick={onSignIn} className="hidden sm:inline-flex">
+            <Btn variant="ghost" onClick={onSignIn} className="px-3 sm:px-4">
               Sign in
             </Btn>
             <Btn onClick={onSignUp}>
@@ -200,26 +187,8 @@ export function ProtoLanding({
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-border py-8 text-center text-sm text-muted-foreground flex flex-col items-center gap-2">
+      <footer className="border-t border-border py-8 text-center text-sm text-muted-foreground">
         <p>© 2026 SproutSync · Automated Mung Bean Sprout Production</p>
-        <div className="flex items-center gap-2 text-xs">
-          <span
-            className={`h-2 w-2 rounded-full ${
-              apiStatus === 'ready'
-                ? 'bg-emerald-500'
-                : apiStatus === 'checking'
-                ? 'bg-amber-400'
-                : 'bg-slate-400'
-            }`}
-          />
-          <span>
-            {apiStatus === 'ready'
-              ? 'API connected'
-              : apiStatus === 'checking'
-              ? 'Checking API...'
-              : 'Standalone preview'}
-          </span>
-        </div>
       </footer>
     </div>
   );

@@ -19,6 +19,11 @@ mobile/.flutter-plugins-dependencies
 mobile/build/
 *.log
 coverage/
+.tools/
+test-results/
+playwright-report/
+frontend/dashboard/public/downloads/*.apk
+frontend/dashboard/public/downloads/mobile-release.json
 .coverage
 supabase/.temp/
 Thumbs.db

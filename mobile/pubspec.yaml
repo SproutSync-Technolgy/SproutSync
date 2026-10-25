@@ -1,5 +1,5 @@
 name: sproutsync_mobile
-description: SproutSync grower mobile application scaffold.
+description: SproutSync mobile monitoring and evaluation workspace.
 publish_to: "none"
 version: 0.1.0+1
 
@@ -9,6 +9,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  supabase_flutter: ^2.10.0
+  mobile_scanner: ^7.1.0
 
 dev_dependencies:
   flutter_lints: ^5.0.0

@@ -158,6 +158,15 @@ button { cursor: pointer; }
   .feature-grid { grid-template-columns: 1fr; padding: 48px 18px 60px; }.closing-section { padding: 54px 18px; }.site-footer { align-items: flex-start; flex-direction: column; padding: 20px 18px; }.notice { bottom: 12px; left: 12px; right: 12px; }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+
 /* Role workspaces use a denser application layout than the public landing page. */
 .workspace-shell { background: #f4f8f4; color: #183d2e; display: flex; min-height: 100vh; }
 .workspace-loading { align-items: center; background: #f4f8f4; color: #47725a; display: flex; font-size: 14px; justify-content: center; min-height: 100vh; }

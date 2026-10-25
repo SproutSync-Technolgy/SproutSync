@@ -35,6 +35,9 @@ import {
   ChevronDown,
   Timer,
   Waves,
+  RefreshCw,
+  Database,
+  Info,
   type LucideIcon,
 } from 'lucide-react';
 import chamberViews from '../assets/chamber-views.png';
@@ -224,21 +227,41 @@ export function ProtoGrowerDashboard({
   const [loading, setLoading] = useState(true);
   const [displayName, setDisplayName] = useState(user.display_name || user.email || 'Grower');
   const [modal, setModal] = useState<null | { title: string; body: React.ReactNode }>(null);
+  const [batchState, setBatchState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [toast, setToast] = useState<string | null>(null);
 
   // Live database batches
   const [liveBatches, setLiveBatches] = useState<LiveBatch[]>([]);
 
-  useEffect(() => {
+  const loadBatches = React.useCallback(() => {
     const controller = new AbortController();
+    setBatchState('loading');
     apiFetch('/api/v1/batches', { signal: controller.signal })
       .then((res) => {
-        if (!res.ok) return [];
+        if (!res.ok) throw new Error('Unable to load database batches');
         return res.json() as Promise<LiveBatch[]>;
       })
-      .then((data) => setLiveBatches(data || []))
-      .catch(() => setLiveBatches([]));
-    return () => controller.abort();
+      .then((data) => {
+        setLiveBatches(data || []);
+        setBatchState('ready');
+      })
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.name === 'AbortError') return;
+        setBatchState('error');
+      });
+    return controller;
   }, []);
+
+  useEffect(() => {
+    const controller = loadBatches();
+    return () => controller.abort();
+  }, [loadBatches]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 3200);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
 
   useEffect(() => {
     setLoading(true);
@@ -350,11 +373,21 @@ export function ProtoGrowerDashboard({
             setDisplayName(n);
             setModal(null);
             try {
-              await supabase.auth.updateUser({
+              const { error: authUpdateError } = await supabase.auth.updateUser({
                 data: { full_name: n },
               });
+              if (authUpdateError) throw authUpdateError;
+              if (user.id > 0) {
+                const { error: profileUpdateError } = await supabase
+                  .from('users')
+                  .update({ display_name: n })
+                  .eq('id', user.id);
+                if (profileUpdateError) throw profileUpdateError;
+              }
+              setToast('Profile saved');
             } catch (err) {
               console.warn('Failed to sync display name to Supabase user metadata:', err);
+              setToast('Name updated locally; database sync failed');
             }
           }}
           onCancel={() => setModal(null)}
@@ -401,8 +434,10 @@ export function ProtoGrowerDashboard({
         }`}
       >
         <div className="flex items-center gap-3 px-5 py-5">
-          <Logo />
-          <span className="text-xl font-bold">SproutSync</span>
+          <a href="/" className="flex items-center gap-3 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60" aria-label="SproutSync home">
+            <Logo className="h-14 w-14" />
+            <span className="text-xl font-bold">SproutSync</span>
+          </a>
           <button
             onClick={() => setSidebarOpen(false)}
             className="ml-auto rounded-lg p-1 hover:bg-sidebar-accent lg:hidden"
@@ -591,7 +626,24 @@ export function ProtoGrowerDashboard({
                       <LifeBuoy className="h-4 w-4" /> Help &amp; FAQ
                     </button>
                     <button
-                      onClick={onLogout}
+                      onClick={() => {
+                        setProfileOpen(false);
+                        setModal({
+                          title: 'Sign out of SproutSync?',
+                          body: (
+                            <div className="space-y-5">
+                              <div className="flex gap-3 rounded-xl bg-secondary p-4">
+                                <Info className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+                                <p className="text-sm text-muted-foreground">You will return to the public home page. Your saved database records will not be affected.</p>
+                              </div>
+                              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                                <Btn variant="outline" onClick={() => setModal(null)}>Cancel</Btn>
+                                <Btn onClick={() => { setModal(null); setToast('Signing out securely…'); void onLogout(); }} className="bg-red-600 hover:bg-red-700">Sign out</Btn>
+                              </div>
+                            </div>
+                          ),
+                        });
+                      }}
                       className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-600 hover:bg-red-50"
                     >
                       <LogOut className="h-4 w-4" /> Sign out
@@ -634,6 +686,8 @@ export function ProtoGrowerDashboard({
                     <HybridBatchesView
                       role={role}
                       liveBatches={liveBatches}
+                      batchState={batchState}
+                      onRetry={loadBatches}
                       onBatchCreated={(b) => setLiveBatches((prev) => [b, ...prev])}
                       setModal={setModal}
                     />
@@ -655,6 +709,13 @@ export function ProtoGrowerDashboard({
       <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.title ?? ''}>
         {modal?.body}
       </Modal>
+      <AnimatePresence>
+        {toast && (
+          <motion.div role="status" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 16 }} className="fixed bottom-5 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white shadow-2xl">
+            <CheckCircle2 className="h-4 w-4 text-emerald-400" /> {toast}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -937,11 +998,15 @@ function TechnicalAdminHome({
 function HybridBatchesView({
   role,
   liveBatches,
+  batchState,
+  onRetry,
   onBatchCreated,
   setModal,
 }: {
   role: Role;
   liveBatches: LiveBatch[];
+  batchState: 'loading' | 'ready' | 'error';
+  onRetry: () => unknown;
   onBatchCreated: (b: LiveBatch) => void;
   setModal: (m: { title: string; body: React.ReactNode }) => void;
 }) {
@@ -959,9 +1024,9 @@ function HybridBatchesView({
       {/* Top Header with + New batch action */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-bold">Active Chamber Batches</h2>
+          <h2 className="text-xl font-bold">Production batches</h2>
           <p className="text-sm text-muted-foreground">
-            3 fixed demonstration trays with real-time lifecycle tracking plus live database batches.
+            Authenticated records from the SproutSync database. Demonstration telemetry is separated below.
           </p>
         </div>
         {canCreate && (
@@ -971,34 +1036,25 @@ function HybridBatchesView({
         )}
       </div>
 
-      {/* Live created batches (if any exist in Supabase/Postgres) */}
-      {liveBatches.length > 0 && (
-        <div className="space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-primary">
-            Database Production Batches ({liveBatches.length})
-          </p>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {liveBatches.map((b) => (
-              <Card key={b.id} className="border-emerald-300/80 bg-emerald-50/20">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold">{b.code}</span>
-                  <Badge tone="green">{b.stage}</Badge>
-                </div>
-                <p className="text-xs text-muted-foreground">{b.seed_type}</p>
-                <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-                  <span>Status: {b.status}</span>
-                  <span>{b.target_harvest_at ? `ETA: ${new Date(b.target_harvest_at).toLocaleDateString()}` : 'Live record'}</span>
-                </div>
-              </Card>
-            ))}
-          </div>
+      <Card className="overflow-hidden p-0">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+          <div className="flex items-center gap-2"><Database className="h-4 w-4 text-primary" /><h3 className="font-bold">Database records</h3><Badge tone={batchState === 'error' ? 'red' : 'green'}>{batchState === 'ready' ? 'Connected' : batchState === 'loading' ? 'Syncing' : 'Unavailable'}</Badge></div>
+          <button onClick={() => onRetry()} disabled={batchState === 'loading'} className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/10 disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${batchState === 'loading' ? 'animate-spin' : ''}`} /> Refresh</button>
         </div>
-      )}
+        {batchState === 'loading' ? <div className="p-8 text-center text-sm text-muted-foreground">Loading production records…</div> : batchState === 'error' ? <div className="p-8 text-center"><p className="font-semibold">Database records could not be loaded</p><p className="mt-1 text-sm text-muted-foreground">Check the API connection and try again.</p></div> : liveBatches.length === 0 ? <div className="p-8 text-center"><p className="font-semibold">No production batches yet</p><p className="mt-1 text-sm text-muted-foreground">Create a batch to add the first database record.</p></div> : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[680px] text-left text-sm">
+              <thead className="bg-secondary/70 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-5 py-3">Code</th><th className="px-5 py-3">Seed type</th><th className="px-5 py-3">Stage</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Target harvest</th></tr></thead>
+              <tbody>{liveBatches.map((b) => <tr key={b.id} className="border-t border-border/70 transition-colors hover:bg-secondary/40"><td className="px-5 py-4 font-semibold">{b.code}</td><td className="px-5 py-4 text-muted-foreground">{b.seed_type}</td><td className="px-5 py-4"><Badge tone="green">{b.stage}</Badge></td><td className="px-5 py-4 capitalize">{b.status}</td><td className="px-5 py-4 text-muted-foreground">{b.target_harvest_at ? new Date(b.target_harvest_at).toLocaleDateString() : 'Not set'}</td></tr>)}</tbody>
+            </table>
+          </div>
+        )}
+      </Card>
 
       {/* Prototype Fixed 3-Tray Demo Batches */}
       <div>
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
-          Chamber Physical Trays (Fixed Demo)
+          Demonstration chamber telemetry (not database data)
         </p>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {FIXED_BATCHES.map((b) => (

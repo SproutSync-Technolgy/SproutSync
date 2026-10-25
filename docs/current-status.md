@@ -1,6 +1,6 @@
 # Current Development Status
 
-Updated: 2026-10-22
+Updated: 2026-10-26
 
 ## Repository handoff summary
 
@@ -10,26 +10,48 @@ organized by delivery boundary:
 - `frontend/` contains the React/Vite web application.
 - `backend/` contains the FastAPI, SQLAlchemy, and Alembic API.
 - `iot/` is reserved for ESP32 firmware and device integration.
-- `mobile/` contains the future Flutter scaffold.
+- `mobile/` contains the native Flutter app and Android/iOS/web host projects.
 - `database/`, `infrastructure/`, and `docs/` contain shared delivery assets.
 
-The current active development target is the web software slice. Hardware and
-mobile features are not represented as complete by the current UI.
+The current active software slice is the connected web workspace, with a
+responsive mobile web experience and a Flutter client sharing the
+same Supabase project.
 
 ## Completed in the current slice
 
-- Root URL (`/`) is the grower entry point.
-- Landing-page sign-in, sign-up, and get-started actions are grower actions.
-- `/admin` remains the separate administrative entry point.
-- The legacy `/grower` route redirects to `/`.
+- Root URL (`/`) is the public grower/evaluator landing page.
+- `/dashboard` is the evaluator workspace and `/operator` is the restricted
+  operator workspace. `/admin` redirects to `/operator` for compatibility.
+- Operator/admin sessions are redirected away from the evaluator workspace;
+  evaluators cannot open operator controls.
 - Google login is now initiated by Supabase Auth from the browser using the
   PKCE flow.
 - FastAPI no longer exposes an OAuth callback or accepts Google client
   secrets. It verifies Supabase bearer tokens through the Supabase Auth API.
 - Successful Supabase authentication is projected into the local `users` table
   for ownership and role checks.
-- Supabase pooler connectivity and migrations `0001_identity` and
-  `0002_batches` have been verified.
+- Verified-profile onboarding supports email/password signup, numeric email
+  verification, personal details, and the dashboard redirect. Google accounts
+  use the same personal-details gate.
+- New Google accounts verify their inbox after OAuth and then confirm or edit
+  personal details prefilled from Google metadata. Existing completed accounts
+  go directly to the dashboard. Database functions enforce the new-account
+  OTP requirement using signed Supabase authentication claims.
+- The workspace reads batches, devices, telemetry, irrigation, alerts,
+  evidence, evaluations, maintenance, access grants, and activity from
+  Supabase tables with RLS policies. New schema is documented in
+  `docs/workspace-release.md`.
+- The previous demonstration values are now persisted in Supabase with
+  `is_demo` labels: three batches, ten devices, three alerts, six conditions,
+  weekly water history, planned evidence checks and maintenance. Operators
+  with empty workspaces receive owned samples; evaluators can review a sample
+  workspace until operational records are shared with them.
+- Profile & settings is available from the avatar menu rather than the left
+  navigation, leaving the navigation focused on production and evaluation
+  tasks.
+- The account menu provides profile/settings/help actions and a Yes/No sign-out
+  confirmation. The landing footer intentionally contains no “System ready”
+  status badge.
 - The dashboard visual system was refined for alignment: shared icon boxes,
   button heights, card grids, panel headers, and responsive breakpoints.
 - Loading, empty, unavailable, preview, and error states remain explicit.
@@ -39,13 +61,17 @@ mobile features are not represented as complete by the current UI.
 The following checks passed for this slice:
 
 ```text
-npm.cmd run typecheck
 npm.cmd run build
-python -m compileall -q backend\api\app
+npm.cmd run test:browser -w @sproutsync/dashboard
+python -m compileall -q backend\api\app backend\api\tests
+python -m pytest backend\api\tests\test_workspace_permissions.py
 git diff --check
 ```
 
-The live checks also passed:
+All commands above passed. The backend test run reports one upstream
+Starlette/httpx deprecation warning; it does not fail the suite.
+
+Historical manual OAuth checks recorded before this implementation (not repeated by the browser mocks):
 
 - `GET /api/v1/health` returned HTTP 200.
 - Google OAuth consent completed successfully.
@@ -56,10 +82,13 @@ The live checks also passed:
 
 ## Known boundaries
 
-This slice does not close the full software issues. Preview dashboard data,
-admin role authorization, complete batch history, watering, telemetry,
-conditions, alerts, exports, automated API tests, CI, deployment, and Flutter
-features remain incomplete.
+Controller ingestion, physical irrigation/Wi-Fi provisioning, native push,
+production store signing and deployment remain external integration work.
+Hosted Supabase email templates, SMTP sender settings and callback allowlists
+need project-administrator configuration as detailed in `workspace-release.md`.
+The native Flutter app passes analysis and four widget tests. The Android
+preview compiled successfully and its Android v2 signature is verified.
+It is built by `scripts/build_mobile.py` and served through `/download`.
 
 GitHub tracking remains:
 
@@ -81,8 +110,12 @@ tests, review evidence, and focused pull requests are complete.
 2. Never place credentials in source control. Runtime secrets belong in the
    ignored repository-root `.env`. The Supabase anon key may be used in the
    browser; service-role keys, Google secrets, and database passwords may not.
-3. Use `http://localhost:5173` as the Supabase Auth site and redirect URL.
-4. Treat preview data as preview data until the corresponding API and tests
-   are complete.
+3. Configure Supabase redirects for `/`, `/dashboard`, `/operator`, and
+   `/reset-password`; keep the Google provider callback at the Supabase Auth
+   callback URL.
+4. The configured database is migrated through `0009_database_demo`. Use
+   `alembic upgrade head` on other environments. Validate pending changes with
+   `scripts/validate_pending_migrations.py` and verify permissions using the
+   rollback-only RLS and Google onboarding scripts.
 5. Before closing an issue, update the relevant documentation and include
    exact validation results in the pull request.
