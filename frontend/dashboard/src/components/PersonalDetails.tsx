@@ -73,7 +73,7 @@ export function PersonalDetails({
         )}
         <div>
           <p className="text-xs font-semibold uppercase tracking-widest text-primary">
-            {editing ? "Your profile" : "Email verified"}
+            {editing ? "Your profile" : "Profile details"}
           </p>
           <h1 className="mt-1 text-2xl font-bold">
             {editing

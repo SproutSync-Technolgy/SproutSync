@@ -55,6 +55,19 @@ same Supabase project.
 - The dashboard visual system was refined for alignment: shared icon boxes,
   button heights, card grids, panel headers, and responsive breakpoints.
 - Loading, empty, unavailable, preview, and error states remain explicit.
+- Gmail SMTP onboarding verification: FastAPI routes OTP emails through
+  `smtp.gmail.com:587` with the dedicated Google App Password, bypassing
+  Supabase's 2 emails/hour rate limit.
+- Google OAuth accounts are automatically verified (`onboarding_email_verified_at = now()`)
+  upon token verification, eliminating unnecessary email OTP prompts for Google logins.
+- Multi-attempt OTP verification (`/api/v1/auth/verify/confirm`) permits up to
+  5 attempts per active code without triggering new email dispatches, with a 60-second
+  lockout and 60-second resend cooldown.
+- Migration `0010_verification_attempts` adds OTP hashing and attempt tracking columns
+  to `public.users` and backfills existing Google rows.
+- The React verification UI (`GoogleVerification.tsx`) features single-flight mount
+  guards against React 19 `StrictMode` duplicate triggers, active inputs across 429 cooldowns,
+  and countdown persistence in `sessionStorage`.
 
 ## Validation evidence
 

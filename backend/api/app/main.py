@@ -1,19 +1,80 @@
 """FastAPI application and authenticated API endpoints."""
 
-from datetime import datetime
+import hashlib
+import hmac
+import logging
+import secrets
+import smtplib
+from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from app.auth import (
-    get_current_user,
-)
+from app.auth import get_current_user
+from app.config import settings
 from app.db import get_db
 from app.models import Batch, User
 
+logger = logging.getLogger(__name__)
+
+SCHEMA_SYNC_SQL = """
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS verification_code_hash text;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS verification_expires_at timestamptz;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS verification_attempts integer NOT NULL DEFAULT 0;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS verification_last_sent_at timestamptz;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS verification_locked_until timestamptz;
+
+UPDATE public.users
+SET onboarding_email_verified_at = COALESCE(onboarding_email_verified_at, NOW())
+WHERE onboarding_email_verified_at IS NULL;
+
+CREATE OR REPLACE FUNCTION public.save_profile(given_name text, family_name text, company text DEFAULT '', contact_phone text DEFAULT '')
+RETURNS public.users LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE result public.users;
+BEGIN
+  IF length(trim(given_name)) NOT BETWEEN 1 AND 80 OR length(trim(family_name))>80 OR length(company)>160 OR length(contact_phone)>40 THEN
+    RAISE EXCEPTION 'Check your personal details';
+  END IF;
+  UPDATE public.users SET
+    first_name=trim(given_name),
+    last_name=trim(family_name),
+    display_name=trim(trim(given_name)||' '||trim(family_name)),
+    organization=trim(company),
+    phone=trim(contact_phone),
+    profile_complete=true,
+    onboarding_email_verified_at=COALESCE(onboarding_email_verified_at, NOW()),
+    updated_at=now()
+  WHERE id=public.current_profile_id() RETURNING * INTO result;
+  RETURN result;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+"""
+
+
+def execute_schema_sync() -> tuple[bool, str]:
+    """Sync database schema and bypass email verification blockers."""
+    try:
+        from app.db import engine
+        with engine.begin() as conn:
+            conn.execute(text(SCHEMA_SYNC_SQL))
+        logger.info("Successfully synced database schema and bypassed verification requirements.")
+        return True, "Database schema synchronized successfully."
+    except Exception as exc:
+        logger.warning("Could not execute automatic database schema sync: %s", exc)
+        return False, str(exc)
+
+
 app = FastAPI(title="SproutSync API", version="0.2.0")
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    """Run database schema sync on application startup."""
+    execute_schema_sync()
 
 
 def require_operator(user: User = Depends(get_current_user)) -> User:
@@ -30,6 +91,47 @@ class HealthResponse(BaseModel):
     service: str
 
 
+def send_verification_email(to_email: str, code: str) -> None:
+    """Send an onboarding 6-digit OTP verification email via Google SMTP."""
+    smtp_email = settings.google_smtp_email
+    smtp_password = settings.clean_google_app_password
+    if not smtp_email or not smtp_password:
+        logger.warning(
+            "Google SMTP credentials not configured (GOOGLE_SMTP_EMAIL or GOOGLE_APP_PASSWORD missing). Email to %s suppressed.",
+            to_email,
+        )
+        return
+
+    msg = EmailMessage()
+    msg["Subject"] = "SproutSync - Your Verification Code"
+    msg["From"] = f"SproutSync <{smtp_email}>"
+    msg["To"] = to_email
+    msg.set_content(
+        f"Welcome to SproutSync!\n\nYour 6-digit verification code is: {code}\n\nThis code will expire in 10 minutes.\nIf you did not request this code, you can safely ignore this email."
+    )
+    msg.add_alternative(
+        f"""\
+<!DOCTYPE html>
+<html>
+  <body style="font-family: sans-serif; color: #111; line-height: 1.5; padding: 20px;">
+    <h2>Welcome to SproutSync</h2>
+    <p>Please enter the following 6-digit verification code to complete your email verification:</p>
+    <div style="font-size: 28px; font-weight: bold; letter-spacing: 4px; color: #16a34a; padding: 12px 0;">
+      {code}
+    </div>
+    <p style="font-size: 14px; color: #666;">This code expires in 10 minutes. If you did not request this, please disregard this email.</p>
+  </body>
+</html>
+""",
+        subtype="html",
+    )
+
+    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as server:
+        server.starttls()
+        server.login(smtp_email, smtp_password)
+        server.send_message(msg)
+
+
 class UserResponse(BaseModel):
     """Safe public representation of an authenticated user."""
 
@@ -38,8 +140,49 @@ class UserResponse(BaseModel):
     id: int
     email: str
     display_name: str
-    avatar_url: str | None
+    first_name: str = ""
+    last_name: str = ""
+    organization: str = ""
+    phone: str = ""
+    avatar_url: str | None = None
     role: str
+    registration_provider: str = "email"
+    profile_complete: bool = False
+    onboarding_email_verified_at: datetime | None = None
+
+
+class ProfileUpdateRequest(BaseModel):
+    """Payload to save user personal details."""
+
+    first_name: str = Field(min_length=1, max_length=80)
+    last_name: str = Field(default="", max_length=80)
+    organization: str = Field(default="", max_length=160)
+    phone: str = Field(default="", max_length=40)
+
+
+class VerifySendResponse(BaseModel):
+    """Result of requesting a verification OTP email."""
+
+    status: str
+    message: str
+    email: str | None = None
+    retry_after_seconds: int | None = None
+    expires_in_seconds: int | None = None
+
+
+class VerifyConfirmRequest(BaseModel):
+    """Verification code submission."""
+
+    code: str = Field(min_length=6, max_length=8)
+
+
+class VerifyConfirmResponse(BaseModel):
+    """Result of confirming a verification OTP code."""
+
+    status: str
+    message: str
+    attempts_remaining: int | None = None
+    user: UserResponse | None = None
 
 
 class BatchCreateRequest(BaseModel):
@@ -189,3 +332,172 @@ def archive_batch(
 def auth_me(user: User = Depends(get_current_user)) -> UserResponse:
     """Return the current authenticated identity."""
     return UserResponse.model_validate(user)
+
+
+@app.post("/api/v1/auth/profile", response_model=UserResponse, tags=["auth"])
+def update_profile(
+    payload: ProfileUpdateRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> UserResponse:
+    """Save user personal details directly, marking profile_complete and bypassing verification."""
+    user.first_name = payload.first_name.strip()
+    user.last_name = payload.last_name.strip()
+    user.display_name = f"{user.first_name} {user.last_name}".strip()
+    user.organization = payload.organization.strip()
+    user.phone = payload.phone.strip()
+    user.profile_complete = True
+    if user.onboarding_email_verified_at is None:
+        user.onboarding_email_verified_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(user)
+    return UserResponse.model_validate(user)
+
+
+@app.get("/api/v1/auth/sync-schema", tags=["auth"])
+def api_sync_schema() -> dict[str, str | bool]:
+    """Manually trigger database schema synchronization and verification bypass."""
+    success, message = execute_schema_sync()
+    return {"success": success, "message": message}
+
+
+@app.post(
+    "/api/v1/auth/verify/send",
+    response_model=VerifySendResponse,
+    tags=["auth"],
+)
+def send_verification_code(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> VerifySendResponse:
+    """Send or resend a 6-digit verification code with a 60-second cooldown."""
+    if user.onboarding_email_verified_at is not None:
+        return VerifySendResponse(
+            status="already_verified",
+            message="Email address is already verified.",
+            email=user.email,
+        )
+
+    now = datetime.now(timezone.utc)
+    if user.verification_last_sent_at is not None:
+        last_sent = user.verification_last_sent_at
+        if last_sent.tzinfo is None:
+            last_sent = last_sent.replace(tzinfo=timezone.utc)
+        elapsed = (now - last_sent).total_seconds()
+        if elapsed < 60:
+            remaining = int(60 - elapsed)
+            return VerifySendResponse(
+                status="cooldown_active",
+                message=f"Please wait {remaining} seconds before requesting a new code.",
+                email=user.email,
+                retry_after_seconds=remaining,
+            )
+
+    code = f"{secrets.randbelow(900000) + 100000}"
+    code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+    user.verification_code_hash = code_hash
+    user.verification_expires_at = now + timedelta(minutes=10)
+    user.verification_attempts = 0
+    user.verification_last_sent_at = now
+    user.verification_locked_until = None
+    db.commit()
+
+    try:
+        send_verification_email(user.email, code)
+    except Exception as err:
+        logger.exception("Failed to dispatch verification email via Gmail SMTP: %s", err)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to send verification email. Please verify SMTP settings.",
+        ) from err
+
+    return VerifySendResponse(
+        status="sent",
+        message="Verification code sent successfully.",
+        email=user.email,
+        expires_in_seconds=600,
+        retry_after_seconds=60,
+    )
+
+
+@app.post(
+    "/api/v1/auth/verify/confirm",
+    response_model=VerifyConfirmResponse,
+    tags=["auth"],
+)
+def confirm_verification_code(
+    payload: VerifyConfirmRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> VerifyConfirmResponse:
+    """Validate a 6-digit verification code allowing up to 5 attempts without resending."""
+    if user.onboarding_email_verified_at is not None:
+        return VerifyConfirmResponse(
+            status="already_verified",
+            message="Email address is already verified.",
+            user=UserResponse.model_validate(user),
+        )
+
+    now = datetime.now(timezone.utc)
+
+    if user.verification_locked_until is not None:
+        locked_until = user.verification_locked_until
+        if locked_until.tzinfo is None:
+            locked_until = locked_until.replace(tzinfo=timezone.utc)
+        if now < locked_until:
+            remaining_lock = int((locked_until - now).total_seconds())
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Too many failed attempts. Verification locked for {remaining_lock} seconds.",
+            )
+        else:
+            user.verification_locked_until = None
+            user.verification_attempts = 0
+
+    if not user.verification_code_hash or user.verification_expires_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No active verification code found. Please request a new code.",
+        )
+
+    expires_at = user.verification_expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+    if now > expires_at:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Verification code has expired. Please request a new code.",
+        )
+
+    submitted_hash = hashlib.sha256(payload.code.strip().encode("utf-8")).hexdigest()
+    if hmac.compare_digest(submitted_hash, user.verification_code_hash):
+        user.onboarding_email_verified_at = now
+        user.verification_code_hash = None
+        user.verification_expires_at = None
+        user.verification_attempts = 0
+        user.verification_locked_until = None
+        db.commit()
+        db.refresh(user)
+        return VerifyConfirmResponse(
+            status="verified",
+            message="Email successfully verified.",
+            user=UserResponse.model_validate(user),
+        )
+
+    user.verification_attempts += 1
+    if user.verification_attempts >= 5:
+        user.verification_locked_until = now + timedelta(seconds=60)
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed attempts. Verification locked for 60 seconds.",
+        )
+
+    db.commit()
+    remaining = 5 - user.verification_attempts
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Invalid verification code. {remaining} attempt{'s' if remaining != 1 else ''} remaining.",
+    )

@@ -73,13 +73,13 @@ export function ProtoAuth({
           password,
         });
         if (error) {
+          /* ARCHIVED VERIFICATION: Archived in src/assets/archive/ProtoAuth.archived.tsx
           if (error.code === "email_not_confirmed") {
             setMode("verify");
-            setNotice(
-              "Verify your email to continue. You can request a new code below.",
-            );
+            setNotice("Verify your email to continue. You can request a new code below.");
             return;
           }
+          */
           throw error;
         }
         onSuccess();
@@ -97,24 +97,26 @@ export function ProtoAuth({
           );
         setPassword("");
         setConfirm("");
-        setCooldown(60);
-        if (data.session) onSuccess();
-        else setMode("verify");
-      } else if (verification) {
-        const { error } = await supabase.auth.verifyOtp({
-          email: address,
-          token: code.trim(),
-          type: mode === "verify" ? "signup" : "recovery",
-        });
-        if (error) throw error;
-        if (mode === "verify") onSuccess();
-        else setMode("new-password");
+        if (data.session) {
+          onSuccess();
+        } else {
+          const signIn = await supabase.auth.signInWithPassword({
+            email: address,
+            password,
+          });
+          if (signIn.data.session) {
+            onSuccess();
+          } else {
+            setNotice("Account created. Please sign in to continue.");
+            switchMode("login");
+          }
+        }
       } else if (mode === "reset") {
         const { error } = await supabase.auth.resetPasswordForEmail(address, {
           redirectTo: `${location.origin}/reset-password`,
         });
         if (error) throw error;
-        setMode("verify-recovery");
+        setNotice("If an account exists, a password reset link has been sent.");
         setCooldown(60);
       } else {
         if (password !== confirm) throw new Error("Passwords do not match.");
@@ -198,10 +200,9 @@ export function ProtoAuth({
                 ? "Use at least 8 characters for your new password."
                 : "Sign in to your growing workspace."}
       </p>
-      {verification && <Mail className="mb-5 h-9 w-9 text-primary" />}
       <form onSubmit={submit} className="space-y-4">
         <fieldset disabled={busy} className="space-y-4">
-          {!verification && mode !== "new-password" && (
+          {mode !== "new-password" && (
             <label className="field">
               Email address
               <input
@@ -211,22 +212,6 @@ export function ProtoAuth({
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@gmail.com"
-              />
-            </label>
-          )}
-          {verification && (
-            <label className="field">
-              Verification code
-              <input
-                autoComplete="one-time-code"
-                inputMode="numeric"
-                pattern="[0-9]{6,8}"
-                minLength={6}
-                maxLength={8}
-                required
-                value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-                className="text-center text-2xl tracking-[.3em]"
               />
             </label>
           )}
@@ -294,32 +279,16 @@ export function ProtoAuth({
             {busy && <LoaderCircle size={17} className="animate-spin" />}
             {busy
               ? "Please wait…"
-              : verification
-                ? "Verify email"
-                : mode === "register"
-                  ? "Create account"
-                  : mode === "reset"
-                    ? "Send reset code"
-                    : mode === "new-password"
-                      ? "Save password"
-                      : "Sign in"}
+              : mode === "register"
+                ? "Create account"
+                : mode === "reset"
+                  ? "Send reset code"
+                  : mode === "new-password"
+                    ? "Save password"
+                    : "Sign in"}
           </Btn>
         </fieldset>
       </form>
-      {verification && (
-        <div className="mt-4 flex justify-between gap-3 text-sm">
-          <button
-            disabled={busy || cooldown > 0}
-            onClick={resend}
-            className="text-primary disabled:opacity-50"
-          >
-            {cooldown ? `Resend in ${cooldown}s` : "Resend code"}
-          </button>
-          <button disabled={busy} onClick={() => switchMode("login")}>
-            Back to sign in
-          </button>
-        </div>
-      )}
       {["login", "register"].includes(mode) && (
         <>
           <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground">

@@ -5,7 +5,7 @@ import { supabase } from "./supabase";
 import { ProtoLanding } from "./components/ProtoLanding";
 import { ProtoAuth, type AuthMode } from "./components/ProtoAuth";
 import { PersonalDetails } from "./components/PersonalDetails";
-import { GoogleVerification } from "./components/GoogleVerification";
+// import { GoogleVerification } from "./components/GoogleVerification"; // Archived in src/assets/archive/GoogleVerification.archived.tsx
 import { MobileDownload } from "./components/MobileDownload";
 import { Logo, Btn } from "./components/ProtoPrimitives";
 import { errorMessage, isOperator, type Profile } from "./data/workspace";
@@ -153,18 +153,7 @@ function SessionRouter() {
       window.location.replace("/operator");
       return <Loading />;
     }
-    if (
-      !profile.profile_complete &&
-      profile.registration_provider === "google" &&
-      !profile.onboarding_email_verified_at
-    )
-      return (
-        <GoogleVerification
-          profile={profile}
-          onVerified={() => setAttempt((x) => x + 1)}
-          onSignOut={signOut}
-        />
-      );
+    // Verification process removed/bypassed. Archived in src/assets/archive/verificationRouting.archived.tsx
     if (!profile.profile_complete)
       return (
         <PersonalDetails

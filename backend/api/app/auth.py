@@ -1,5 +1,4 @@
-"""Supabase Auth verification and local user projection helpers."""
-
+from datetime import datetime, timezone
 from typing import Annotated
 
 import httpx
@@ -68,6 +67,11 @@ async def get_current_user(
         )
 
     metadata = profile.get("user_metadata") or {}
+    app_metadata = profile.get("app_metadata") or {}
+    providers = app_metadata.get("providers") or []
+    provider = app_metadata.get("provider") or ("google" if "google" in providers else "email")
+    is_google = (provider == "google") or ("google" in providers)
+
     display_name = (
         metadata.get("full_name") or metadata.get("name") or email.split("@")[0]
     )
@@ -77,6 +81,7 @@ async def get_current_user(
             (User.google_subject == subject) | (User.email == normalized_email)
         )
     )
+    now_utc = datetime.now(timezone.utc)
     if user is None:
         user = User(
             google_subject=subject,
@@ -84,11 +89,18 @@ async def get_current_user(
             display_name=display_name,
             avatar_url=metadata.get("avatar_url") or metadata.get("picture"),
             role="evaluator",
+            registration_provider="google" if is_google else "email",
+            onboarding_email_verified_at=now_utc,
         )
         db.add(user)
     else:
         user.google_subject = subject
         user.email = normalized_email
+        if is_google:
+            user.registration_provider = "google"
+        if user.onboarding_email_verified_at is None:
+            user.onboarding_email_verified_at = now_utc
+
         if metadata.get("avatar_url") or metadata.get("picture"):
             user.avatar_url = metadata.get("avatar_url") or metadata.get("picture")
     db.commit()

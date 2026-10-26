@@ -32,3 +32,4 @@ Thumbs.db
 docs/prototype/
 docs/*.zip
 docs/sproutsync_frontend_migration_plan.md
+aas-stack.json
