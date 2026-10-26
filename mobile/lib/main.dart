@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens.dart';
 import 'onboarding.dart';
+import 'auth_redirect.dart';
 
 /// Public project URL supplied when building the application.
 const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
@@ -247,7 +248,10 @@ class _MobileAuthState extends State<MobileAuth> {
         await client.auth
             .signInWithPassword(email: address, password: password.text);
       } else if (step == 'register') {
-        await client.auth.signUp(email: address, password: password.text);
+        await client.auth.signUp(
+            email: address,
+            password: password.text,
+            emailRedirectTo: authCallbackUrl());
         if (mounted) {
           setState(() => step = 'verify');
           password.clear();
@@ -261,7 +265,8 @@ class _MobileAuthState extends State<MobileAuth> {
             type: step == 'verify' ? OtpType.signup : OtpType.recovery);
         if (mounted && step == 'recovery') setState(() => step = 'password');
       } else if (step == 'reset') {
-        await client.auth.resetPasswordForEmail(address);
+        await client.auth
+            .resetPasswordForEmail(address, redirectTo: authCallbackUrl());
         if (mounted) {
           setState(() => step = 'recovery');
           startCooldown();
@@ -284,12 +289,35 @@ class _MobileAuthState extends State<MobileAuth> {
     });
     try {
       if (step == 'verify') {
-        await client.auth
-            .resend(type: OtpType.signup, email: email.text.trim());
+        await client.auth.resend(
+            type: OtpType.signup,
+            email: email.text.trim(),
+            emailRedirectTo: authCallbackUrl());
       } else {
-        await client.auth.resetPasswordForEmail(email.text.trim());
+        await client.auth.resetPasswordForEmail(email.text.trim(),
+            redirectTo: authCallbackUrl());
       }
       if (mounted) startCooldown();
+    } catch (e) {
+      if (mounted) setState(() => error = readableError(e));
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> signInWithGoogle() async {
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    try {
+      final opened = await client.auth.signInWithOAuth(OAuthProvider.google,
+          redirectTo: authCallbackUrl(),
+          authScreenLaunchMode: authBrowserLaunchMode());
+      if (!opened && mounted) {
+        setState(() => error =
+            'Could not open Google sign-in. Install or enable a web browser and try again.');
+      }
     } catch (e) {
       if (mounted) setState(() => error = readableError(e));
     } finally {
@@ -451,21 +479,8 @@ class _MobileAuthState extends State<MobileAuth> {
                                         child: Text('or continue with',
                                             textAlign: TextAlign.center)),
                                     OutlinedButton(
-                                        onPressed: busy
-                                            ? null
-                                            : () async {
-                                                try {
-                                                  await client.auth.signInWithOAuth(
-                                                      OAuthProvider.google,
-                                                      redirectTo:
-                                                          'io.sproutsync.app://login-callback/');
-                                                } catch (e) {
-                                                  if (mounted) {
-                                                    setState(() => error =
-                                                        readableError(e));
-                                                  }
-                                                }
-                                              },
+                                        onPressed:
+                                            busy ? null : signInWithGoogle,
                                         child: const Padding(
                                             padding: EdgeInsets.all(12),
                                             child: Text('Google'))),

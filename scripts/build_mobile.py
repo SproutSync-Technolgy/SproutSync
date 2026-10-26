@@ -3,12 +3,20 @@
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
+version_match = re.search(
+    r"^version:\s*([^+\s]+)\+(\d+)\s*$",
+    (root / "mobile/pubspec.yaml").read_text(encoding="utf-8"),
+    re.MULTILINE,
+)
+if not version_match:
+    raise SystemExit("Set a version and build number in mobile/pubspec.yaml.")
 settings = {}
 for line in (root / ".env").read_text(encoding="utf-8").splitlines():
     if "=" in line and not line.lstrip().startswith("#"):
@@ -53,7 +61,8 @@ destination = target / "sproutsync-preview.apk"
 shutil.copyfile(apk, destination)
 metadata = {
     "available": True,
-    "version": "0.1.0",
+    "version": version_match[1],
+    "build_number": int(version_match[2]),
     "platform": "Android 7.0+ (ARM64)",
     "filename": destination.name,
     "url": "/downloads/" + destination.name,

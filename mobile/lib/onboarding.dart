@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'main.dart';
+import 'auth_redirect.dart';
 
 /// Verifies the inbox for a new Google account before profile confirmation.
 class GoogleEmailVerification extends StatefulWidget {
@@ -47,7 +48,7 @@ class _GoogleEmailVerificationState extends State<GoogleEmailVerification> {
       await Supabase.instance.client.auth.signInWithOtp(
           email: widget.profile['email'],
           shouldCreateUser: false,
-          emailRedirectTo: 'io.sproutsync.app://login-callback/');
+          emailRedirectTo: authCallbackUrl());
       if (!mounted) return;
       setState(() => cooldown = 60);
       timer?.cancel();
