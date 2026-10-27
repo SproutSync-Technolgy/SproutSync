@@ -1,0 +1,7 @@
+interface:
+  display_name: "SproutSync Product Engineering"
+  short_description: "Build simple, reliable full-stack product changes"
+  default_prompt: "Use $sproutsync-product-engineering to implement this SproutSync change as a tested, user-centered vertical slice."
+
+policy:
+  allow_implicit_invocation: true

@@ -44,6 +44,7 @@ export type Alert = {
   severity: string;
   status: string;
   category: string;
+  batch_id?: number | null;
   created_at: string;
 };
 export type Reading = {

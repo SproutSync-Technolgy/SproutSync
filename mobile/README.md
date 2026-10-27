@@ -3,13 +3,19 @@
 The Flutter app shares Supabase Auth and database access policies with the web app.
 Android, iOS and web host projects are included.
 
-The app provides verified email/password signup, Google sign-in, inbox verification
-for new Google accounts, prefilled profile confirmation, and five main tabs:
-Home, Batches, Alerts, Reports and More. Operators can manage batches, register
-devices by QR/serial, record maintenance, and acknowledge or resolve alerts.
-Evaluators can review shared/sample records and submit evaluations. Account and
-notification settings persist in Supabase. Pull-to-refresh and a foreground
-30-second refresh keep records current.
+Mobile is the field companion to the web planning and oversight workspace. Its
+four primary areas are Today, Scan, Alerts, and More. A user can scan the label on
+a batch or chamber at the point of work, open its shared record, record maintenance
+as an operator, submit an independent assessment as an evaluator, and respond to
+alerts. Historical reports, exports, access management, and detailed planning stay
+on the web instead of being duplicated on a smaller screen.
+
+The app provides email/password and Google sign-in plus prefilled profile
+confirmation. Operators can register devices by QR or serial, update a scanned
+batch, record maintenance, and acknowledge or resolve alerts. Evaluators can review
+shared records and evidence and submit an assessment that never overwrites machine
+readings. Account and notification settings persist in Supabase. Pull-to-refresh
+and a foreground 30-second refresh keep records current.
 
 ## Run and validate
 

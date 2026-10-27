@@ -29,44 +29,103 @@ class SproutSyncMobileApp extends StatelessWidget {
   /// Whether this build has the public Supabase configuration.
   final bool configured;
   @override
-  Widget build(BuildContext context) => MaterialApp(
-        title: 'SproutSync',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          useMaterial3: true,
-          colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF247547)),
-          scaffoldBackgroundColor: const Color(0xFFF5F8F4),
-          inputDecorationTheme: InputDecorationTheme(
-              border:
-                  OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-              filled: true,
-              fillColor: Colors.white),
-          appBarTheme: const AppBarTheme(
-              backgroundColor: Color(0xFFF5F8F4), centerTitle: false),
+  Widget build(BuildContext context) {
+    const primary = Color(0xFF1F6F45);
+    final scheme = ColorScheme.fromSeed(
+      seedColor: primary,
+      brightness: Brightness.light,
+      surface: const Color(0xFFF5F7F3),
+    ).copyWith(
+      primary: primary,
+      onPrimary: Colors.white,
+      secondary: const Color(0xFF2F6B9A),
+      error: const Color(0xFFB42318),
+      outline: const Color(0xFFCBD8CF),
+      surfaceContainerLow: Colors.white,
+    );
+    return MaterialApp(
+      title: 'SproutSync',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: scheme,
+        scaffoldBackgroundColor: const Color(0xFFF5F7F3),
+        textTheme: const TextTheme(
+          headlineMedium: TextStyle(
+              fontSize: 28, height: 1.15, fontWeight: FontWeight.w700),
+          titleLarge:
+              TextStyle(fontSize: 22, height: 1.2, fontWeight: FontWeight.w700),
+          titleMedium:
+              TextStyle(fontSize: 16, height: 1.3, fontWeight: FontWeight.w700),
+          bodyLarge: TextStyle(fontSize: 16, height: 1.5),
+          bodyMedium: TextStyle(fontSize: 14, height: 1.5),
+          labelLarge: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
         ),
-        home: configured
-            ? const SessionGate()
-            : const Scaffold(
-                body: SafeArea(
-                    child: Center(
-                        child: Padding(
-                            padding: EdgeInsets.all(28),
-                            child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.eco,
-                                      size: 64, color: Color(0xFF247547)),
-                                  SizedBox(height: 20),
-                                  Text('Welcome to SproutSync',
-                                      style: TextStyle(
-                                          fontSize: 25,
-                                          fontWeight: FontWeight.bold)),
-                                  SizedBox(height: 12),
-                                  Text(
-                                      'Configure SUPABASE_URL and SUPABASE_ANON_KEY to connect this mobile build.',
-                                      textAlign: TextAlign.center)
-                                ]))))),
-      );
+        cardTheme: CardThemeData(
+          elevation: 0,
+          color: Colors.white,
+          margin: const EdgeInsets.symmetric(vertical: 6),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: Color(0xFFDCE5DF)),
+          ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+          filled: true,
+          fillColor: Colors.white,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            minimumSize: const Size.fromHeight(48),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size.fromHeight(48),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+        ),
+        navigationBarTheme: const NavigationBarThemeData(
+          height: 72,
+          backgroundColor: Colors.white,
+          indicatorColor: Color(0xFFDCEFE2),
+          elevation: 0,
+        ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFFF5F7F3),
+          surfaceTintColor: Colors.transparent,
+          centerTitle: false,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+        ),
+      ),
+      home: configured
+          ? const SessionGate()
+          : const Scaffold(
+              body: SafeArea(
+                  child: Center(
+                      child: Padding(
+                          padding: EdgeInsets.all(28),
+                          child:
+                              Column(mainAxisSize: MainAxisSize.min, children: [
+                            Icon(Icons.eco, size: 64, color: Color(0xFF1F6F45)),
+                            SizedBox(height: 20),
+                            Text('Welcome to SproutSync',
+                                style: TextStyle(
+                                    fontSize: 25, fontWeight: FontWeight.bold)),
+                            SizedBox(height: 12),
+                            Text(
+                                'Configure SUPABASE_URL and SUPABASE_ANON_KEY to connect this mobile build.',
+                                textAlign: TextAlign.center)
+                          ]))))),
+    );
+  }
 }
 
 /// Routes sessions through email verification, profile review and the workspace.
@@ -590,8 +649,51 @@ class _ProfileFormState extends State<ProfileForm> {
                           const Text('Email verified. One last step.',
                               style: TextStyle(
                                   fontSize: 22, fontWeight: FontWeight.bold)),
-                        Text(widget.profile['email'] ?? ''),
+                        if (!widget.editing)
+                          Text(widget.profile['email'] ?? ''),
                         const SizedBox(height: 24),
+                        if (widget.editing)
+                          Card(
+                              elevation: 0,
+                              color: const Color(0xFFF2F7F3),
+                              child: Padding(
+                                  padding: const EdgeInsets.all(16),
+                                  child: Column(children: [
+                                    ListTile(
+                                        contentPadding: EdgeInsets.zero,
+                                        title: const Text('Name'),
+                                        subtitle: Text(
+                                            '${first.text} ${last.text}'.trim())),
+                                    const Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: Text(
+                                            'Name corrections require a request to Admin IT support.',
+                                            style: TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.black54))),
+                                    const SizedBox(height: 10),
+                                    ListTile(
+                                        contentPadding: EdgeInsets.zero,
+                                        title: const Text('Email'),
+                                        subtitle: Text(
+                                            widget.profile['email'] ?? '')),
+                                    const Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: Text(
+                                            'Changing email requires verification. This option is unavailable until verification is added.',
+                                            style: TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.black54))),
+                                    const SizedBox(height: 10),
+                                    Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: OutlinedButton.icon(
+                                            onPressed: null,
+                                            icon: const Icon(
+                                                Icons.verified_user_outlined),
+                                            label:
+                                                const Text('Change email')))
+                                  ]))),
                         if (!editDetails) ...[
                           for (final entry in [
                             (first, 'First name'),
@@ -611,23 +713,34 @@ class _ProfileFormState extends State<ProfileForm> {
                               label: const Text('Edit information')),
                         ],
                         if (editDetails)
-                          for (final entry in [
-                            (first, 'First name', 80, true),
-                            (
-                              last,
-                              'Last name',
-                              80,
-                              widget.profile['registration_provider'] !=
-                                  'google'
-                            ),
-                            (
-                              organization,
-                              'Organization (optional)',
-                              160,
-                              false
-                            ),
-                            (phone, 'Phone (optional)', 40, false)
-                          ])
+                          for (final entry in widget.editing
+                              ? [
+                                  (
+                                    organization,
+                                    'Organization (optional)',
+                                    160,
+                                    false
+                                  ),
+                                  (phone, 'Phone (optional)', 40, false)
+                                ]
+                              : [
+                                  (first, 'First name', 80, true),
+                                  (
+                                    last,
+                                    'Last name',
+                                    80,
+                                    widget.profile[
+                                            'registration_provider'] !=
+                                        'google'
+                                  ),
+                                  (
+                                    organization,
+                                    'Organization (optional)',
+                                    160,
+                                    false
+                                  ),
+                                  (phone, 'Phone (optional)', 40, false)
+                                ])
                             Padding(
                                 padding: const EdgeInsets.only(bottom: 16),
                                 child: TextFormField(
@@ -648,7 +761,7 @@ class _ProfileFormState extends State<ProfileForm> {
                             child: Text(busy
                                 ? 'Saving…'
                                 : widget.editing
-                                    ? 'Save changes'
+                                    ? 'Save contact details'
                                     : widget.profile['registration_provider'] ==
                                             'google'
                                         ? 'Confirm & continue'

@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { CheckCircle2, Pencil } from "lucide-react";
+import { CheckCircle2, Pencil, ShieldCheck } from "lucide-react";
 import { Btn, Logo } from "./ProtoPrimitives";
 import { errorMessage, saveProfile, type Profile } from "../data/workspace";
 
@@ -7,12 +7,16 @@ export function PersonalDetails({
   profile,
   onSaved,
   onSignOut,
+  onRequestSupport,
   editing = false,
+  identityLocked = false,
 }: {
   profile: Profile;
   onSaved: (profile: Profile) => void;
   onSignOut?: () => Promise<void>;
+  onRequestSupport?: () => void;
   editing?: boolean;
+  identityLocked?: boolean;
 }) {
   const google = profile.registration_provider === "google";
   const [values, setValues] = useState({
@@ -21,6 +25,22 @@ export function PersonalDetails({
     organization: profile.organization,
     phone: profile.phone,
   });
+  const editableFields = identityLocked
+    ? ([
+        ["organization", "Organization (optional)", 160, "organization"],
+        ["phone", "Phone (optional)", 40, "tel"],
+      ] as const)
+    : ([
+        ["first_name", "First name", 80, "given-name"],
+        [
+          "last_name",
+          google ? "Last name (optional)" : "Last name",
+          80,
+          "family-name",
+        ],
+        ["organization", "Organization (optional)", 160, "organization"],
+        ["phone", "Phone (optional)", 40, "tel"],
+      ] as const);
   const [editDetails, setEditDetails] = useState(
     editing || !google || !profile.first_name,
   );
@@ -84,46 +104,85 @@ export function PersonalDetails({
           </h1>
         </div>
       </div>
-      <p className="mt-3 mb-6 text-sm text-muted-foreground break-all">
-        {profile.email}
-      </p>
+      {!identityLocked && (
+        <p className="mt-3 mb-6 text-sm text-muted-foreground break-all">
+          {profile.email}
+        </p>
+      )}
       <form onSubmit={submit}>
         <fieldset disabled={busy} className="space-y-4">
           {editDetails ? (
-            (
-              [
-                ["first_name", "First name", 80, "given-name"],
-                [
-                  "last_name",
-                  google ? "Last name (optional)" : "Last name",
-                  80,
-                  "family-name",
-                ],
-                [
-                  "organization",
-                  "Organization (optional)",
-                  160,
-                  "organization",
-                ],
-                ["phone", "Phone (optional)", 40, "tel"],
-              ] as const
-            ).map(([key, label, max, autocomplete]) => (
-              <label className="field" key={key}>
-                {label}
-                <input
-                  required={
-                    key === "first_name" || (key === "last_name" && !google)
-                  }
-                  maxLength={max}
-                  autoComplete={autocomplete}
-                  type={key === "phone" ? "tel" : "text"}
-                  value={values[key]}
-                  onChange={(e) =>
-                    setValues({ ...values, [key]: e.target.value })
-                  }
-                />
-              </label>
-            ))
+            <>
+              {identityLocked && (
+                <div className="space-y-4 rounded-xl border border-border bg-secondary/50 p-5">
+                  <dl className="detail-grid">
+                    <div>
+                      <dt>Name</dt>
+                      <dd>
+                        {[values.first_name, values.last_name]
+                          .filter(Boolean)
+                          .join(" ") || "Not provided"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Email</dt>
+                      <dd className="break-all">{profile.email}</dd>
+                    </div>
+                  </dl>
+                  <div className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold">Name corrections</p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Your account name cannot be changed directly. Request a
+                        correction from support when necessary.
+                      </p>
+                    </div>
+                    {onRequestSupport && (
+                      <Btn
+                        type="button"
+                        variant="outline"
+                        onClick={onRequestSupport}
+                      >
+                        Request correction
+                      </Btn>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold">
+                        Verified email changes
+                      </p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Changing your email requires verification. This option is
+                        unavailable until email verification is added.
+                      </p>
+                    </div>
+                    <Btn type="button" variant="outline" disabled>
+                      <ShieldCheck size={16} />
+                      Change email
+                    </Btn>
+                  </div>
+                </div>
+              )}
+              {editableFields.map(([key, label, max, autocomplete]) => (
+                <label className="field" key={key}>
+                  {label}
+                  <input
+                    required={
+                      key === "first_name" ||
+                      (key === "last_name" && !google)
+                    }
+                    maxLength={max}
+                    autoComplete={autocomplete}
+                    type={key === "phone" ? "tel" : "text"}
+                    value={values[key]}
+                    onChange={(e) =>
+                      setValues({ ...values, [key]: e.target.value })
+                    }
+                  />
+                </label>
+              ))}
+            </>
           ) : (
             <>
               <dl className="detail-grid rounded-xl bg-secondary p-5">
@@ -157,7 +216,9 @@ export function PersonalDetails({
           <Btn type="submit" disabled={busy} className="w-full">
             {busy
               ? "Saving…"
-              : editing
+              : identityLocked
+                ? "Save contact details"
+                : editing
                 ? "Save changes"
                 : google
                   ? "Confirm & continue"

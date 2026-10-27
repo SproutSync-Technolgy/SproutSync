@@ -11,18 +11,15 @@ import {
   Bell,
   Sprout,
   LayoutDashboard,
-  BarChart3,
   MoreHorizontal,
   Droplets,
   Cpu,
   ClipboardCheck,
   Settings,
-  Users,
-  Wrench,
   LogOut,
   RefreshCw,
   Plus,
-  Download,
+  Printer,
   Search,
   ChevronRight,
   CheckCircle2,
@@ -30,9 +27,10 @@ import {
   Activity,
   Menu,
   ShieldCheck,
-  UserCircle,
   HelpCircle,
   ChevronDown,
+  Star,
+  LifeBuoy,
 } from "lucide-react";
 import { supabase } from "../supabase";
 import {
@@ -40,11 +38,11 @@ import {
   loadWorkspace,
   isOperator,
   errorMessage,
-  downloadCsv,
   type Profile,
   type WorkspaceData,
   type Batch,
   type Alert,
+  type Evaluation,
 } from "../data/workspace";
 import { Logo, Btn, Modal } from "./ProtoPrimitives";
 import { PersonalDetails } from "./PersonalDetails";
@@ -52,16 +50,10 @@ import { WaterUseChart } from "./ProtoCharts";
 
 const pages = [
   { key: "home", title: "Overview", icon: LayoutDashboard },
-  { key: "batches", title: "Batches", icon: Sprout },
+  { key: "production", title: "Production", icon: Sprout },
   { key: "alerts", title: "Alerts", icon: Bell },
-  { key: "reports", title: "Reports", icon: BarChart3 },
-  { key: "irrigation", title: "Irrigation", icon: Droplets },
-  { key: "devices", title: "Devices", icon: Cpu },
-  { key: "evidence", title: "Evaluation evidence", icon: ShieldCheck },
-  { key: "evaluations", title: "Evaluations", icon: ClipboardCheck },
-  { key: "maintenance", title: "Maintenance", icon: Wrench, operator: true },
-  { key: "activity", title: "Activity log", icon: Activity },
-  { key: "access", title: "Evaluator access", icon: Users, operator: true },
+  { key: "review", title: "Review", icon: ClipboardCheck },
+  { key: "system", title: "System", icon: Settings },
 ];
 const date = (value: string | null) =>
   value
@@ -71,7 +63,12 @@ const date = (value: string | null) =>
       })
     : "Not set";
 const stages = ["soaking", "rinsing", "growing", "ready", "harvested"];
-type Dialog = { kind: string; batch?: Batch; alert?: Alert } | null;
+type Dialog = {
+  kind: string;
+  batch?: Batch;
+  alert?: Alert;
+  evaluation?: Evaluation;
+} | null;
 
 export default function Workspace({
   profile,
@@ -83,6 +80,8 @@ export default function Workspace({
   onSignOut: () => Promise<void>;
 }) {
   const operator = isOperator(profile);
+  const roleLabel =
+    profile.role === "admin" ? "Admin IT" : operator ? "Operator" : "Evaluator";
   const [page, setPage] = useState("home");
   const [menu, setMenu] = useState(false);
   const [accountMenu, setAccountMenu] = useState(false);
@@ -95,13 +94,24 @@ export default function Workspace({
   const [busy, setBusy] = useState(false);
   const [dialogError, setDialogError] = useState("");
   const [toast, setToast] = useState("");
+  const [showWelcome, setShowWelcome] = useState(
+    () => sessionStorage.getItem(`sproutsync-welcome-${profile.id}`) !== "seen",
+  );
   const [query, setQuery] = useState("");
   const [batchFilter, setBatchFilter] = useState("all");
+  const [batchMonth, setBatchMonth] = useState("");
+  const [evaluationQuery, setEvaluationQuery] = useState("");
+  const [evaluationBatch, setEvaluationBatch] = useState("all");
   const [selectedDevice, setSelectedDevice] = useState("all");
   const [preferences, setPreferences] = useState({
     alerts_enabled: true,
     harvest_enabled: true,
   });
+  useEffect(() => {
+    if (showWelcome) {
+      sessionStorage.setItem(`sproutsync-welcome-${profile.id}`, "seen");
+    }
+  }, [profile.id, showWelcome]);
   useEffect(() => {
     let active = true;
     supabase
@@ -163,7 +173,7 @@ export default function Workspace({
       document.removeEventListener("keydown", keyboard);
     };
   }, [accountMenu]);
-  const nav = pages.filter((item) => !item.operator || operator);
+  const nav = pages;
   const reload = useCallback(async () => {
     pending.current?.abort();
     const controller = new AbortController();
@@ -247,6 +257,7 @@ export default function Workspace({
   const batches = data.batches.filter(
     (b) =>
       (batchFilter === "all" || b.status === batchFilter) &&
+      (!batchMonth || b.started_at.slice(0, 7) === batchMonth) &&
       `${b.code} ${b.seed_type} ${b.stage}`
         .toLowerCase()
         .includes(query.toLowerCase()),
@@ -255,6 +266,16 @@ export default function Workspace({
     data.devices.find((d) => d.id === id)?.name ?? `Device ${id}`;
   const batchName = (id: number | null) =>
     data.batches.find((b) => b.id === id)?.code ?? "All batches";
+  const evaluationRows = data.evaluations.filter((evaluation) => {
+    const code = batchName(evaluation.batch_id);
+    return (
+      (evaluationBatch === "all" ||
+        evaluation.batch_id === Number(evaluationBatch)) &&
+      `${code} ${evaluation.comments}`
+        .toLowerCase()
+        .includes(evaluationQuery.toLowerCase())
+    );
+  });
   const currentReading = data.readings.find(
     (r) => selectedDevice === "all" || r.device_id === Number(selectedDevice),
   );
@@ -278,11 +299,26 @@ export default function Workspace({
   );
   const batchTable = (rows: Batch[]) =>
     table(
-      ["Batch", "Crop", "Stage", "Status", "Target harvest", "Details"],
+      [
+        "Batch",
+        "Owner",
+        "Crop",
+        "Stage",
+        "Status",
+        "Target harvest",
+        "Details",
+      ],
       rows.map((b) => [
         <strong>{b.code}</strong>,
+        `Operator #${b.owner_id}`,
         b.seed_type,
-        <Status value={b.stage} />,
+        <button
+          className="table-link"
+          onClick={() => open({ kind: "batch-details", batch: b })}
+          aria-label={`${operator ? "Update" : "View"} ${b.code} stage: ${b.stage}`}
+        >
+          <Status value={b.stage} />
+        </button>,
         <Status value={b.status} />,
         date(b.target_harvest_at),
         <button
@@ -309,7 +345,7 @@ export default function Workspace({
           <span>SproutSync</span>
         </a>
         <p className="sidebar-caption">
-          {operator ? "Operator workspace" : "Evaluator workspace"}
+          {roleLabel} workspace
         </p>
         <nav aria-label="Main navigation">
           {nav.map((item) => (
@@ -342,15 +378,8 @@ export default function Workspace({
           </span>
           <div>
             <strong>{profile.display_name || profile.email}</strong>
-            <small>{operator ? "Operator" : "Evaluator"}</small>
+            <small>{roleLabel}</small>
           </div>
-          <button
-            aria-label="Sign out"
-            className="icon-button"
-            onClick={() => open({ kind: "signout" })}
-          >
-            <LogOut size={18} />
-          </button>
         </div>
       </aside>
       <div className="app-body">
@@ -399,7 +428,7 @@ export default function Workspace({
                 </span>
                 <span className="account-trigger-copy">
                   <strong>{profile.display_name || profile.email}</strong>
-                  <small>{operator ? "Operator" : "Evaluator"}</small>
+                  <small>{roleLabel}</small>
                 </span>
                 <ChevronDown size={16} />
               </button>
@@ -421,7 +450,7 @@ export default function Workspace({
                     <div>
                       <strong>{profile.display_name || profile.email}</strong>
                       <small>
-                        {operator ? "Operator account" : "Evaluator account"}
+                        {roleLabel} account
                       </small>
                     </div>
                   </div>
@@ -432,18 +461,8 @@ export default function Workspace({
                       navigate("settings");
                     }}
                   >
-                    <UserCircle size={17} />
-                    Profile
-                  </button>
-                  <button
-                    role="menuitem"
-                    onClick={() => {
-                      setAccountMenu(false);
-                      navigate("settings");
-                    }}
-                  >
                     <Settings size={17} />
-                    Settings
+                    Profile & settings
                   </button>
                   <button
                     role="menuitem"
@@ -522,6 +541,7 @@ export default function Workspace({
             >
               {page === "home" && (
                 <>
+                  {showWelcome && (
                   <section className="welcome-panel">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-widest text-emerald-200">
@@ -542,6 +562,68 @@ export default function Workspace({
                       )}
                     </div>
                     <Sprout className="welcome-leaf" size={88} />
+                    <button
+                      className="welcome-dismiss"
+                      aria-label="Dismiss welcome"
+                      onClick={() => setShowWelcome(false)}
+                    >
+                      <X size={17} />
+                    </button>
+                  </section>
+                  )}
+                  <section className="role-brief" aria-labelledby="role-scope-title">
+                    <span className="role-brief-icon" aria-hidden="true">
+                      <ShieldCheck size={22} />
+                    </span>
+                    <div>
+                      <p className="role-kicker">
+                        {profile.role === "admin"
+                          ? "Admin IT scope"
+                          : operator
+                            ? "Operator scope"
+                            : "Evaluator scope"}
+                      </p>
+                      <h2 id="role-scope-title">
+                        {profile.role === "admin"
+                          ? "Provision access and equipment; preserve audit boundaries"
+                          : operator
+                            ? "Run production; keep machine evidence intact"
+                            : "Review evidence independently; never rewrite machine data"}
+                      </h2>
+                      <p>
+                        {profile.role === "admin"
+                          ? "Register equipment, provision operators, and oversee access. Admin tools do not replace operator production decisions or evaluator judgment."
+                          : operator
+                            ? "Create and update batches, schedules, alerts, maintenance, and reviewer access. The chamber controller remains responsible for live sensing and safety interlocks."
+                            : "Inspect only the batches shared with you and submit a separate human assessment. If your observation conflicts with a sensor reading, document the discrepancy and request a recheck—the original reading remains traceable."}
+                      </p>
+                    </div>
+                  </section>
+                  <section className="surface">
+                    <SectionTitle
+                      title="How a record is tracked"
+                      subtitle="One traceable path from production through review—without overwriting the source record."
+                    />
+                    <ol className="tracking-map">
+                      {[
+                        ["1", "Batch", "Owner, crop, dates and stage"],
+                        ["2", "Sensors & alerts", "Machine readings and current problems"],
+                        ["3", "Evidence", "Checks, notes and maintenance"],
+                        ["4", "Evaluation", "Independent human rating"],
+                        ["5", "Activity log", "Who changed what and when"],
+                      ].map(([step, name, detail], index, items) => (
+                        <li key={step}>
+                          <span>{step}</span>
+                          <div>
+                            <strong>{name}</strong>
+                            <small>{detail}</small>
+                          </div>
+                          {index < items.length - 1 && (
+                            <ChevronRight size={18} aria-hidden="true" />
+                          )}
+                        </li>
+                      ))}
+                    </ol>
                   </section>
                   <div className="summary-grid">
                     <Metric
@@ -684,7 +766,7 @@ export default function Workspace({
                       </p>
                       <button
                         className="table-link mt-5"
-                        onClick={() => navigate("irrigation")}
+                        onClick={() => navigate("production")}
                       >
                         View irrigation <ChevronRight size={15} />
                       </button>
@@ -696,7 +778,7 @@ export default function Workspace({
                       action={
                         <Btn
                           variant="ghost"
-                          onClick={() => navigate("batches")}
+                          onClick={() => navigate("production")}
                         >
                           View all
                         </Btn>
@@ -706,7 +788,7 @@ export default function Workspace({
                   </section>
                 </>
               )}
-              {page === "batches" && (
+              {page === "production" && (
                 <section className="surface">
                   <SectionTitle
                     title="Production batches"
@@ -740,7 +822,34 @@ export default function Workspace({
                       <option value="active">Active</option>
                       <option value="archived">Archived</option>
                     </select>
+                    <label className="month-filter">
+                      <span>Start month</span>
+                      <input
+                        type="month"
+                        aria-label="Batch start month"
+                        value={batchMonth}
+                        onChange={(event) => setBatchMonth(event.target.value)}
+                      />
+                    </label>
                   </div>
+                  {(query || batchFilter !== "all" || batchMonth) && (
+                    <div className="filter-summary" role="status">
+                      <span>
+                        {batches.length} matching batch
+                        {batches.length === 1 ? "" : "es"}
+                      </span>
+                      <button
+                        className="table-link"
+                        onClick={() => {
+                          setQuery("");
+                          setBatchFilter("all");
+                          setBatchMonth("");
+                        }}
+                      >
+                        Clear filters
+                      </button>
+                    </div>
+                  )}
                   {batchTable(batches)}
                 </section>
               )}
@@ -749,6 +858,14 @@ export default function Workspace({
                   <SectionTitle
                     title="Alerts & history"
                     subtitle={`${activeAlerts.length} active alerts`}
+                    action={
+                      operator && (
+                        <Btn onClick={() => open({ kind: "incident-report" })}>
+                          <Plus size={16} />
+                          Report current situation
+                        </Btn>
+                      )
+                    }
                   />
                   {data.alerts.length ? (
                     <div className="space-y-3">
@@ -763,7 +880,12 @@ export default function Workspace({
                           </span>
                           <span className="min-w-0 flex-1 text-left">
                             <strong>{alert.title}</strong>
-                            <small>{date(alert.created_at)}</small>
+                            <small>
+                              {alert.batch_id
+                                ? `Batch ${batchName(alert.batch_id)} · `
+                                : "No batch linked · "}
+                              {date(alert.created_at)}
+                            </small>
                           </span>
                           <Status value={alert.status} />
                           <ChevronRight size={16} />
@@ -773,9 +895,29 @@ export default function Workspace({
                   ) : (
                     <Empty text="No alerts have been recorded." />
                   )}
+                  <div className="mt-6 border-t border-border pt-5">
+                    <SectionTitle
+                      title="Risk & incident categories"
+                      subtitle="Use the alert message to state the current problem, location, and recommended response."
+                    />
+                    <div className="sensor-scope-grid">
+                      {[
+                        ["Pests or external contamination", "Record the affected room or tray"],
+                        ["Water contamination", "Identify the batch and water source"],
+                        ["Compliance risk", "State the failed check or missing evidence"],
+                        ["Light leak", "Specify the chamber, door, or seal location"],
+                      ].map(([name, purpose]) => (
+                        <div key={name}>
+                          <span className="summary-icon"><Bell size={18} /></span>
+                          <strong>{name}</strong>
+                          <small>{purpose}</small>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </section>
               )}
-              {page === "irrigation" && (
+              {page === "production" && (
                 <>
                   <section className="surface">
                     <SectionTitle
@@ -819,8 +961,17 @@ export default function Workspace({
                   </section>
                 </>
               )}
-              {page === "reports" && (
+              {page === "review" && (
                 <>
+                  <section className="review-boundary" aria-labelledby="review-boundary-title">
+                    <ShieldCheck size={22} aria-hidden="true" />
+                    <div>
+                      <h2 id="review-boundary-title">Machine evidence and human judgment stay separate</h2>
+                      <p>
+                        Sensor readings and recorded tests are source evidence. An evaluator adds an independent assessment; a disagreement is recorded for follow-up and does not replace the machine record.
+                      </p>
+                    </div>
+                  </section>
                   <section className="surface">
                     <SectionTitle
                       title="Water use this week"
@@ -883,34 +1034,26 @@ export default function Workspace({
                       action={
                         <Btn
                           variant="outline"
-                          disabled={!data.watering.length}
-                          onClick={() =>
-                            downloadCsv(
-                              "sproutsync-water.csv",
-                              [
-                                "Event",
-                                "Batch",
-                                "Device",
-                                "Volume (ml)",
-                                "Duration (s)",
-                                "Occurred at",
-                              ],
-                              data.watering.map((w) => [
-                                w.id,
-                                batchName(w.batch_id),
-                                deviceName(w.device_id),
-                                w.volume_ml,
-                                w.duration_seconds,
-                                w.occurred_at,
-                              ]),
-                            )
-                          }
+                          disabled={!data.batches.length}
+                          onClick={() => window.print()}
                         >
-                          <Download size={16} />
-                          Export water CSV
+                          <Printer size={16} />
+                          Print report
                         </Btn>
                       }
                     />
+                    <div className="report-goal">
+                      <strong>Report goal</strong>
+                      <p>
+                        Trace water use back to each production batch so an
+                        operator or evaluator can review exceptions with source
+                        records intact.
+                      </p>
+                      <small>
+                        Use the browser print dialog to create a paginated PDF;
+                        enable its headers and footers when page numbers are required.
+                      </small>
+                    </div>
                     {table(
                       ["Batch", "Water used", "Events"],
                       data.batches.map((b) => {
@@ -925,80 +1068,80 @@ export default function Workspace({
                       }),
                       "No batch data to report.",
                     )}
-                    <Btn
-                      variant="outline"
-                      className="mt-5"
-                      disabled={!data.batches.length}
-                      onClick={() =>
-                        downloadCsv(
-                          "sproutsync-batches.csv",
-                          [
-                            "Code",
-                            "Crop",
-                            "Stage",
-                            "Status",
-                            "Started",
-                            "Target harvest",
-                          ],
-                          data.batches.map((b) => [
-                            b.code,
-                            b.seed_type,
-                            b.stage,
-                            b.status,
-                            b.started_at,
-                            b.target_harvest_at,
-                          ]),
-                        )
-                      }
-                    >
-                      <Download size={16} />
-                      Export batch CSV
-                    </Btn>
+                    <p className="mt-4 text-xs text-muted-foreground">
+                      Printable views keep the report readable without creating
+                      an uncontrolled data export.
+                    </p>
                   </section>
                 </>
               )}
-              {page === "devices" && (
-                <section className="surface">
-                  <SectionTitle
-                    title="Your devices"
-                    subtitle="Register the serial number printed on your chamber."
-                    action={
-                      operator && (
-                        <Btn onClick={() => open({ kind: "device" })}>
-                          <Plus size={16} />
-                          Add device
-                        </Btn>
-                      )
-                    }
-                  />
-                  {table(
-                    ["Device", "Serial number", "Connection", "Last seen"],
-                    data.devices.map((d) => [
-                      d.name,
-                      d.serial_number,
-                      <Status
-                        value={
-                          d.status === "online" &&
-                          !d.is_demo &&
-                          (!d.last_seen_at ||
-                            Date.now() - new Date(d.last_seen_at).getTime() >
-                              300000)
-                            ? "offline"
-                            : d.status
-                        }
-                      />,
-                      date(d.last_seen_at),
-                    ]),
-                    "No devices linked yet.",
-                  )}
-                  <p className="mt-4 text-sm text-muted-foreground">
-                    A registered device stays pending until its controller sends
-                    a heartbeat. Connect it to Wi-Fi using the controller’s
-                    setup interface.
-                  </p>
-                </section>
+              {page === "system" && (
+                <>
+                  <section className="surface">
+                    <SectionTitle
+                      title="Sensors & chamber equipment"
+                      subtitle="Identify every chamber by its printed serial number and latest heartbeat."
+                      action={
+                        profile.role === "admin" && (
+                          <Btn onClick={() => open({ kind: "device" })}>
+                            <Plus size={16} />
+                            Register equipment
+                          </Btn>
+                        )
+                      }
+                    />
+                    {table(
+                      ["Equipment", "Serial number", "Connection", "Last seen"],
+                      data.devices.map((d) => [
+                        d.name,
+                        d.serial_number,
+                        <Status
+                          value={
+                            d.status === "online" &&
+                            !d.is_demo &&
+                            (!d.last_seen_at ||
+                              Date.now() - new Date(d.last_seen_at).getTime() >
+                                300000)
+                              ? "offline"
+                              : d.status
+                          }
+                        />,
+                        date(d.last_seen_at),
+                      ]),
+                      "No equipment linked yet.",
+                    )}
+                    <p className="mt-4 text-sm text-muted-foreground">
+                      Registration is handled by Admin IT. Equipment stays
+                      pending until its controller sends a heartbeat.
+                    </p>
+                  </section>
+                  <section className="surface">
+                    <SectionTitle
+                      title="Monitoring coverage"
+                      subtitle="A value appears only after the matching sensor reports it."
+                    />
+                    <div className="sensor-scope-grid">
+                      {[
+                        ["Water level", "Reservoir availability"],
+                        ["Light", "Unexpected chamber light"],
+                        ["Temperature & humidity", "Growing conditions"],
+                        ["Water flow", "Irrigation delivery"],
+                        ["Pump", "Pump operating state"],
+                        ["Room", "Ambient environment"],
+                        ["Trays", "Tray position and condition"],
+                        ["Local display", "On-device status and warning message"],
+                      ].map(([name, purpose]) => (
+                        <div key={name}>
+                          <span className="summary-icon"><Cpu size={18} /></span>
+                          <strong>{name}</strong>
+                          <small>{purpose}</small>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                </>
               )}
-              {page === "evidence" && (
+              {page === "review" && (
                 <section className="surface">
                   <SectionTitle
                     title="Evaluation evidence"
@@ -1032,7 +1175,28 @@ export default function Workspace({
                   )}
                 </section>
               )}
-              {page === "evaluations" && (
+              {page === "system" && profile.role === "admin" && (
+                <section className="surface">
+                  <SectionTitle
+                    title="Admin IT setup"
+                    subtitle="Admin IT registers equipment and provisions operator access."
+                  />
+                  <div className="unavailable-action">
+                    <span>
+                      <strong>Register an operator</strong>
+                      <small>
+                        Account provisioning is not connected yet. This action
+                        will require an invitation, role assignment, and an
+                        auditable acceptance step.
+                      </small>
+                    </span>
+                    <Btn variant="outline" disabled>
+                      Register operator
+                    </Btn>
+                  </div>
+                </section>
+              )}
+              {page === "review" && (
                 <section className="surface">
                   <SectionTitle
                     title={
@@ -1050,19 +1214,114 @@ export default function Workspace({
                       )
                     }
                   />
+                  <div className="evaluation-guide">
+                    <div>
+                      <p className="role-kicker">Rating basis</p>
+                      <h3>Use the same five-point rubric for every batch</h3>
+                      <div
+                        className="rating-rubric"
+                        aria-label="Evaluation rating guide"
+                      >
+                        {[
+                          [1, "Poor"],
+                          [2, "Fair"],
+                          [3, "Good"],
+                          [4, "Very good"],
+                          [5, "Excellent"],
+                        ].map(([value, label]) => (
+                          <span key={value}>
+                            <strong>{value}</strong>
+                            {label}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="credential-note">
+                      <ShieldCheck size={20} />
+                      <div>
+                        <strong>Evaluator qualification</strong>
+                        <p>
+                          Credential verification is not recorded yet.
+                          Certification requirements must be approved before
+                          this can be treated as verified.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="table-toolbar">
+                    <label className="search-field">
+                      <Search size={17} />
+                      <input
+                        aria-label="Search evaluations"
+                        placeholder="Search batch or observation…"
+                        value={evaluationQuery}
+                        onChange={(event) =>
+                          setEvaluationQuery(event.target.value)
+                        }
+                      />
+                    </label>
+                    <select
+                      className="filter-select"
+                      aria-label="Evaluation batch filter"
+                      value={evaluationBatch}
+                      onChange={(event) =>
+                        setEvaluationBatch(event.target.value)
+                      }
+                    >
+                      <option value="all">All operators & batches</option>
+                      {data.batches.map((batch) => (
+                        <option key={batch.id} value={batch.id}>
+                          Operator #{batch.owner_id} · {batch.code}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                   {table(
-                    ["Batch", "Rating", "Comments", "Submitted"],
-                    data.evaluations.map((e) => [
-                      batchName(e.batch_id),
-                      `${e.rating} / 5`,
-                      e.comments,
-                      date(e.created_at),
-                    ]),
+                    [
+                      "Owner",
+                      "Batch",
+                      "Rating",
+                      "Comments",
+                      "Submitted",
+                      "Details",
+                    ],
+                    evaluationRows.map((evaluation) => {
+                      const batch = data.batches.find(
+                        (item) => item.id === evaluation.batch_id,
+                      );
+                      return [
+                        batch
+                          ? `Operator #${batch.owner_id}`
+                          : "Unknown operator",
+                        <button
+                          className="table-link"
+                          onClick={() =>
+                            batch && open({ kind: "batch-details", batch })
+                          }
+                        >
+                          {batchName(evaluation.batch_id)}
+                        </button>,
+                        <Rating value={evaluation.rating} />,
+                        evaluation.comments,
+                        date(evaluation.created_at),
+                        <button
+                          className="table-link"
+                          onClick={() =>
+                            open({
+                              kind: "evaluation-details",
+                              evaluation,
+                            })
+                          }
+                        >
+                          View <ChevronRight size={14} />
+                        </button>,
+                      ];
+                    }),
                     "No evaluations submitted yet.",
                   )}
                 </section>
               )}
-              {page === "maintenance" && operator && (
+              {page === "system" && operator && (
                 <section className="surface">
                   <SectionTitle
                     title="Maintenance records"
@@ -1087,7 +1346,7 @@ export default function Workspace({
                   )}
                 </section>
               )}
-              {page === "activity" && (
+              {page === "system" && (
                 <section className="surface">
                   <SectionTitle title="Activity log" />
                   {table(
@@ -1101,15 +1360,15 @@ export default function Workspace({
                   )}
                 </section>
               )}
-              {page === "access" && operator && (
+              {page === "system" && operator && (
                 <section className="surface">
                   <SectionTitle
-                    title="Evaluator access"
-                    subtitle="Grant an evaluator access to review your records using their account email."
+                    title="Evaluator access & invitations"
+                    subtitle="Current grants require an existing account. Pre-account invitation delivery is not connected yet."
                     action={
                       <Btn onClick={() => open({ kind: "access" })}>
                         <Plus size={16} />
-                        Grant access
+                        Grant existing account
                       </Btn>
                     }
                   />
@@ -1121,6 +1380,18 @@ export default function Workspace({
                     ]),
                     "No evaluator access has been granted.",
                   )}
+                  <div className="unavailable-action mt-4">
+                    <span>
+                      <strong>Invite before account creation</strong>
+                      <small>
+                        This will become available after invitation delivery and
+                        acceptance tracking are implemented.
+                      </small>
+                    </span>
+                    <Btn variant="outline" disabled>
+                      Send invitation
+                    </Btn>
+                  </div>
                 </section>
               )}
               {page === "settings" && (
@@ -1128,10 +1399,12 @@ export default function Workspace({
                   <section className="surface">
                     <PersonalDetails
                       editing
+                      identityLocked
                       profile={profile}
+                      onRequestSupport={() => open({ kind: "support" })}
                       onSaved={(next) => {
                         onProfile(next);
-                        setToast("Profile saved.");
+                        setToast("Contact details saved.");
                       }}
                     />
                   </section>
@@ -1151,6 +1424,16 @@ export default function Workspace({
                     >
                       <LogOut size={16} />
                       Sign out
+                    </Btn>
+                  </section>
+                  <section className="surface">
+                    <SectionTitle
+                      title="Help & support"
+                      subtitle="Share the affected screen and what you were trying to do."
+                    />
+                    <Btn variant="outline" onClick={() => open({ kind: "support" })}>
+                      <LifeBuoy size={16} />
+                      Request support
                     </Btn>
                   </section>
                 </div>
@@ -1181,7 +1464,7 @@ export default function Workspace({
         title="Explore SproutSync"
       >
         <div className="grid grid-cols-2 gap-2">
-          {nav.map((item) => (
+          {nav.slice(4).map((item) => (
             <button
               key={item.key}
               className="more-nav-item"
@@ -1191,17 +1474,17 @@ export default function Workspace({
               {item.title}
             </button>
           ))}
+          <button
+            className="more-nav-item"
+            onClick={() => {
+              setMenu(false);
+              open({ kind: "help" });
+            }}
+          >
+            <HelpCircle size={19} />
+            Help & role guide
+          </button>
         </div>
-        <Btn
-          variant="outline"
-          className="mt-5 w-full"
-          onClick={() => {
-            setMenu(false);
-            open({ kind: "signout" });
-          }}
-        >
-          Sign out
-        </Btn>
       </Modal>
       <Modal
         open={!!dialog}
@@ -1211,6 +1494,8 @@ export default function Workspace({
             ? "Are you sure you want to sign out?"
             : dialog?.kind === "batch-details"
               ? dialog.batch!.code
+              : dialog?.kind === "evaluation-details"
+                ? `Evaluation · ${batchName(dialog.evaluation!.batch_id)}`
               : dialog?.kind === "alert"
                 ? dialog.alert!.title
                 : ({
@@ -1223,6 +1508,8 @@ export default function Workspace({
                     access: "Grant evaluator access",
                     notifications: "Notifications",
                     help: "Help & FAQ",
+                    support: "Request support",
+                    "incident-report": "Report current situation",
                     readings: "Sensor history",
                   }[dialog?.kind ?? ""] ?? "")
         }
@@ -1286,15 +1573,118 @@ export default function Workspace({
         {dialog?.kind === "help" && (
           <div className="space-y-4 text-sm text-muted-foreground">
             <p>
-              Use the sidebar to review batches, conditions, alerts, and
-              evaluation records.
+              Use the five goal-based areas to monitor today, run production,
+              respond to alerts, review evidence, and manage the system.
             </p>
             <p>
               Operators manage production records and evaluator access.
-              Evaluators can review batches shared with them and submit
-              assessments.
+              Evaluators independently review shared evidence and submit a
+              human assessment without changing machine readings.
             </p>
             <p>For device or account access, contact your system operator. Sample records are labelled and saved in the workspace.</p>
+          </div>
+        )}
+        {dialog?.kind === "support" && (
+          <div className="space-y-4">
+            <div className="unavailable-action">
+              <LifeBuoy size={22} />
+              <span>
+                <strong>Support submission is not connected yet</strong>
+                <small>
+                  The request form will be enabled after an Admin IT support
+                  destination and response process are configured.
+                </small>
+              </span>
+            </div>
+            <label className="field">
+              Affected area
+              <select disabled defaultValue="">
+                <option value="">Select an area…</option>
+                <option>Production</option>
+                <option>Alerts</option>
+                <option>Review</option>
+                <option>Sensors & equipment</option>
+                <option>Account access</option>
+              </select>
+            </label>
+            <label className="field">
+              What happened?
+              <textarea disabled rows={4} placeholder="Describe the problem and expected result" />
+            </label>
+            <Btn disabled className="w-full">Send support request</Btn>
+          </div>
+        )}
+        {dialog?.kind === "incident-report" && (
+          <div className="space-y-5">
+            <div className="unavailable-action">
+              <ShieldCheck size={22} />
+              <span>
+                <strong>UI draft only</strong>
+                <small>
+                  Incident submission is not connected yet. You can review the
+                  required information, but no report will be saved.
+                </small>
+              </span>
+            </div>
+            <ol className="sop-steps" aria-label="Incident response SOP">
+              <li><strong>1. Describe</strong><span>State the current problem.</span></li>
+              <li><strong>2. Locate</strong><span>Specify the chamber, fan, seal, tray, or water source.</span></li>
+              <li><strong>3. Link</strong><span>Connect the affected batch and equipment serial number.</span></li>
+              <li><strong>4. Escalate</strong><span>Record the safe response and notify the responsible role.</span></li>
+            </ol>
+            <label className="field">
+              Current situation
+              <textarea rows={3} placeholder="What is happening now?" />
+            </label>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="field">
+                Affected location or component
+                <input
+                  list="incident-components"
+                  placeholder="Type or select, for example 3D fan"
+                />
+                <datalist id="incident-components">
+                  <option value="3D fan" />
+                  <option value="Chamber door or seal" />
+                  <option value="Water reservoir" />
+                  <option value="Pump" />
+                  <option value="Room" />
+                  <option value="Tray" />
+                </datalist>
+              </label>
+              <label className="field">
+                Affected batch
+                <input
+                  list="incident-batches"
+                  placeholder="Type a batch code or leave unlinked"
+                />
+                <datalist id="incident-batches">
+                  {data.batches.map((batch) => (
+                    <option key={batch.id} value={batch.code} />
+                  ))}
+                </datalist>
+              </label>
+            </div>
+            <label className="field">
+              Risk category
+              <select defaultValue="">
+                <option value="" disabled>Select a risk…</option>
+                <option>Pests or external contamination</option>
+                <option>Water contamination</option>
+                <option>Compliance risk</option>
+                <option>Light leak</option>
+                <option>Equipment problem</option>
+              </select>
+            </label>
+            <label className="field">
+              Screen or LCD message
+              <input placeholder="Copy the exact message, or write None" />
+            </label>
+            <label className="field">
+              Immediate safe action taken
+              <textarea rows={3} placeholder="What was checked, isolated, or escalated?" />
+            </label>
+            <Btn disabled className="w-full">Submit incident report</Btn>
           </div>
         )}
         {dialog?.kind === "notifications" &&
@@ -1321,6 +1711,21 @@ export default function Workspace({
         {dialog?.kind === "alert" && (
           <div className="space-y-4">
             <Status value={dialog.alert!.status} />
+            <p className="text-sm font-semibold">
+              {dialog.alert!.batch_id
+                ? `Batch ${batchName(dialog.alert!.batch_id)}`
+                : "No batch is linked to this alert"}
+            </p>
+            <dl className="detail-grid">
+              <div>
+                <dt>Category</dt>
+                <dd>{dialog.alert!.category.replaceAll("_", " ")}</dd>
+              </div>
+              <div>
+                <dt>Severity</dt>
+                <dd>{dialog.alert!.severity}</dd>
+              </div>
+            </dl>
             <p>{dialog.alert!.message}</p>
             <section className="rounded-xl bg-secondary p-4">
               <h3 className="font-semibold">Recommended action</h3>
@@ -1371,6 +1776,47 @@ export default function Workspace({
                 </Btn>
               </div>
             )}
+          </div>
+        )}
+        {dialog?.kind === "evaluation-details" && (
+          <div className="space-y-5">
+            <dl className="detail-grid">
+              <div>
+                <dt>Batch</dt>
+                <dd>{batchName(dialog.evaluation!.batch_id)}</dd>
+              </div>
+              <div>
+                <dt>Human assessment</dt>
+                <dd><Rating value={dialog.evaluation!.rating} /></dd>
+              </div>
+              <div>
+                <dt>Submitted</dt>
+                <dd>{date(dialog.evaluation!.created_at)}</dd>
+              </div>
+              <div>
+                <dt>Evaluator qualification</dt>
+                <dd>Not yet verified</dd>
+              </div>
+            </dl>
+            <section className="rounded-xl bg-secondary p-4">
+              <h3 className="font-semibold">Observations</h3>
+              <p className="mt-1 text-sm">
+                {dialog.evaluation!.comments || "No observations provided."}
+              </p>
+            </section>
+            <div className="unavailable-action">
+              <span>
+                <strong>Edit or delete evaluation</strong>
+                <small>
+                  These actions remain unavailable until audit-history and
+                  correction rules are implemented.
+                </small>
+              </span>
+              <div className="flex gap-2">
+                <Btn variant="outline" disabled>Edit</Btn>
+                <Btn variant="outline" disabled>Delete</Btn>
+              </div>
+            </div>
           </div>
         )}
         {dialog?.kind === "batch-details" && (
@@ -1455,6 +1901,17 @@ export default function Workspace({
                 };
                 let table = "";
                 if (dialog.kind === "batch-create") {
+                  const normalizedCode = values.code.trim().toLowerCase();
+                  if (
+                    data.batches.some(
+                      (batch) => batch.code.trim().toLowerCase() === normalizedCode,
+                    )
+                  ) {
+                    setDialogError(
+                      "That batch code already exists. Use a unique code before saving.",
+                    );
+                    return;
+                  }
                   table = "batches";
                   payload.started_at = new Date(
                     values.started_at,
@@ -1583,6 +2040,21 @@ function Status({ value }: { value: string }) {
     </span>
   );
 }
+function Rating({ value }: { value: number }) {
+  return (
+    <span className="rating-display" aria-label={`${value} out of 5`}>
+      {Array.from({ length: 5 }, (_, index) => (
+        <Star
+          key={index}
+          size={15}
+          fill={index < value ? "currentColor" : "none"}
+          aria-hidden="true"
+        />
+      ))}
+      <span>{value}/5</span>
+    </span>
+  );
+}
 function Empty({ text }: { text: string }) {
   return (
     <div className="empty-state">
@@ -1600,36 +2072,69 @@ function DataTable({
   rows: ReactNode[][];
   empty: string;
 }) {
+  const pageSize = 6;
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const [page, setPage] = useState(1);
+  useEffect(() => {
+    setPage((current) => Math.min(current, pageCount));
+  }, [pageCount]);
   if (!rows.length) return <Empty text={empty} />;
+  const visibleRows = rows.slice((page - 1) * pageSize, page * pageSize);
   return (
-    <div
-      className="record-table-wrap"
-      tabIndex={0}
-      aria-label="Scrollable records"
-    >
-      <table className="record-table">
-        <thead>
-          <tr>
-            {headings.map((h) => (
-              <th scope="col" key={h}>
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, index) => (
-            <tr key={index}>
-              {row.map((cell, i) => (
-                <td key={i} data-label={headings[i]}>
-                  {cell}
-                </td>
+    <>
+      <div
+        className="record-table-wrap"
+        tabIndex={0}
+        aria-label="Scrollable records"
+      >
+        <table className="record-table">
+          <thead>
+            <tr>
+              {headings.map((h) => (
+                <th scope="col" key={h}>
+                  {h}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {visibleRows.map((row, index) => (
+              <tr key={(page - 1) * pageSize + index}>
+                {row.map((cell, i) => (
+                  <td key={i} data-label={headings[i]}>
+                    {cell}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {pageCount > 1 && (
+        <nav className="table-pagination" aria-label="Table pages">
+          <button disabled={page === 1} onClick={() => setPage(page - 1)}>
+            Previous
+          </button>
+          {Array.from({ length: pageCount }, (_, index) => index + 1).map(
+            (number) => (
+              <button
+                key={number}
+                aria-current={page === number ? "page" : undefined}
+                onClick={() => setPage(number)}
+              >
+                {number}
+              </button>
+            ),
+          )}
+          <button
+            disabled={page === pageCount}
+            onClick={() => setPage(page + 1)}
+          >
+            Next
+          </button>
+        </nav>
+      )}
+    </>
   );
 }
 type Field = {
@@ -1669,10 +2174,33 @@ function RecordForm({
   return (
     <form onSubmit={submit}>
       <fieldset disabled={busy} className="space-y-4">
-        {fields.map((f) => (
-          <label className="field" key={f.name}>
-            {f.label}
-            {f.options ? (
+        {fields.map((f) =>
+          f.type === "rating" ? (
+            <fieldset className="field" key={f.name}>
+              <legend>{f.label}</legend>
+              <div className="rating-picker">
+                {[1, 2, 3, 4, 5].map((value) => (
+                  <label key={value}>
+                    <input
+                      type="radio"
+                      name={f.name}
+                      value={value}
+                      required={f.required !== false}
+                      defaultChecked={f.value === String(value)}
+                    />
+                    <Star size={21} aria-hidden="true" />
+                    <span>{value}</span>
+                  </label>
+                ))}
+              </div>
+              <small className="text-muted-foreground">
+                1 Poor · 2 Fair · 3 Good · 4 Very good · 5 Excellent
+              </small>
+            </fieldset>
+          ) : (
+            <label className="field" key={f.name}>
+              {f.label}
+              {f.options ? (
               <select
                 name={f.name}
                 required={f.required !== false}
@@ -1705,9 +2233,10 @@ function RecordForm({
                 max={f.max}
                 maxLength={f.name === "code" ? 64 : 120}
               />
-            )}
-          </label>
-        ))}
+              )}
+            </label>
+          ),
+        )}
         {error && (
           <p role="alert" className="feedback-error">
             {error}
@@ -1798,16 +2327,14 @@ function formFields(kind: string, data: WorkspaceData): Field[] {
           batch,
           {
             name: "rating",
-            label: "Rating",
-            options: [
-              ["1", "1 — Poor"],
-              ["2", "2 — Fair"],
-              ["3", "3 — Good"],
-              ["4", "4 — Very good"],
-              ["5", "5 — Excellent"],
-            ],
+            label: "Human assessment",
+            type: "rating",
           },
-          { name: "comments", label: "Comments", type: "textarea" },
+          {
+            name: "comments",
+            label: "Observations or disagreement with machine data",
+            type: "textarea",
+          },
         ],
       } as Record<string, Field[]>
     )[kind] ?? []

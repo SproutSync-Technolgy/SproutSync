@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'main.dart';
@@ -65,6 +64,13 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
               : notificationPreferences['alerts_enabled'] == true))
       .length;
   bool get operator => ['operator', 'admin'].contains(widget.profile['role']);
+  bool get admin => widget.profile['role'] == 'admin';
+  String get roleLabel => admin ? 'Admin IT' : operator ? 'Operator' : 'Evaluator';
+  String get rolePurpose => admin
+      ? 'Register equipment and provision access without replacing operator production decisions or evaluator judgment.'
+      : operator
+          ? 'Run production and record human actions. Live sensing and safety interlocks remain with the chamber controller.'
+          : 'Review shared evidence independently. Your assessment never replaces a machine reading; document a mismatch for follow-up.';
   List<Record> get alerts => data['alerts']!;
   List<Record> get batches => data['batches']!;
   @override
@@ -216,11 +222,6 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
     }
   }
 
-  List<InputField> get batchFields => [
-        const InputField('code', 'Batch code', maxLength: 64),
-        const InputField('seed_type', 'Crop', initial: 'Mung beans'),
-        const InputField('notes', 'Notes', required: false, multiline: true)
-      ];
   InputField get deviceField => InputField('device_id', 'Device', options: {
         for (final d in data['devices']!) '${d['id']}': '${d['name']}'
       });
@@ -243,6 +244,13 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
                       Text(alert['title'],
                           style: const TextStyle(
                               fontSize: 23, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      Text(alert['batch_id'] == null
+                          ? 'No batch linked'
+                          : 'Batch ${batchName(alert['batch_id'])}',
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF52665A))),
                       const SizedBox(height: 12),
                       Text(alert['message']),
                       const SizedBox(height: 20),
@@ -352,26 +360,185 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
     ]);
   }
 
-  Future<void> copyReport() async {
-    String cell(dynamic value) {
-      var text = '${value ?? ''}';
-      if (RegExp(r'^[=+@\-\t\r]').hasMatch(text)) text = "'$text";
-      return '"${text.replaceAll('"', '""')}"';
+  Future<void> recordMaintenance() async {
+    final code = await Navigator.of(context).push<String>(MaterialPageRoute(
+        builder: (_) => const DeviceScanner(
+            title: 'Scan equipment for maintenance',
+            helper:
+                'Use the camera to identify the chamber before recording work.',
+            manualLabel: 'Or enter equipment serial number')));
+    if (!mounted || code == null) return;
+    final normalized = code.trim().toLowerCase();
+    final device = data['devices']!
+        .where((item) =>
+            item['serial_number'].toString().toLowerCase() == normalized ||
+            item['name'].toString().toLowerCase() == normalized)
+        .firstOrNull;
+    if (device == null) {
+      toast('No registered equipment matches that serial number.');
+      return;
     }
+    await create('maintenance_records', 'Record maintenance', [
+      InputField('device_id', 'Equipment',
+          initial: '${device['id']}',
+          options: {'${device['id']}': '${device['name']}'}),
+      const InputField('notes', 'What was inspected or changed?',
+          multiline: true)
+    ]);
+  }
 
-    final rows = [
-      ['Batch', 'Crop', 'Stage', 'Status', 'Started'],
-      ...batches.map((b) =>
-          [b['code'], b['seed_type'], b['stage'], b['status'], b['started_at']])
-    ];
-    await Clipboard.setData(ClipboardData(
-        text: rows.map((row) => row.map(cell).join(',')).join('\r\n')));
-    toast('Batch report copied as CSV.');
+  Future<void> showIncidentDraft() async {
+    await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        showDragHandle: true,
+        builder: (context) => Padding(
+            padding: EdgeInsets.fromLTRB(
+                24, 8, 24, MediaQuery.viewInsetsOf(context).bottom + 24),
+            child: SingleChildScrollView(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                  Text('Report current situation',
+                      style: Theme.of(context).textTheme.headlineSmall),
+                  const SizedBox(height: 8),
+                  const Text(
+                      'UI draft only. Submission is not connected, so no incident will be saved.',
+                      style: TextStyle(color: Colors.black54)),
+                  const SizedBox(height: 18),
+                  const Wrap(spacing: 8, runSpacing: 8, children: [
+                    Chip(label: Text('1 Describe')),
+                    Chip(label: Text('2 Locate')),
+                    Chip(label: Text('3 Link records')),
+                    Chip(label: Text('4 Escalate'))
+                  ]),
+                  const SizedBox(height: 18),
+                  const TextField(
+                      maxLines: 3,
+                      decoration:
+                          InputDecoration(labelText: 'Current situation')),
+                  const SizedBox(height: 14),
+                  const TextField(
+                      decoration: InputDecoration(
+                          labelText: 'Location or component',
+                          hintText: 'For example 3D fan, seal, pump or tray')),
+                  const SizedBox(height: 14),
+                  TextField(
+                      decoration: InputDecoration(
+                          labelText: 'Affected batch',
+                          hintText: batches.isEmpty
+                              ? 'No shared batches available'
+                              : 'Type a batch code')),
+                  const SizedBox(height: 14),
+                  const DropdownMenu<String>(
+                      expandedInsets: EdgeInsets.zero,
+                      label: Text('Risk category'),
+                      dropdownMenuEntries: [
+                        DropdownMenuEntry(
+                            value: 'pests',
+                            label: 'Pests or external contamination'),
+                        DropdownMenuEntry(
+                            value: 'water', label: 'Water contamination'),
+                        DropdownMenuEntry(
+                            value: 'compliance', label: 'Compliance risk'),
+                        DropdownMenuEntry(
+                            value: 'light', label: 'Light leak'),
+                        DropdownMenuEntry(
+                            value: 'equipment', label: 'Equipment problem')
+                      ]),
+                  const SizedBox(height: 14),
+                  const TextField(
+                      decoration:
+                          InputDecoration(labelText: 'Screen or LCD message')),
+                  const SizedBox(height: 18),
+                  const FilledButton(
+                      onPressed: null,
+                      child: Text('Submit incident report'))
+                ]))));
+  }
+
+  Future<void> submitEvaluation() async {
+    await create('evaluations', 'Submit field assessment', [
+      batchField,
+      const InputField('rating', 'Human assessment', options: {
+        '1': '1 - Poor',
+        '2': '2 - Fair',
+        '3': '3 - Good',
+        '4': '4 - Very good',
+        '5': '5 - Excellent'
+      }),
+      const InputField(
+          'comments', 'Observations or disagreement with machine data',
+          multiline: true)
+    ]);
+  }
+
+  Future<void> scanWorkspace() async {
+    final code = await Navigator.of(context).push<String>(MaterialPageRoute(
+        builder: (_) => const DeviceScanner(
+            title: 'Scan batch or chamber',
+            helper:
+                'Scan a label where the work happens to open its shared record.',
+            manualLabel: 'Or enter batch code or serial number')));
+    if (!mounted || code == null) return;
+    final normalized = code.trim().toLowerCase();
+    final batch = batches
+        .where((item) => item['code'].toString().toLowerCase() == normalized)
+        .firstOrNull;
+    if (batch != null) {
+      await showBatch(batch);
+      return;
+    }
+    final device = data['devices']!
+        .where((item) =>
+            item['serial_number'].toString().toLowerCase() == normalized ||
+            item['name'].toString().toLowerCase() == normalized)
+        .firstOrNull;
+    if (device != null) {
+      await showDeviceSnapshot(device);
+      return;
+    }
+    toast(operator
+        ? 'No linked record matches that label. Register a new chamber from More if needed.'
+        : 'No shared batch or chamber matches that label. Ask the operator to confirm access.');
+  }
+
+  Future<void> showDeviceSnapshot(Record device) async {
+    final reading = data['telemetry_readings']!
+        .where((item) => item['device_id'] == device['id'])
+        .firstOrNull;
+    await showModalBottomSheet<void>(
+        context: context,
+        useSafeArea: true,
+        showDragHandle: true,
+        builder: (context) => Padding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const CircleAvatar(child: Icon(Icons.sensors)),
+                  title: Text(device['name'],
+                      style: Theme.of(context).textTheme.titleLarge),
+                  subtitle: Text(
+                      '${device['status']} · Last seen ${displayDate(device['last_seen_at'])}')),
+              const Divider(),
+              if (reading == null)
+                const Padding(
+                    padding: EdgeInsets.all(20),
+                    child: Text('No machine reading is available yet.'))
+              else
+                ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.monitor_heart_outlined),
+                    title: Text(
+                        '${reading['temperature_c'] ?? '—'}°C · ${reading['humidity_percent'] ?? '—'}% humidity'),
+                    subtitle: Text(
+                        'Machine reading · ${displayDate(reading['recorded_at'])}'))
+            ])));
   }
 
   Widget card(String title, String value, IconData icon) => Card(
-      elevation: 0,
-      color: Colors.white,
       child: Padding(
           padding: const EdgeInsets.all(18),
           child:
@@ -384,6 +551,24 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
             Text(title,
                 style: const TextStyle(fontSize: 12, color: Colors.black54))
           ])));
+  Widget roleScopeCard() => Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+          color: const Color(0xFFEEF7F1),
+          border: Border.all(color: const Color(0xFFDCEFE2)),
+          borderRadius: BorderRadius.circular(16)),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Icon(Icons.verified_user_outlined, color: Color(0xFF1F6F45)),
+        const SizedBox(width: 14),
+        Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('$roleLabel field scope',
+              style: const TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          Text(rolePurpose, style: const TextStyle(color: Color(0xFF52665A)))
+        ]))
+      ]));
   Widget empty(String text) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 12),
       child: Column(children: [
@@ -426,47 +611,15 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
           '${batches.where((b) => b['status'] == 'active').length}',
           Icons.spa_outlined),
       card(
-          'Active / total trays',
-          '${data['trays']!.where((t) => t['status'] == 'active').length} / ${data['trays']!.length}',
-          Icons.grid_view),
-      card(
           'Active alerts',
           '${alerts.where((a) => a['status'] != 'resolved').length}',
           Icons.notifications_outlined),
       card(
-          'Water level',
-          latest?['water_level_percent'] == null
-              ? '—'
-              : '${latest!['water_level_percent']}%',
-          Icons.water_drop_outlined),
-      card(
-          'Temperature',
+          'Latest temperature',
           latest?['temperature_c'] == null
               ? '—'
               : '${latest!['temperature_c']}°C',
           Icons.thermostat),
-      card(
-          'Humidity',
-          latest?['humidity_percent'] == null
-              ? '—'
-              : '${latest!['humidity_percent']}%',
-          Icons.water),
-      card(
-          'Water temperature',
-          latest?['water_temperature_c'] == null
-              ? '—'
-              : '${latest!['water_temperature_c']}°C',
-          Icons.thermostat_outlined),
-      card(
-          'Light level',
-          latest?['light_lux'] == null ? '—' : '${latest!['light_lux']} lux',
-          Icons.dark_mode_outlined),
-      card(
-          'Wastewater',
-          latest?['wastewater_level_percent'] == null
-              ? '—'
-              : '${latest!['wastewater_level_percent']}%',
-          Icons.waves),
     ];
     return [
       Container(
@@ -484,10 +637,12 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
             const SizedBox(height: 8),
             Text(
                 operator
-                    ? 'Your growing space at a glance.'
-                    : 'Your shared batches and evidence.',
+                    ? 'Today’s production priorities, ready for the floor.'
+                    : 'Shared work that is ready for independent review.',
                 style: const TextStyle(color: Colors.white70))
           ])),
+      const SizedBox(height: 12),
+      roleScopeCard(),
       if (batches.any((batch) => batch['is_demo'] == true))
         const Padding(
             padding: EdgeInsets.all(8),
@@ -516,6 +671,64 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
     ];
   }
 
+  List<Widget> scanTools() => [
+        Container(
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+                color: const Color(0xFF123F2B),
+                borderRadius: BorderRadius.circular(20)),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Icon(Icons.qr_code_scanner,
+                  size: 34, color: Color(0xFFDCEFE2)),
+              const SizedBox(height: 18),
+              const Text('Open the record in front of you',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              const Text(
+                  'Scan a batch or chamber label to avoid searching and reduce entry mistakes.',
+                  style: TextStyle(color: Color(0xFFC9DED0), height: 1.5)),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                  onPressed: scanWorkspace,
+                  icon: const Icon(Icons.center_focus_strong),
+                  label: const Text('Scan label'))
+            ])),
+        const SizedBox(height: 18),
+        section('Quick capture', [
+          if (operator)
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              OutlinedButton.icon(
+                  onPressed:
+                      data['devices']!.isEmpty ? null : recordMaintenance,
+                  icon: const Icon(Icons.camera_alt_outlined),
+                  label: const Text('Scan equipment & record maintenance')),
+              const SizedBox(height: 8),
+              const Text(
+                  'The camera identifies the equipment. Maintenance photo upload is not connected yet.',
+                  style: TextStyle(fontSize: 12, color: Colors.black54)),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                  onPressed: showIncidentDraft,
+                  icon: const Icon(Icons.report_problem_outlined),
+                  label: const Text('Report current situation'))
+            ])
+          else
+            OutlinedButton.icon(
+                onPressed: batches.isEmpty ? null : submitEvaluation,
+                icon: const Icon(Icons.fact_check_outlined),
+                label: const Text('Submit field assessment'))
+        ]),
+        const Padding(
+            padding: EdgeInsets.only(top: 18),
+            child: Text(
+                'Planning, printable historical reports, and account access remain in the web workspace.',
+                style: TextStyle(color: Color(0xFF52665A))))
+      ];
+
   List<Widget> batchCards(List<Record> records) => records.isEmpty
       ? [
           empty(operator
@@ -532,7 +745,7 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
                   title: Text(b['code'],
                       style: const TextStyle(fontWeight: FontWeight.bold)),
                   subtitle:
-                      Text('${b['seed_type']} · ${b['stage']}\n${b['status']}'),
+                      Text('${b['seed_type']} · ${b['stage']}\n${b['status']} · Operator #${b['owner_id']}'),
                   isThreeLine: true,
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => showBatch(b))))
@@ -554,26 +767,27 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
                           Navigator.pop(context);
                         })))),
         section(
-            'Devices',
+            'Sensors & chamber equipment',
             data['devices']!.isEmpty
-                ? [empty('Link a device to start receiving readings.')]
+                ? [empty('No equipment is linked yet.')]
                 : data['devices']!
                     .map((d) => Card(
                         child: ListTile(
                             leading: const Icon(Icons.sensors),
                             title: Text(d['name']),
                             subtitle: Text(
-                                '${d['status']} · Last seen ${displayDate(d['last_seen_at'])}'))))
+                                'Serial ${d['serial_number']}\n${d['status']} · Last seen ${displayDate(d['last_seen_at'])}'),
+                            isThreeLine: true)))
                     .toList()),
-        if (operator)
+        if (admin)
           OutlinedButton.icon(
               onPressed: addDevice,
               icon: const Icon(Icons.qr_code_scanner),
-              label: const Text('Add device / scan QR')),
+              label: const Text('Register equipment')),
         const Padding(
             padding: EdgeInsets.all(8),
             child: Text(
-                'Connect a registered chamber to Wi-Fi through its controller setup. It stays pending until a heartbeat is received.',
+                'Admin IT registers equipment. Connect a registered chamber to Wi-Fi through its controller setup; it stays pending until a heartbeat is received.',
                 style: TextStyle(fontSize: 12, color: Colors.black54))),
         section(
             'Maintenance',
@@ -585,16 +799,6 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
                         subtitle: Text(
                             '${m['notes']}\n${displayDate(m['performed_at'])}')))
                     .toList()),
-        if (operator)
-          OutlinedButton(
-              onPressed: data['devices']!.isEmpty
-                  ? null
-                  : () => create('maintenance_records', 'Record maintenance', [
-                        deviceField,
-                        const InputField('notes', 'Maintenance notes',
-                            multiline: true)
-                      ]),
-              child: const Text('Record maintenance')),
         section(
             'Evidence',
             data['evidence_records']!.isEmpty
@@ -606,23 +810,6 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
                         subtitle: Text(
                             '${e['category']} · ${e['result']}\n${e['notes']}')))
                     .toList()),
-        if (!operator)
-          OutlinedButton(
-              onPressed: batches.isEmpty
-                  ? null
-                  : () => create('evaluations', 'Evaluate batch', [
-                        batchField,
-                        const InputField('rating', 'Rating', options: {
-                          '1': '1 — Poor',
-                          '2': '2 — Fair',
-                          '3': '3 — Good',
-                          '4': '4 — Very good',
-                          '5': '5 — Excellent'
-                        }),
-                        const InputField('comments', 'Comments',
-                            multiline: true)
-                      ]),
-              child: const Text('Submit evaluation')),
         section('Notifications', [
           NotificationSettings(
               userId: widget.profile['id'],
@@ -637,20 +824,9 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
       ];
   @override
   Widget build(BuildContext context) {
-    final water = data['watering_events']!.fold<double>(
-            0, (sum, w) => sum + (w['volume_ml'] as num).toDouble()) /
-        1000;
     final content = switch (tab) {
       0 => home(),
-      1 => [
-          if (operator)
-            FilledButton.icon(
-                onPressed: () => create('batches', 'New batch', batchFields),
-                icon: const Icon(Icons.add),
-                label: const Text('New batch')),
-          const SizedBox(height: 12),
-          ...batchCards(batches)
-        ],
+      1 => scanTools(),
       2 => alerts.isEmpty
           ? [empty('No alerts have been recorded.')]
           : alerts
@@ -664,37 +840,16 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
                               : Colors.orange),
                       title: Text(a['title']),
                       subtitle: Text(
-                          '${a['status']} · ${displayDate(a['created_at'])}'),
+                          '${a['batch_id'] == null ? 'No batch linked' : 'Batch ${batchName(a['batch_id'])}'}\n${a['status']} · ${displayDate(a['created_at'])}'),
+                      isThreeLine: true,
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () => showAlert(a))))
               .toList(),
-      3 => [
-          card('Recorded water use', '${water.toStringAsFixed(1)} L',
-              Icons.water_drop_outlined),
-          card(
-              'Harvested batches',
-              '${batches.where((b) => b['stage'] == 'harvested').length}',
-              Icons.spa),
-          OutlinedButton.icon(
-              onPressed: batches.isEmpty ? null : copyReport,
-              icon: const Icon(Icons.copy),
-              label: const Text('Copy batch report as CSV')),
-          section(
-              'Watering history',
-              data['watering_events']!.isEmpty
-                  ? [empty('No watering events yet.')]
-                  : data['watering_events']!
-                      .map((w) => ListTile(
-                          title: Text(batchName(w['batch_id'])),
-                          subtitle: Text(
-                              '${(w['volume_ml'] / 1000).toStringAsFixed(2)} L · ${displayDate(w['occurred_at'])}')))
-                      .toList())
-        ],
       _ => more(),
     };
     return Scaffold(
         appBar: AppBar(
-            title: Text(['Home', 'Batches', 'Alerts', 'Reports', 'More'][tab],
+            title: Text(['Today', 'Scan', 'Alerts', 'More'][tab],
                 style: const TextStyle(fontWeight: FontWeight.bold)),
             actions: [
               IconButton(
@@ -733,15 +888,13 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
             onDestinationSelected: (index) => setState(() => tab = index),
             destinations: const [
               NavigationDestination(
-                  icon: Icon(Icons.home_outlined),
-                  selectedIcon: Icon(Icons.home),
-                  label: 'Home'),
+                  icon: Icon(Icons.today_outlined),
+                  selectedIcon: Icon(Icons.today),
+                  label: 'Today'),
               NavigationDestination(
-                  icon: Icon(Icons.spa_outlined), label: 'Batches'),
+                  icon: Icon(Icons.qr_code_scanner), label: 'Scan'),
               NavigationDestination(
                   icon: Icon(Icons.notifications_outlined), label: 'Alerts'),
-              NavigationDestination(
-                  icon: Icon(Icons.bar_chart), label: 'Reports'),
               NavigationDestination(icon: Icon(Icons.more_horiz), label: 'More')
             ]));
   }
@@ -843,7 +996,88 @@ class _RecordEditorState extends State<RecordEditor> {
                             for (final f in widget.fields)
                               Padding(
                                   padding: const EdgeInsets.only(bottom: 18),
-                                  child: f.options != null
+                                  child: f.key == 'rating'
+                                      ? FormField<String>(
+                                          initialValue: controllers[f.key]!
+                                                  .text
+                                                  .isEmpty
+                                              ? null
+                                              : controllers[f.key]!.text,
+                                          validator: (value) =>
+                                              value == null || value.isEmpty
+                                                  ? 'Select a rating'
+                                                  : null,
+                                          builder: (state) => Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(f.label,
+                                                    style: Theme.of(context)
+                                                        .textTheme
+                                                        .bodySmall),
+                                                const SizedBox(height: 8),
+                                                SegmentedButton<String>(
+                                                    multiSelectionEnabled:
+                                                        false,
+                                                    emptySelectionAllowed: true,
+                                                    showSelectedIcon: false,
+                                                    segments: [
+                                                      for (final value in [
+                                                        '1',
+                                                        '2',
+                                                        '3',
+                                                        '4',
+                                                        '5'
+                                                      ])
+                                                        ButtonSegment(
+                                                            value: value,
+                                                            icon: const Icon(
+                                                                Icons.star_outline,
+                                                                size: 18),
+                                                            label: Text(value))
+                                                    ],
+                                                    selected: state.value == null
+                                                        ? <String>{}
+                                                        : {state.value!},
+                                                    onSelectionChanged:
+                                                        busy || widget.readOnly
+                                                            ? null
+                                                            : (selection) {
+                                                                final value =
+                                                                    selection
+                                                                            .isEmpty
+                                                                        ? null
+                                                                        : selection
+                                                                            .first;
+                                                                controllers[f
+                                                                            .key]!
+                                                                        .text =
+                                                                    value ?? '';
+                                                                state.didChange(
+                                                                    value);
+                                                              }),
+                                                const SizedBox(height: 6),
+                                                const Text(
+                                                    '1 Poor · 2 Fair · 3 Good · 4 Very good · 5 Excellent',
+                                                    style: TextStyle(
+                                                        fontSize: 11,
+                                                        color:
+                                                            Colors.black54)),
+                                                if (state.hasError)
+                                                  Padding(
+                                                      padding:
+                                                          const EdgeInsets.only(
+                                                              top: 6),
+                                                      child: Text(
+                                                          state.errorText!,
+                                                          style: TextStyle(
+                                                              color: Theme.of(
+                                                                      context)
+                                                                  .colorScheme
+                                                                  .error,
+                                                              fontSize: 12)))
+                                              ]))
+                                      : f.options != null
                                       ? DropdownButtonFormField<String>(
                                           initialValue:
                                               controllers[f.key]!.text.isEmpty
@@ -880,14 +1114,28 @@ class _RecordEditorState extends State<RecordEditor> {
                             if (!widget.readOnly)
                               FilledButton(
                                   onPressed: busy ? null : save,
-                                  child: Text(busy ? 'Saving…' : 'Save'))
+                                  child: busy
+                                      ? const SizedBox(
+                                          width: 22,
+                                          height: 22,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: Colors.white))
+                                      : const Text('Save'))
                           ]))))));
 }
 
 /// Scans a chamber QR code or accepts its serial number manually.
 class DeviceScanner extends StatefulWidget {
   /// Creates the DeviceScanner widget or field definition.
-  const DeviceScanner({super.key});
+  const DeviceScanner(
+      {super.key,
+      this.title = 'Scan device QR',
+      this.helper = 'Scan the QR code or enter the serial number manually.',
+      this.manualLabel = 'Or enter serial number'});
+
+  /// Page title and short instruction shown before the camera.
+  final String title, helper, manualLabel;
   @override
   State<DeviceScanner> createState() => _DeviceScannerState();
 }
@@ -912,9 +1160,11 @@ class _DeviceScannerState extends State<DeviceScanner> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-      appBar: AppBar(title: const Text('Scan device QR')),
+      appBar: AppBar(title: Text(widget.title)),
       body: SafeArea(
           child: ListView(padding: const EdgeInsets.all(24), children: [
+        Text(widget.helper, style: Theme.of(context).textTheme.bodyLarge),
+        const SizedBox(height: 18),
         SizedBox(
             height: 300,
             child: ClipRRect(
@@ -935,8 +1185,7 @@ class _DeviceScannerState extends State<DeviceScanner> {
         const SizedBox(height: 24),
         TextField(
             controller: manual,
-            decoration:
-                const InputDecoration(labelText: 'Or enter serial number')),
+            decoration: InputDecoration(labelText: widget.manualLabel)),
         const SizedBox(height: 16),
         FilledButton(
             onPressed: () => complete(manual.text),
