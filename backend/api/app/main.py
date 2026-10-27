@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_user
 from app.config import settings
 from app.db import get_db
-from app.models import Batch, User
+from app.models import ActivityLog, Batch, Device, EvaluatorAccess, User
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +79,17 @@ def on_startup() -> None:
 
 def require_operator(user: User = Depends(get_current_user)) -> User:
     """Enforce operational access even when the HTTP API bypasses browser RLS."""
-    if user.role not in ("operator", "admin"):
+    if user.role not in ("operator", "admin", "superadmin"):
         raise HTTPException(status_code=403, detail="Operator access required")
+    return user
+
+
+def require_superadmin(user: User = Depends(get_current_user)) -> User:
+    """Enforce Superadmin or Admin authorization."""
+    if user.role not in ("superadmin", "admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Superadmin access required"
+        )
     return user
 
 
@@ -239,30 +248,26 @@ def list_batches(
     db: Session = Depends(get_db),
 ) -> list[BatchResponse]:
     """List active and archived batches visible to the current user."""
-    query = select(Batch).order_by(Batch.started_at.desc())
-    if user.role == "evaluator":
+    query = select(Batch).order_by(Batch.started_at.desc(), Batch.id.desc())
+    if user.role in ("superadmin", "admin"):
+        # Superadmin audits all batches across the entire fleet
+        return [BatchResponse.model_validate(batch) for batch in db.scalars(query).all()]
+    elif user.role == "evaluator":
         owners = db.scalars(
             text(
                 "SELECT owner_id FROM evaluator_access WHERE evaluator_email = :email"
             ),
             {"email": user.email.lower()},
         ).all()
-        visible_owners = [user.id, *owners]
-        has_records = db.scalar(
-            select(Batch.id).where(Batch.owner_id.in_(visible_owners)).limit(1)
-        )
-        if has_records is None:
-            demo_owner = db.scalar(
-                select(User.id).where(
-                    User.google_subject == "sproutsync-demo-workspace"
-                )
-            )
-            if demo_owner is not None:
-                visible_owners.append(demo_owner)
-        query = query.where(Batch.owner_id.in_(visible_owners))
+        # Strictly visible owners from grants only - zero grants means zero batches returned
+        if not owners:
+            return []
+        query = query.where(Batch.owner_id.in_(owners))
     else:
+        # Operator sees own batches
         query = query.where(Batch.owner_id == user.id)
     return [BatchResponse.model_validate(batch) for batch in db.scalars(query).all()]
+
 
 
 @app.post(
@@ -501,3 +506,228 @@ def confirm_verification_code(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail=f"Invalid verification code. {remaining} attempt{'s' if remaining != 1 else ''} remaining.",
     )
+
+
+class AccountResponse(BaseModel):
+    """Representation of an account for Superadmin management."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    display_name: str
+    first_name: str = ""
+    last_name: str = ""
+    organization: str = ""
+    phone: str = ""
+    avatar_url: str | None = None
+    role: str
+    is_active: bool
+    granted_serial_count: int = 0
+    evaluator_grant_count: int = 0
+    created_at: datetime | None = None
+
+
+class AccountUpdateRequest(BaseModel):
+    """Payload for Superadmin to update user role, name, and email."""
+
+    first_name: str = Field(min_length=1, max_length=80)
+    last_name: str = Field(default="", max_length=80)
+    email: str = Field(min_length=3, max_length=320)
+    role: str = Field(pattern="^(superadmin|admin|operator|evaluator)$")
+    organization: str = Field(default="", max_length=160)
+    phone: str = Field(default="", max_length=40)
+
+
+class DeviceGrantRequest(BaseModel):
+    """Payload for Superadmin to grant/assign a device serial ID to an operator."""
+
+    operator_id: int
+    serial_number: str = Field(min_length=1, max_length=64)
+    name: str = Field(default="Chamber Controller", min_length=1, max_length=120)
+
+
+class DeviceGrantResponse(BaseModel):
+    """Response after granting or querying a device serial."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    owner_id: int
+    name: str
+    serial_number: str
+    status: str
+    granted_by: int | None = None
+    granted_at: datetime | None = None
+    created_at: datetime | None = None
+
+
+@app.get(
+    "/api/v1/superadmin/accounts",
+    response_model=list[AccountResponse],
+    tags=["superadmin"],
+)
+def list_accounts(
+    _admin: User = Depends(require_superadmin),
+    db: Session = Depends(get_db),
+) -> list[AccountResponse]:
+    """List all managed accounts with role, serial counts, and evaluator counts."""
+    users = db.scalars(select(User).order_by(User.id.asc())).all()
+    accounts: list[AccountResponse] = []
+    for u in users:
+        serial_count = (
+            db.scalar(
+                text("SELECT count(*) FROM devices WHERE owner_id = :uid"),
+                {"uid": u.id},
+            )
+            or 0
+        )
+        grant_count = (
+            db.scalar(
+                text("SELECT count(*) FROM evaluator_access WHERE owner_id = :uid"),
+                {"uid": u.id},
+            )
+            or 0
+        )
+        accounts.append(
+            AccountResponse(
+                id=u.id,
+                email=u.email,
+                display_name=u.display_name,
+                first_name=u.first_name,
+                last_name=u.last_name,
+                organization=u.organization,
+                phone=u.phone,
+                avatar_url=u.avatar_url,
+                role=u.role,
+                is_active=u.is_active,
+                granted_serial_count=serial_count,
+                evaluator_grant_count=grant_count,
+                created_at=u.created_at,
+            )
+        )
+    return accounts
+
+
+@app.patch(
+    "/api/v1/superadmin/accounts/{user_id}",
+    response_model=AccountResponse,
+    tags=["superadmin"],
+)
+def update_account(
+    user_id: int,
+    payload: AccountUpdateRequest,
+    admin: User = Depends(require_superadmin),
+    db: Session = Depends(get_db),
+) -> AccountResponse:
+    """Superadmin endpoint to update user name, email, role, and organization."""
+    target = db.scalar(select(User).where(User.id == user_id))
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User account not found"
+        )
+    target.first_name = payload.first_name.strip()
+    target.last_name = payload.last_name.strip()
+    target.display_name = f"{target.first_name} {target.last_name}".strip()
+    target.email = payload.email.lower().strip()
+    target.role = payload.role
+    target.organization = payload.organization.strip()
+    target.phone = payload.phone.strip()
+
+    audit = ActivityLog(
+        owner_id=target.id,
+        actor_id=admin.id,
+        action="superadmin_account_update",
+        resource=f"users:{target.id}:{payload.role}",
+    )
+    db.add(audit)
+    db.commit()
+    db.refresh(target)
+
+    serial_count = (
+        db.scalar(
+            text("SELECT count(*) FROM devices WHERE owner_id = :uid"),
+            {"uid": target.id},
+        )
+        or 0
+    )
+    grant_count = (
+        db.scalar(
+            text("SELECT count(*) FROM evaluator_access WHERE owner_id = :uid"),
+            {"uid": target.id},
+        )
+        or 0
+    )
+    return AccountResponse(
+        id=target.id,
+        email=target.email,
+        display_name=target.display_name,
+        first_name=target.first_name,
+        last_name=target.last_name,
+        organization=target.organization,
+        phone=target.phone,
+        avatar_url=target.avatar_url,
+        role=target.role,
+        is_active=target.is_active,
+        granted_serial_count=serial_count,
+        evaluator_grant_count=grant_count,
+        created_at=target.created_at,
+    )
+
+
+@app.post(
+    "/api/v1/superadmin/device-grants",
+    response_model=DeviceGrantResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["superadmin"],
+)
+def grant_device_serial(
+    payload: DeviceGrantRequest,
+    admin: User = Depends(require_superadmin),
+    db: Session = Depends(get_db),
+) -> DeviceGrantResponse:
+    """Superadmin assigns or transfers a chamber device serial ID to an operator."""
+    operator = db.scalar(select(User).where(User.id == payload.operator_id))
+    if operator is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Operator not found"
+        )
+    if operator.role not in ("operator", "admin", "superadmin"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Target account must have operator or admin role",
+        )
+
+    clean_serial = payload.serial_number.strip().upper()
+    clean_name = payload.name.strip() or f"Chamber Controller {clean_serial}"
+    now = datetime.now(timezone.utc)
+
+    device = db.scalar(select(Device).where(Device.serial_number == clean_serial))
+    if device is None:
+        device = Device(
+            owner_id=operator.id,
+            serial_number=clean_serial,
+            name=clean_name,
+            status="online",
+            granted_by=admin.id,
+            granted_at=now,
+        )
+        db.add(device)
+    else:
+        device.owner_id = operator.id
+        device.name = clean_name
+        device.status = "online"
+        device.granted_by = admin.id
+        device.granted_at = now
+
+    audit = ActivityLog(
+        owner_id=operator.id,
+        actor_id=admin.id,
+        action="grant_serial_id",
+        resource=f"devices:{clean_serial}->user:{operator.id}",
+    )
+    db.add(audit)
+    db.commit()
+    db.refresh(device)
+    return DeviceGrantResponse.model_validate(device)
+

@@ -8,7 +8,13 @@ import { PersonalDetails } from "./components/PersonalDetails";
 // import { GoogleVerification } from "./components/GoogleVerification"; // Archived in src/assets/archive/GoogleVerification.archived.tsx
 import { MobileDownload } from "./components/MobileDownload";
 import { Logo, Btn } from "./components/ProtoPrimitives";
-import { errorMessage, isOperator, type Profile } from "./data/workspace";
+import {
+  errorMessage,
+  isOperator,
+  isSuperAdmin,
+  isEvaluator,
+  type Profile,
+} from "./data/workspace";
 const Workspace = lazy(() => import("./components/Workspace"));
 
 export function App() {
@@ -29,10 +35,15 @@ function SessionRouter() {
     window.location.pathname === "/reset-password",
   );
   const path = window.location.pathname.replace(/\/$/, "") || "/";
-  const operatorRoute = path === "/operator" || path.startsWith("/operator/");
+  const superadminRoute =
+    path === "/superadmin" || path.startsWith("/superadmin/");
+  const operatorRoute =
+    path === "/operator" ||
+    path.startsWith("/operator/") ||
+    superadminRoute;
   useEffect(() => {
     if (path === "/admin" || path.startsWith("/admin/"))
-      window.location.replace("/operator");
+      window.location.replace("/superadmin");
   }, [path]);
   useEffect(() => {
     let live = true;
@@ -128,7 +139,31 @@ function SessionRouter() {
     );
   if (session && !profile) return <Loading />;
   if (profile && session) {
-    if (operatorRoute && !isOperator(profile))
+    if (superadminRoute && !isSuperAdmin(profile))
+      return (
+        <main className="account-page">
+          <div className="account-card">
+            <Logo />
+            <h1>Superadmin access required</h1>
+            <p>This account does not have Superadmin privileges.</p>
+            <a
+              className="action-link"
+              href={isOperator(profile) ? "/operator" : "/dashboard"}
+            >
+              Open my workspace
+            </a>
+            <Btn
+              variant="outline"
+              onClick={() =>
+                void signOut().catch((e) => setError(errorMessage(e)))
+              }
+            >
+              Use another account
+            </Btn>
+          </div>
+        </main>
+      );
+    if (operatorRoute && !superadminRoute && !isOperator(profile))
       return (
         <main className="account-page">
           <div className="account-card">
@@ -149,7 +184,11 @@ function SessionRouter() {
           </div>
         </main>
       );
-    if (isOperator(profile) && !operatorRoute && path !== "/mobile") {
+    if (isSuperAdmin(profile) && !operatorRoute && path !== "/mobile") {
+      window.location.replace("/superadmin");
+      return <Loading />;
+    }
+    if (isOperator(profile) && !isSuperAdmin(profile) && !operatorRoute && path !== "/mobile") {
       window.location.replace("/operator");
       return <Loading />;
     }

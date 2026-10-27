@@ -70,3 +70,50 @@ class Batch(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     owner: Mapped[User] = relationship()
+
+
+class Device(Base):
+    """An IoT chamber controller device assigned to an operator."""
+
+    __tablename__ = "devices"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    serial_number: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending", server_default="pending")
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    firmware_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    granted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    owner: Mapped[User] = relationship(foreign_keys=[owner_id])
+
+
+class EvaluatorAccess(Base):
+    """Explicit access grant from an operator workspace to an evaluator."""
+
+    __tablename__ = "evaluator_access"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    evaluator_email: Mapped[str] = mapped_column(String(320), index=True)
+    granted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ActivityLog(Base):
+    """Immutable audit trail of actions taken in the workspace."""
+
+    __tablename__ = "activity_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    action: Mapped[str] = mapped_column(String(64), index=True)
+    resource: Mapped[str] = mapped_column(String(255))
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+

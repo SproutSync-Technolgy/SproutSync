@@ -34,6 +34,8 @@ export type Device = {
   is_demo: boolean;
   status: string;
   last_seen_at: string | null;
+  granted_by?: number | null;
+  granted_at?: string | null;
 };
 export type Alert = {
   id: number;
@@ -103,8 +105,26 @@ export type Activity = {
 };
 export type Access = {
   id: number;
+  owner_id?: number;
   evaluator_email: string;
+  granted_by?: number | null;
+  granted_at?: string | null;
   created_at: string;
+};
+export type UserAccount = {
+  id: number;
+  email: string;
+  display_name: string;
+  first_name: string;
+  last_name: string;
+  organization: string;
+  phone: string;
+  avatar_url: string | null;
+  role: string;
+  is_active: boolean;
+  granted_serial_count: number;
+  evaluator_grant_count: number;
+  created_at: string | null;
 };
 export type Tray = {
   id: number;
@@ -140,8 +160,28 @@ export const emptyWorkspace: WorkspaceData = {
   access: [],
   trays: [],
 };
+export const isSuperAdmin = (profile: Profile) =>
+  ["superadmin", "admin"].includes(profile.role);
 export const isOperator = (profile: Profile) =>
-  ["operator", "admin"].includes(profile.role);
+  ["operator", "admin", "superadmin"].includes(profile.role);
+export const isStrictOperator = (profile: Profile) =>
+  profile.role === "operator";
+export const isEvaluator = (profile: Profile) =>
+  profile.role === "evaluator";
+
+export function hasActiveGrant(profile: Profile, data: WorkspaceData): boolean {
+  if (isSuperAdmin(profile)) return true;
+  if (profile.role === "operator") {
+    // Operator has an active workspace if at least one device was assigned/granted
+    return data.devices.length > 0;
+  }
+  if (profile.role === "evaluator") {
+    // Evaluator has access if at least one operator grant exists or batches are visible
+    return data.access.length > 0 || data.batches.length > 0;
+  }
+  return false;
+}
+
 export const errorMessage = (error: unknown) =>
   error && typeof error === "object" && "message" in error
     ? String(error.message)
@@ -280,3 +320,59 @@ export function downloadCsv(
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+export async function fetchAccounts(): Promise<UserAccount[]> {
+  const res = await apiFetch("/api/v1/superadmin/accounts");
+  if (!res.ok) {
+    const err = await res
+      .json()
+      .catch(() => ({ detail: "Failed to load accounts" }));
+    throw new Error(err.detail || "Failed to load accounts");
+  }
+  return res.json();
+}
+
+export async function updateAccount(
+  userId: number,
+  payload: {
+    first_name: string;
+    last_name: string;
+    email: string;
+    role: string;
+    organization: string;
+    phone: string;
+  },
+): Promise<UserAccount> {
+  const res = await apiFetch(`/api/v1/superadmin/accounts/${userId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res
+      .json()
+      .catch(() => ({ detail: "Failed to update account" }));
+    throw new Error(err.detail || "Failed to update account");
+  }
+  return res.json();
+}
+
+export async function grantDeviceSerial(payload: {
+  operator_id: number;
+  serial_number: string;
+  name: string;
+}) {
+  const res = await apiFetch("/api/v1/superadmin/device-grants", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res
+      .json()
+      .catch(() => ({ detail: "Failed to grant device serial" }));
+    throw new Error(err.detail || "Failed to grant device serial");
+  }
+  return res.json();
+}
+
