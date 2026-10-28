@@ -1,5 +1,16 @@
 # Validation strategy
 
+Windows launcher checks: `npm run test:dependencies` tests missing/changed npm
+packages and lockfiles. `scripts/test-native-launcher.ps1` checks API lifecycle,
+explicit shutdown, and stale PID protection without using the database or broker.
+`scripts/test-first-run.ps1` installs a clean Python environment under `.tools`,
+verifies a second run skips installation, and removes only that test directory.
+`scripts/test-local-run.ps1` exercises the real `start.bat`/`stop.bat` flow against
+the configured development database and leaves both services stopped. Run these
+PowerShell scripts with `-NoProfile -ExecutionPolicy Bypass -File`; the policy
+change applies only to that child process. `verify.bat` is a read-only inventory,
+not a substitute for tests or a production build.
+
 Current checks: locked npm installation, setup environment validation/tests,
 dashboard type checking/build, isolated browser setup smoke, workspace browser
 flows, Python installation/pip check, Ruff, API health/permissions/verification

@@ -11,6 +11,7 @@
   "scripts": {
     "check:setup": "node scripts/check-setup.mjs",
     "test:setup": "node --test scripts/check-setup.test.mjs",
+    "test:dependencies": "node --test scripts/check-node-dependencies.test.mjs",
     "test:setup:browser": "node scripts/smoke-setup-browser.mjs",
     "predev": "npm run check:setup",
     "dev": "npm run dev -w @sproutsync/dashboard",

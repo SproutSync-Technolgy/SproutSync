@@ -5,11 +5,15 @@ Run commands in the repository folder using **PowerShell**.
 ## Already set up? Just run
 
 ```powershell
-.\start.bat -Backend Native
+.\start.bat
 ```
 
-Open **http://localhost:5173**. Press **Ctrl+C** to stop.
-Stop any older API/dashboard terminal before starting another session.
+Open **http://localhost:5173**. Run **`.\stop.bat`** in another terminal to stop
+the local API and dashboard, or press **Ctrl+C** in the launch terminal.
+
+Run **`.\verify.bat`** to list required libraries, installed versions, missing
+packages, and configuration problems. Verification installs nothing and starts
+no services. Use **`.\verify.bat -Online`** to also check database connectivity.
 
 ## First time on a Windows computer
 
@@ -47,30 +51,42 @@ Fill these five values in `.env` using your team's development Supabase project:
 Use one project for all five values. Keep an existing working `.env` and never
 commit it. Only public client keys belong in the `VITE_` settings.
 
-### 3. Install Python packages and start
+### 3. Start
 
-Run these commands once:
+Run this on the first and every later start:
 
 ```powershell
-py -3 -m venv backend/api/.venv
-.\backend\api\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\start.bat -Backend Native
+.\start.bat
 ```
 
-The launcher installs the frontend packages, checks configuration, applies
-pending database migrations, and starts the API and dashboard. Use your team's
-development database; coordinate migrations if that database is shared.
+On the first run, the launcher installs the locked JavaScript packages, creates
+`backend/api/.venv`, and installs the Python requirements. Later starts inspect
+the installed versions and **skip installation when everything is ready**. Missing,
+outdated, or damaged packages trigger installation/repair when needed, including
+after pulling dependency changes. An outdated manifest/lockfile pair is reported
+with instructions to update the lockfile.
 
-After this, each normal start only needs **`.\start.bat -Backend Native`**.
-After pulling changes to Python requirements, rerun the pip install command.
+Once `.env` is configured, startup checks the database, applies pending migrations,
+and runs the native API and dashboard. Use your team's development database;
+coordinate migrations if it is shared. If `.env` is missing, startup creates a
+template and asks you to fill it before running services; installed packages are
+reused on the next attempt. Node.js and Python themselves must already be installed.
+
+For packages only, without checking the database or starting services, run
+**`.\start.bat -InstallOnly`**. Docker remains available explicitly through
+**`.\start.bat -Backend Docker`**; normal `.\start.bat` uses native Python.
 
 ## If something fails
 
-- **Port already in use:** stop the old API/dashboard terminal with Ctrl+C.
+- **Port already in use:** run `.\stop.bat`; stop sessions from older launcher
+  versions with Ctrl+C in their original terminal.
 - **Missing configuration:** fill the five `.env` values above and restart.
 - **API error:** read `.tools/dev-api.stderr.log`.
+- **Dashboard error:** read `.tools/dev-dashboard.stderr.log`.
 - **Editor import warnings:** select `backend/api/.venv` using VS Code's
   **Python: Select Interpreter**, then reload the window.
 
 For **Docker, macOS/Linux, Google sign-in, tests, mobile, ESP32, or detailed
 troubleshooting**, use the [advanced setup reference](docs/setup-reference.md).
+
+For live ESP32 detection and sensor readings, see [MQTT device setup](docs/mqtt-device-setup.md).

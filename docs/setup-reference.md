@@ -56,7 +56,7 @@ The current web and mobile apps call Supabase Auth and PostgREST/RPCs directly.
 FastAPI verifies the same Auth sessions and connects to the **same database**.
 Migrations require `auth.users`, `auth.uid()`, `auth.jwt()`, and the Supabase
 database roles. A plain PostgreSQL container does not provide these. MQTT is
-optional infrastructure; the current API does not consume it.
+consumed by the optional live telemetry bridge; see [MQTT device setup](mqtt-device-setup.md).
 
 For the simplest setup, use a hosted development Supabase project. Ask the
 project administrator for access/configuration, or create your own development
@@ -181,8 +181,8 @@ npm run dev
 ```
 
 On PowerShell substitute `npm.cmd` for `npm`. On Windows, `start.bat` installs
-frontend dependencies and starts both services from one terminal. It uses Docker
-when its CLI is available, or the native Python API when Docker is missing.
+missing project dependencies and starts both services from one terminal. It uses
+the native Python backend by default; Docker is selected explicitly.
 It stops on installation/configuration/API failures. It creates a template `.env`
 if missing, then asks you to fill it before retrying. It runs from any folder and
 uses a child-process-only PowerShell policy. Explicitly select either backend:
@@ -192,14 +192,18 @@ uses a child-process-only PowerShell policy. Explicitly select either backend:
 .\start.bat -Backend Docker
 ```
 
-For native mode, first create the Python virtual environment and install
-`requirements.txt` as described below. With hosted Supabase this path needs no
-Docker installation. A full local Supabase stack still requires its own services.
-Use `.\start.bat -Check` to check the selected setup without installing packages,
-applying migrations, or starting services. Docker check mode inspects the engine;
-native check mode also performs the read-only database prerequisite check.
-Stop existing dashboard/API processes before starting a new native session; the
-launcher checks busy ports before reinstalling npm packages.
+Native startup automatically creates the Python virtual environment and installs
+`requirements.txt` if needed. Installed packages are checked against the lockfile
+and Python requirements and reused when ready. Node.js and Python remain system
+prerequisites. With hosted Supabase this path needs no Docker installation.
+A full local Supabase stack still requires its own services.
+Use `.\verify.bat` (or `.\start.bat -Check`) for an installed/missing dependency
+inventory and local configuration checks without installing, migrating, or starting
+services. `.\verify.bat -Online` also checks the database. Docker verification uses
+`-Backend Docker`. `.\start.bat -InstallOnly` prepares packages without running services.
+Stop existing services with `.\stop.bat` before starting another session. The launcher
+checks busy ports before installation. Docker images are rebuilt only when missing
+or when their source fingerprint changes.
 
 Compose builds the API from the current checkout, passes the server settings,
 checks the Supabase database prerequisites, runs `alembic upgrade head`, and
@@ -215,10 +219,11 @@ Open the dashboard at **http://localhost:5173**, API docs at
 prove database/Auth/email availability. An unauthenticated `/api/v1/auth/me`
 returns **401**, which is expected.
 
-Stop Vite with Ctrl+C. In native launcher mode this also stops the API started
-by that launcher; its logs are in `.tools/dev-api.stderr.log` and
-`.tools/dev-api.stdout.log`. Restart the launcher after changing API code.
-Stop containers with `docker compose down`. Named data
+Run `.\stop.bat`, or press Ctrl+C in the launcher terminal, to stop the API and
+dashboard started by this checkout. PID/start-time records prevent stale state
+from stopping unrelated processes. Service logs are in `.tools/dev-api.*.log`
+and `.tools/dev-dashboard.*.log`. Restart after changing API code.
+For a manually started Docker stack use `docker compose down`. Named data
 volumes are preserved. Do not use `down -v` to troubleshoot a startup failure;
 it deletes local database volumes.
 
@@ -260,8 +265,7 @@ experiments and are **not a replacement for the full local Supabase stack**.
 Use this path for API development or if you use hosted Supabase without Docker.
 Do not run the API container and native API on port 8000 simultaneously.
 
-For a single Windows terminal, after creating the virtual environment and
-installing requirements, run `.\start.bat -Backend Native`. It checks the database,
+For a single Windows terminal, run `.\start.bat`. It prepares missing packages, checks the database,
 applies migrations, waits for API health, and starts Vite in the same terminal.
 The manual commands below are useful when you want independent API reload/debug
 and frontend terminals.
@@ -374,7 +378,7 @@ Compilation does not upload firmware or validate wiring or energized hardware.
 | --- | --- |
 | `Path(...).parents[3]` / `IndexError: 3` in `/app/app/config.py` | Old image assumed a deep checkout path. Current config searches for repository markers and falls back to `/app`. Rebuild the Compose API with `--build --force-recreate`; do not run a stale standalone image from Docker Desktop. |
 | API exits before Uvicorn starts | Run `docker compose ps -a` and `docker compose logs --tail 100 api`. Fix the first startup/migration error. The prerequisite check now rejects non-Supabase databases before migrations. |
-| `Missing docker` | The launcher now automatically uses the native Python backend when Docker is absent. Create `backend/api/.venv` and install `requirements.txt`, then run `start.bat -Backend Native`. If you want containers, install Docker Desktop separately and reopen the terminal; pip cannot install Docker Engine. |
+| `Missing docker` | Run `start.bat` for the native Python backend, which prepares its environment automatically. For `-Backend Docker`, install/start Docker Desktop and reopen the terminal; pip cannot install Docker Engine. |
 | `ECONNREFUSED 127.0.0.1:8000`, proxy 500/503 | Nothing is listening on port 8000, often because the API exited. Check API health directly and repair API startup. The proxy now reports unavailable API requests as JSON HTTP 503, including health requests. |
 | Missing `VITE_SUPABASE_URL` / key | Fill the root `.env`, match server/public values, run `npm run check:setup`, restart Vite. The browser now shows a setup message instead of failing during module initialization. |
 | `auth.users` / `auth.uid()` / `authenticated` missing | `DATABASE_URL` points to plain PostgreSQL. Use the matching hosted or full local Supabase DB. Do not create fake Auth tables or skip RLS migrations. |

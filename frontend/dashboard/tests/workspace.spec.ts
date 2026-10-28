@@ -133,6 +133,64 @@ test("signup collects profile details and opens dashboard", async ({
   await page.reload();
   await expect(page.getByText("Welcome back, Pat.")).toHaveCount(0);
 });
+
+test("operator connects a granted device, waits for telemetry, and sees saved live readings", async ({ page }) => {
+  await mock(page);
+  let device = {
+    id: 1, owner_id: 1, name: "Test chamber", serial_number: "TEST-001", is_demo: false,
+    status: "pending", last_seen_at: null as string | null,
+    mqtt_topic_prefix: null as string | null, connection_requested_at: null as string | null,
+  };
+  let readings: Record<string, unknown>[] = [];
+  let mqttConnected = true;
+  let rejected = true;
+  const emptyChamber = { ...device, id: 2, serial_number: "TEST-002", name: "Waiting chamber" };
+  await page.route("**/api/v1/devices/live*", (route) => {
+    const after = Number(new URL(route.request().url()).searchParams.get("after_id") ?? 0);
+    return route.fulfill({ json: { devices: [device, emptyChamber], readings: readings.filter((r) => Number(r.id) > after), mqtt: { state: mqttConnected ? "connected" : "reconnecting", connected: mqttConnected, broker_url: "wss://broker.hivemq.com:8884/mqtt", stale_seconds: 30 } } });
+  });
+  await page.route("**/api/v1/devices/connect", async (route) => {
+    if (rejected) return route.fulfill({ status: 409, json: { detail: "This MQTT topic prefix is already connected to another device. Use a unique prefix." } });
+    const body = route.request().postDataJSON();
+    device = { ...device, name: body.name, mqtt_topic_prefix: body.topic_prefix, status: "pending", connection_requested_at: new Date().toISOString() };
+    return route.fulfill({ status: 202, json: device });
+  });
+  await page.goto("/operator");
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "Chamber & Access", exact: true }).click();
+  await page.getByRole("button", { name: "Add device", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Add device", exact: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await expect(dialog.getByLabel("MQTT broker")).toHaveValue("wss://broker.hivemq.com:8884/mqtt");
+  await dialog.getByRole("button", { name: "Connect device", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("already connected to another device");
+  rejected = false;
+  await dialog.getByLabel("MQTT topic prefix").fill("sproutsync/test-001");
+  await dialog.getByRole("button", { name: "Connect device", exact: true }).click();
+  await expect(dialog.getByRole("status")).toContainText("Waiting for a fresh sensor packet");
+  await expect(dialog.getByText("Device detected", { exact: false })).toHaveCount(0);
+  const now = new Date().toISOString();
+  device = { ...device, status: "online", last_seen_at: now };
+  readings = [{ id: 100, device_id: 1, temperature_c: 26.2, humidity_percent: 87, water_temperature_c: 20.4, light_lux: 0, water_level_percent: null, wastewater_level_percent: null, sensor_status: "NONE", voltage: 5.02, sd_ok: true, recorded_at: now, received_at: now }];
+  await expect(dialog.getByRole("status")).toContainText("Device detected", { timeout: 10000 });
+  await dialog.getByRole("button", { name: "View live readings" }).click();
+  await expect(page.getByText("26.2 °C", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("0 lux", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("No reading", { exact: true })).toHaveCount(2);
+  await page.screenshot({ path: "test-results/live-readings-mobile.png", fullPage: true });
+  await page.getByLabel("Filter readings by chamber").selectOption("2");
+  await expect(page.getByText("No sensor readings available for this chamber selection.")).toBeVisible();
+  await expect(page.getByText("26.2 °C", { exact: true })).toHaveCount(0);
+  await page.getByLabel("Filter readings by chamber").selectOption("1");
+  mqttConnected = false;
+  device = { ...device, status: "offline" };
+  await expect(page.getByText("Showing the last known reading. Waiting for fresh sensor data.")).toBeVisible({ timeout: 10000 });
+  // Saved readings remain visible after the operator reloads.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.reload();
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "Readings", exact: true }).click();
+  await expect(page.getByText("26.2 °C", { exact: true }).first()).toBeVisible();
+});
 test("evaluator cannot enter operator route or see operational controls", async ({
   page,
 }) => {

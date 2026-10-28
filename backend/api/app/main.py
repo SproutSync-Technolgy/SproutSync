@@ -5,6 +5,7 @@ import hmac
 import logging
 import secrets
 import smtplib
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 
@@ -16,11 +17,23 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_user, sync_supabase_user_email
 from app.config import settings
 from app.db import get_db
-from app.models import AccessRequest, ActivityLog, Batch, Device, EvaluatorAccess, User
+from app.models import AccessRequest, ActivityLog, Batch, Device, EvaluatorAccess, TelemetryReading, User
+from app.devices import router as device_router
+from app.mqtt import bridge
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="SproutSync API", version="0.2.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    bridge.start()
+    try:
+        yield
+    finally:
+        bridge.stop()
+
+
+app = FastAPI(title="SproutSync API", version="0.2.0", lifespan=lifespan)
+app.include_router(device_router)
 
 
 def require_operator(user: User = Depends(get_current_user)) -> User:
@@ -812,13 +825,15 @@ def grant_device_serial(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Operator not found"
         )
-    if operator.role not in ("operator", "admin", "superadmin"):
+    if operator.role not in ("operator", "admin", "superadmin") or not operator.is_active:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Target account must have operator or admin role",
+            detail="Target account must be an active operator or admin",
         )
 
     clean_serial = payload.serial_number.strip().upper()
+    if not clean_serial:
+        raise HTTPException(422, "Device serial number cannot be blank")
     clean_name = payload.name.strip() or f"Chamber Controller {clean_serial}"
     now = datetime.now(timezone.utc)
 
@@ -828,15 +843,23 @@ def grant_device_serial(
             owner_id=operator.id,
             serial_number=clean_serial,
             name=clean_name,
-            status="online",
+            status="pending",
             granted_by=admin.id,
             granted_at=now,
         )
         db.add(device)
     else:
+        if device.owner_id != operator.id:
+            if db.scalar(select(func.count()).select_from(TelemetryReading).where(
+                TelemetryReading.device_id == device.id
+            )):
+                raise HTTPException(409, "A device with telemetry history cannot be transferred. Keep its recorded ownership.")
+            device.mqtt_topic_prefix = None
+            device.last_seen_at = None
+            device.connection_requested_at = None
+            device.status = "pending"
         device.owner_id = operator.id
         device.name = clean_name
-        device.status = "online"
         device.granted_by = admin.id
         device.granted_at = now
 

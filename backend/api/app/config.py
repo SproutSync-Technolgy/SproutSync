@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,6 +30,11 @@ class Settings(BaseSettings):
     google_app_password: str = ""
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
+    mqtt_enabled: bool = True
+    mqtt_broker_url: str = "wss://broker.hivemq.com:8884/mqtt"
+    mqtt_username: str = ""
+    mqtt_password: str = ""
+    mqtt_stale_seconds: int = Field(default=30, ge=5, le=3600)
 
     model_config = SettingsConfigDict(
         env_file=REPOSITORY_ROOT / ".env",

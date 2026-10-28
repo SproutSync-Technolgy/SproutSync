@@ -8,7 +8,7 @@ flowchart LR
   Browser -->|Auth and protected PostgREST/RPC| Supabase[Supabase project]
   Pi -->|Auth verification| Supabase
   Pi --> DB[(Local PostgreSQL)]
-  Pi <-->|planned subscriber| Broker[Mosquitto]
+  Pi <-->|MQTT over secure WebSockets| Broker[Configured MQTT broker]
   Broker <-->|MQTT over TLS in deployment| ESP[ESP32]
   ESP --> SD[(MicroSD event queue)]
   ESP --> HW[Sensors and actuators]
@@ -30,7 +30,11 @@ and volumes must stay outside Git.
 
 Implemented API foundation: Supabase Auth bearer-token verification,
 PostgreSQL-backed local user projection, `/auth/me`, and Alembic identity
-migrations. Proposed next API modules: devices, batches, trays, telemetry,
+migrations. MQTT ingestion now binds granted device serials to unique topic
+prefixes, stores validated sensor packets, and detects stale/disconnected devices.
+Supabase Realtime delivers authorized inserts to the browser; a scoped API
+snapshot provides recovery. See [MQTT device setup](mqtt-device-setup.md).
+Proposed next API modules: trays,
 irrigation, alerts, yield, reports and audit. Introduce modules as their first
 vertical slices are implemented instead of creating empty layers.
 

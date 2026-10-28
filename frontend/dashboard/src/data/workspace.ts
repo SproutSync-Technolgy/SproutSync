@@ -34,6 +34,8 @@ export type Device = {
   is_demo: boolean;
   status: string;
   last_seen_at: string | null;
+  mqtt_topic_prefix?: string | null;
+  connection_requested_at?: string | null;
   granted_by?: number | null;
   granted_at?: string | null;
 };
@@ -59,6 +61,10 @@ export type Reading = {
   water_temperature_c: number | null;
   light_lux: number | null;
   wastewater_level_percent: number | null;
+  voltage?: number | null;
+  sd_ok?: boolean | null;
+  sensor_status?: string;
+  received_at?: string;
 };
 export type Watering = {
   id: number;
@@ -244,6 +250,8 @@ export async function loadWorkspace(
             `Unable to load ${table.replaceAll("_", " ")}: ${error.message}`,
           );
         rows.push(...data);
+        // Keep the browser's telemetry window bounded as MQTT history grows.
+        if (table === "telemetry_readings") break;
         if (data.length < 1000) break;
       }
       return [key, rows];
@@ -611,25 +619,16 @@ export async function grantDeviceSerial(payload: {
   serial_number: string;
   name: string;
 }) {
-  try {
-    const res = await apiFetch("/api/v1/superadmin/device-grants", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (res.ok) return await res.json();
-  } catch (err) {
-    console.warn("Backend grantDeviceSerial failed, applying in-memory:", err);
+  const res = await apiFetch("/api/v1/superadmin/device-grants", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(typeof body?.detail === "string" ? body.detail : "The device serial could not be granted. Please try again.");
   }
-  const op = STATIC_ACCOUNTS.find((a) => a.id === payload.operator_id);
-  if (op) {
-    if (!op.serial_numbers) op.serial_numbers = [];
-    if (!op.serial_numbers.includes(payload.serial_number)) {
-      op.serial_numbers.push(payload.serial_number);
-      op.granted_serial_count = op.serial_numbers.length;
-    }
-  }
-  return { success: true, ...payload };
+  return res.json();
 }
 
 export async function assignEvaluator(

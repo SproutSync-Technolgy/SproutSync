@@ -5,14 +5,17 @@ IoT-based mung bean sprout production, monitoring, and water-use optimization.
 ## Quick start
 
 Follow **[SETUP.md](SETUP.md)** for the three-step first-time setup.
-Once your Python environment and `.env` are configured, start from one
+Once Node.js, Python, and `.env` are configured, start from one
 PowerShell terminal:
 
 ```powershell
-.\start.bat -Backend Native
+.\start.bat
 ```
 
 Open **http://localhost:5173**. Press **Ctrl+C** to stop.
+Or run **`.\stop.bat`** in another terminal. **`.\verify.bat`** reports installed
+and missing dependencies without installing anything. First startup installs
+project packages; later starts reuse complete installations.
 This Windows workflow uses hosted Supabase and does not require Docker.
 For Docker, macOS/Linux, optional tools, and troubleshooting, see the
 [advanced setup reference](docs/setup-reference.md).
@@ -39,6 +42,7 @@ SETUP.md                     Setup instructions and troubleshooting
 
 ```sh
 npm run test:setup
+npm run test:dependencies
 npm run build
 node scripts/verify-repository.mjs
 ```
@@ -49,8 +53,9 @@ firmware, and migration checks. API liveness does not prove database readiness
 or email delivery.
 
 The web/mobile workspace implements Supabase sign-in, profiles, role-based access,
-and persisted operational records. Hardware telemetry ingestion, physical
-irrigation, and production deployment remain separate work. Compilation does
+and persisted operational records. The [MQTT device flow](docs/mqtt-device-setup.md)
+connects granted devices and saves live sensor telemetry. Physical irrigation
+and production deployment remain separate work. Compilation does
 not establish hardware safety. Local services bind to loopback by default.
 
 Read [architecture](docs/architecture.md), [technology stack](docs/tech-stack.md),

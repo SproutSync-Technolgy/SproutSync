@@ -41,3 +41,19 @@ erDiagram
 The current implementation adds `batches` with ownership, lifecycle fields,
 indexes, and a migration. Device relationships and historical records are
 separate vertical slices so the schema remains reviewable and reversible.
+
+## MQTT telemetry slice (0013)
+
+`devices.mqtt_topic_prefix` is nullable and globally unique. A server-only
+connection request sets `connection_requested_at`; fresh telemetry sets
+`last_seen_at` and online/fault status. Grants alone remain pending. Topic
+bindings are cleared on ownership changes, and telemetry keeps its owner/device
+foreign key. Existing devices are not automatically connected.
+
+`telemetry_readings` now includes `received_at`, `voltage`, `sd_ok`,
+`sensor_status`, and nullable `message_id`. A device/message uniqueness constraint
+prevents replay when firmware supplies an identifier; a device/time index supports
+recent readings. Existing history backfills receipt time from recorded time.
+Missing or faulty measurements remain null. Existing RLS read policies apply;
+authenticated browser roles cannot write ingestion or connection state.
+Both tables are published to `supabase_realtime` when that publication exists.

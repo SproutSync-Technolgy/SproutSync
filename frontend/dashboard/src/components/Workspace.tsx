@@ -83,6 +83,8 @@ import { Logo, Btn, Modal, NotebookInspectIcon } from "./ProtoPrimitives";
 import { PersonalDetails } from "./PersonalDetails";
 import { WaterUseChart, Spark, QualityGradeChart } from "./ProtoCharts";
 import { CalendarDatePicker } from "./CalendarDatePicker";
+import { mergeReadings, useLiveTelemetry } from "../data/liveTelemetry";
+import { DeviceConnectionForm, LiveConnectionStatus } from "./DeviceConnection";
 
 export function getRolePages(profile: Profile, hasGrant: boolean) {
   if (profile.role === "pending" || (!hasGrant && !isSuperAdmin(profile))) {
@@ -158,6 +160,7 @@ export default function Workspace({
   const [menu, setMenu] = useState(false);
   const [accountMenu, setAccountMenu] = useState(false);
   const [data, setData] = useState<WorkspaceData>(emptyWorkspace);
+  const live = useLiveTelemetry(profile.id, setData);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -303,7 +306,14 @@ export default function Workspace({
     try {
       const next = await loadWorkspace(controller.signal);
       if (!controller.signal.aborted) {
-        setData(next);
+        // A slower workspace request can finish after a live packet arrives.
+        // Keep those packets while respecting the newly authorized device list.
+        setData((current) => ({
+          ...next,
+          readings: mergeReadings(next.readings, current.readings).filter((reading) =>
+            next.devices.some((device) => device.id === reading.device_id),
+          ),
+        }));
         setError("");
         setUpdated(new Date());
         if (superadmin) {
@@ -439,7 +449,12 @@ export default function Workspace({
   const deviceReadings = data.readings.filter(
     (r) => selectedDevice === "all" || r.device_id === Number(selectedDevice),
   );
-  const currentReading = deviceReadings[0] ?? data.readings[0];
+  const currentReading = deviceReadings[0];
+  const readingDevice = data.devices.find((d) => d.id === currentReading?.device_id);
+  const readingStale = Boolean(currentReading && (
+    live.error || (readingDevice?.mqtt_topic_prefix && (!live.mqtt?.connected || !["online", "fault"].includes(readingDevice.status))) ||
+    Date.now() - Date.parse(currentReading.received_at ?? currentReading.recorded_at) > (live.mqtt?.stale_seconds ?? 30) * 1000
+  ));
   const initials = (profile.first_name || profile.display_name || profile.email)
     .trim()
     .split(/\s+/)
@@ -1219,6 +1234,7 @@ export default function Workspace({
                           </Btn>
                         }
                       />
+                      <LiveConnectionStatus {...live} />
                       <label className="field mb-4">
                         <span className="sr-only">Select device</span>
                         <select
@@ -1277,10 +1293,8 @@ export default function Workspace({
                           <p className="mt-4 text-xs text-muted-foreground">
                             {deviceName(currentReading.device_id)} ·{" "}
                             {date(currentReading.recorded_at)}
-                            {Date.now() -
-                              new Date(currentReading.recorded_at).getTime() >
-                              300000
-                              ? " · Reading is stale"
+                            {readingStale
+                              ? " · Last known reading — live data unavailable"
                               : ""}
                           </p>
                         </>
@@ -1410,6 +1424,7 @@ export default function Workspace({
                         </p>
                       </div>
                       <div className="flex items-center gap-3">
+                        {operator && <Btn onClick={() => open({ kind: "device" })}><Plus size={16} /> Add device</Btn>}
                         <label className="text-xs font-semibold text-muted-foreground flex items-center gap-2">
                           <span>Chamber:</span>
                           <select
@@ -1431,6 +1446,12 @@ export default function Workspace({
                       </div>
                     </div>
 
+                    <LiveConnectionStatus {...live} />
+                    {currentReading && <p className="mb-4 text-sm text-muted-foreground">
+                      Supply voltage: {currentReading.voltage == null ? "Not reported" : `${currentReading.voltage} V`} · SD card: {currentReading.sd_ok == null ? "Not reported" : currentReading.sd_ok ? "OK" : "Error"}
+                    </p>}
+                    {readingStale && <p role="status" className="feedback-error mb-4">Showing the last known reading. Waiting for fresh sensor data.</p>}
+                    {currentReading?.sensor_status && !["NONE", "OK", "NORMAL"].includes(currentReading.sensor_status) && <p role="status" className="feedback-error mb-4">Device reported: {currentReading.sensor_status}. Faulty sensor values are unavailable.</p>}
                     {/* 6 Detailed Sensor Telemetry Cards matching image_e0a5e9.png */}
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
                       {/* 1. Air Temperature */}
@@ -1448,7 +1469,7 @@ export default function Workspace({
                                 : "bg-amber-500/10 text-amber-600"
                               }`}
                           >
-                            {currentReading?.temperature_c &&
+                            {currentReading?.temperature_c == null ? "No reading" :
                               currentReading.temperature_c >= 21 &&
                               currentReading.temperature_c <= 27
                               ? "Within range"
@@ -1469,8 +1490,8 @@ export default function Workspace({
                         <div className="mt-2 pt-2 border-t border-border/40">
                           <Spark
                             data={deviceReadings
-                              .slice(-10)
-                              .map((r) => r.temperature_c ?? 24)}
+                              .slice(0, 10).reverse()
+                              .flatMap((r) => r.temperature_c == null ? [] : [r.temperature_c])}
                             color="#10b981"
                           />
                         </div>
@@ -1491,7 +1512,7 @@ export default function Workspace({
                                 : "bg-amber-500/10 text-amber-600"
                               }`}
                           >
-                            {currentReading?.humidity_percent &&
+                            {currentReading?.humidity_percent == null ? "No reading" :
                               currentReading.humidity_percent >= 80 &&
                               currentReading.humidity_percent <= 90
                               ? "Within range"
@@ -1512,8 +1533,8 @@ export default function Workspace({
                         <div className="mt-2 pt-2 border-t border-border/40">
                           <Spark
                             data={deviceReadings
-                              .slice(-10)
-                              .map((r) => r.humidity_percent ?? 85)}
+                              .slice(0, 10).reverse()
+                              .flatMap((r) => r.humidity_percent == null ? [] : [r.humidity_percent])}
                             color="#3b82f6"
                           />
                         </div>
@@ -1533,7 +1554,7 @@ export default function Workspace({
                                 : "bg-amber-500/10 text-amber-600"
                               }`}
                           >
-                            {currentReading?.water_level_percent &&
+                            {currentReading?.water_level_percent == null ? "No reading" :
                               currentReading.water_level_percent > 40
                               ? "Within range"
                               : "Getting low"}
@@ -1553,8 +1574,8 @@ export default function Workspace({
                         <div className="mt-2 pt-2 border-t border-border/40">
                           <Spark
                             data={deviceReadings
-                              .slice(-10)
-                              .map((r) => r.water_level_percent ?? 70)}
+                              .slice(0, 10).reverse()
+                              .flatMap((r) => r.water_level_percent == null ? [] : [r.water_level_percent])}
                             color="#f59e0b"
                           />
                         </div>
@@ -1575,7 +1596,7 @@ export default function Workspace({
                                 : "bg-amber-500/10 text-amber-600"
                               }`}
                           >
-                            {currentReading?.water_temperature_c &&
+                            {currentReading?.water_temperature_c == null ? "No reading" :
                               currentReading.water_temperature_c >= 18 &&
                               currentReading.water_temperature_c <= 22
                               ? "Within range"
@@ -1596,8 +1617,8 @@ export default function Workspace({
                         <div className="mt-2 pt-2 border-t border-border/40">
                           <Spark
                             data={deviceReadings
-                              .slice(-10)
-                              .map((r) => r.water_temperature_c ?? 20)}
+                              .slice(0, 10).reverse()
+                              .flatMap((r) => r.water_temperature_c == null ? [] : [r.water_temperature_c])}
                             color="#8b5cf6"
                           />
                         </div>
@@ -1618,8 +1639,7 @@ export default function Workspace({
                                 : "bg-rose-500/10 text-rose-600"
                               }`}
                           >
-                            {currentReading?.light_lux !== null &&
-                              currentReading?.light_lux !== undefined &&
+                            {currentReading?.light_lux == null ? "No reading" :
                               currentReading.light_lux < 5
                               ? "Nice & dark"
                               : "Light detected"}
@@ -1639,8 +1659,8 @@ export default function Workspace({
                         <div className="mt-2 pt-2 border-t border-border/40">
                           <Spark
                             data={deviceReadings
-                              .slice(-10)
-                              .map((r) => r.light_lux ?? 0)}
+                              .slice(0, 10).reverse()
+                              .flatMap((r) => r.light_lux == null ? [] : [r.light_lux])}
                             color="#6366f1"
                           />
                         </div>
@@ -1661,8 +1681,7 @@ export default function Workspace({
                                 : "bg-rose-500/10 text-rose-600"
                               }`}
                           >
-                            {currentReading?.wastewater_level_percent !== null &&
-                              currentReading?.wastewater_level_percent !== undefined &&
+                            {currentReading?.wastewater_level_percent == null ? "No reading" :
                               currentReading.wastewater_level_percent < 85
                               ? "Room available"
                               : "Near full"}
@@ -1682,8 +1701,8 @@ export default function Workspace({
                         <div className="mt-2 pt-2 border-t border-border/40">
                           <Spark
                             data={deviceReadings
-                              .slice(-10)
-                              .map((r) => r.wastewater_level_percent ?? 15)}
+                              .slice(0, 10).reverse()
+                              .flatMap((r) => r.wastewater_level_percent == null ? [] : [r.wastewater_level_percent])}
                             color="#06b6d4"
                           />
                         </div>
@@ -1692,10 +1711,8 @@ export default function Workspace({
 
                     <p className="text-xs text-muted-foreground mb-6">
                       {currentReading
-                        ? `Latest reading from ${deviceName(currentReading.device_id)} recorded at ${date(currentReading.recorded_at)}${Date.now() -
-                          new Date(currentReading.recorded_at).getTime() >
-                          300000
-                          ? " · Warning: Sensor reading is stale (> 5m ago)"
+                        ? `Latest reading from ${deviceName(currentReading.device_id)} recorded at ${date(currentReading.recorded_at)}${readingStale
+                          ? " · Last known reading — live data unavailable"
                           : ""
                         }`
                         : "No sensor readings available for this chamber selection."}
@@ -2566,9 +2583,11 @@ export default function Workspace({
                     <SectionTitle
                       title="Sensors & chamber equipment"
                       subtitle="Identify every chamber by its printed serial number and latest heartbeat."
+                      action={<Btn onClick={() => open({ kind: "device" })}><Plus size={16} /> Add device</Btn>}
                     />
+                    <LiveConnectionStatus {...live} />
                     {table(
-                      ["Equipment", "Serial number", "Connection", "Last seen"],
+                      ["Equipment", "Serial number", "Connection", "Last seen", "MQTT topic"],
                       data.devices.map((d) => [
                         d.name,
                         d.serial_number,
@@ -2586,6 +2605,7 @@ export default function Workspace({
                           }
                         />,
                         date(d.last_seen_at),
+                        d.mqtt_topic_prefix ? `${d.mqtt_topic_prefix}/telemetry` : "Not connected",
                       ]),
                       "No equipment linked yet.",
                     )}
@@ -2898,6 +2918,11 @@ export default function Workspace({
             {dialogError}
           </p>
         )}
+        {dialog?.kind === "device" && operator && <DeviceConnectionForm
+          devices={data.devices} mqtt={live.mqtt} liveError={live.error}
+          onSaved={(device) => setData((current) => ({ ...current, devices: current.devices.map((d) => d.id === device.id ? { ...d, ...device } : d) }))}
+          onDone={(deviceId) => { close(); if (deviceId !== undefined) { setSelectedDevice(String(deviceId)); navigate("readings"); } }}
+        />}
         {dialog?.kind === "signout" && (
           <div className="mt-6 flex justify-end gap-3">
             <Btn disabled={busy} variant="outline" onClick={close}>
@@ -3789,7 +3814,6 @@ export default function Workspace({
         {dialog &&
           [
             "batch-create",
-            "device",
             "schedule",
             "evidence",
             "evaluation",
@@ -3836,7 +3860,6 @@ export default function Workspace({
                     return;
                   }
                 }
-                if (dialog.kind === "device") table = "devices";
                 if (dialog.kind === "access") {
                   table = "evaluator_access";
                   payload.evaluator_email = values.evaluator_email
@@ -4214,10 +4237,6 @@ function formFields(
             required: false,
           },
           { ...notes, required: false },
-        ],
-        device: [
-          { name: "name", label: "Device name" },
-          { name: "serial_number", label: "Device serial number" },
         ],
         access: [
           {

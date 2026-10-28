@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -83,12 +83,38 @@ class Device(Base):
     serial_number: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     status: Mapped[str] = mapped_column(String(32), default="pending", server_default="pending")
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    mqtt_topic_prefix: Mapped[str | None] = mapped_column(String(160), unique=True, nullable=True)
+    connection_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     firmware_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     granted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     owner: Mapped[User] = relationship(foreign_keys=[owner_id])
+
+
+class TelemetryReading(Base):
+    """One validated MQTT packet; absent or faulty sensors remain null."""
+
+    __tablename__ = "telemetry_readings"
+    __table_args__ = (UniqueConstraint("device_id", "message_id", name="telemetry_device_message_unique"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), index=True)
+    temperature_c: Mapped[float | None] = mapped_column(Float)
+    humidity_percent: Mapped[float | None] = mapped_column(Float)
+    water_temperature_c: Mapped[float | None] = mapped_column(Float)
+    light_lux: Mapped[float | None] = mapped_column(Float)
+    water_level_percent: Mapped[float | None] = mapped_column(Float)
+    wastewater_level_percent: Mapped[float | None] = mapped_column(Float)
+    voltage: Mapped[float | None] = mapped_column(Float)
+    sd_ok: Mapped[bool | None] = mapped_column(Boolean)
+    sensor_status: Mapped[str] = mapped_column(String(120), default="NONE", server_default="NONE")
+    message_id: Mapped[str | None] = mapped_column(String(128))
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 
 class EvaluatorAccess(Base):
