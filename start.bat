@@ -17,19 +17,23 @@ if not exist ".env" (
 )
 
 :: 2. Ensure brand assets are synced from docs\assets to frontend\dashboard\src\assets
-if not exist "frontend\dashboard\src\assets\logo.png" (
-    echo [INFO] Syncing brand assets to frontend dashboard...
-    if not exist "frontend\dashboard\src\assets" mkdir "frontend\dashboard\src\assets"
-    if exist "docs\assets\logo.png" (
-        copy /y "docs\assets\logo.png" "frontend\dashboard\src\assets\logo.png" >nul
-        copy /y "docs\assets\chamber-model.png" "frontend\dashboard\src\assets\chamber-model.png" >nul
-        copy /y "docs\assets\chamber-views.png" "frontend\dashboard\src\assets\chamber-views.png" >nul
-    ) else if exist "scripts\copy-assets.bat" (
-        call "%~dp0scripts\copy-assets.bat"
-    )
+if not exist "frontend\dashboard\src\assets\logo.png" goto :sync_assets
+if not exist "frontend\dashboard\src\assets\chamber-model.png" goto :sync_assets
+goto :check_deps
+
+:sync_assets
+echo [INFO] Syncing brand assets to frontend dashboard...
+if not exist "frontend\dashboard\src\assets" mkdir "frontend\dashboard\src\assets"
+if exist "docs\assets\logo.png" (
+    copy /y "docs\assets\logo.png" "frontend\dashboard\src\assets\logo.png" >nul
+    copy /y "docs\assets\chamber-model.png" "frontend\dashboard\src\assets\chamber-model.png" >nul
+    copy /y "docs\assets\chamber-views.png" "frontend\dashboard\src\assets\chamber-views.png" >nul
+) else if exist "scripts\copy-assets.bat" (
+    call "%~dp0scripts\copy-assets.bat"
 )
 
-:: 3. Verify frontend dependencies (node_modules + lucide-react & motion)
+:check_deps
+:: 3. Verify frontend dependencies (node_modules + @tailwindcss/vite + lucide-react)
 if not exist "node_modules" (
     echo [INFO] Installing frontend workspace dependencies...
     call npm.cmd install
@@ -38,6 +42,19 @@ if not exist "node_modules" (
         echo [ERROR] npm install failed.
         pause
         exit /b 1
+    )
+) else if not exist "node_modules\@tailwindcss\vite" (
+    echo [INFO] Installing Tailwind CSS v4 Vite plugin (@tailwindcss/vite)...
+    call npm.cmd install
+    if errorlevel 1 (
+        echo.
+        echo [ERROR] npm install failed.
+        pause
+        exit /b 1
+    )
+    if exist "frontend\dashboard\node_modules\.vite" (
+        echo [INFO] Clearing stale Vite bundle cache...
+        rd /s /q "frontend\dashboard\node_modules\.vite" 2>nul
     )
 ) else if not exist "node_modules\@supabase\supabase-js" (
     echo [INFO] Updating frontend dependencies for @supabase/supabase-js...
@@ -74,11 +91,19 @@ if errorlevel 1 (
         exit /b 1
     )
 ) else (
-    echo [SUCCESS] Backend is running at http://localhost:8000
+    echo [INFO] Checking backend API readiness at http://localhost:8000/api/v1/health...
+    powershell -NoProfile -Command "for ($i=0; $i -lt 10; $i++) { try { $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8000/api/v1/health' -TimeoutSec 2 -UseBasicParsing; if ($r.StatusCode -eq 200) { exit 0 } } catch {} Start-Sleep -Seconds 1 }; exit 1" >nul 2>nul
+    if errorlevel 1 (
+        echo [WARN] Backend API did not respond to /api/v1/health in 10s.
+        echo Verify your .env has valid POSTGRES_PASSWORD and DATABASE_URL.
+    ) else (
+        echo [SUCCESS] Backend is healthy at http://localhost:8000
+    )
 )
 
 echo.
 echo [INFO] Launching Frontend Dashboard on http://localhost:5173...
+echo [TIP]  If teammates see stale UI or old code, run: git pull ^&^& npm install ^&^& npx vite --force
 echo.
 
 :: Open browser in 2 seconds once Vite spins up

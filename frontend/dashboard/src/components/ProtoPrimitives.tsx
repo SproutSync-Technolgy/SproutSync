@@ -55,6 +55,7 @@ export function Btn({
   className = '',
   type = 'button',
   disabled = false,
+  title,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
@@ -63,6 +64,7 @@ export function Btn({
   size?: 'sm' | 'md' | 'lg' | string;
   className?: string;
   disabled?: boolean;
+  title?: string;
 }) {
   const base =
     'inline-flex items-center justify-center gap-2 font-semibold transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-50 disabled:pointer-events-none';
@@ -83,6 +85,7 @@ export function Btn({
       type={type}
       onClick={onClick}
       disabled={disabled}
+      title={title}
       className={`${base} ${sizeStyles} ${styles} ${className}`}
     >
       {children}
