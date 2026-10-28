@@ -681,10 +681,14 @@ export function exportCsv(
 ): void {
   const escapeCell = (val: string | number | null | undefined) => {
     if (val === null || val === undefined) return '""';
-    const s = String(val).replace(/"/g, '""');
+    let text = String(val);
+    if (typeof val === "string" && /^[\t\r ]*[=+\-@]/.test(text)) {
+      text = `'${text}`;
+    }
+    const s = text.replace(/"/g, '""');
     return `"${s}"`;
   };
-  const content = [
+  const content = "\uFEFF" + [
     headers.map(escapeCell).join(","),
     ...rows.map((row) => row.map(escapeCell).join(",")),
   ].join("\r\n");
@@ -696,7 +700,7 @@ export function exportCsv(
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export async function fetchOperatorEvaluators(): Promise<EvaluatorSummary[]> {
@@ -822,4 +826,3 @@ export async function requestOperatorAccess(
   }
   return res.json();
 }
-

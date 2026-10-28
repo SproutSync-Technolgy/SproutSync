@@ -20,6 +20,7 @@ import {
   RefreshCw,
   Plus,
   Printer,
+  Download,
   Search,
   ChevronRight,
   CheckCircle2,
@@ -83,6 +84,7 @@ import { Logo, Btn, Modal, NotebookInspectIcon } from "./ProtoPrimitives";
 import { PersonalDetails } from "./PersonalDetails";
 import { WaterUseChart, Spark, QualityGradeChart } from "./ProtoCharts";
 import { CalendarDatePicker } from "./CalendarDatePicker";
+import logoUrl from "../assets/logo.png";
 
 export function getRolePages(profile: Profile, hasGrant: boolean) {
   if (profile.role === "pending" || (!hasGrant && !isSuperAdmin(profile))) {
@@ -123,6 +125,97 @@ const date = (value: string | null) =>
       timeStyle: "short",
     })
     : "Not set";
+
+function printBrandedReport(
+  title: string,
+  subtitle: string,
+  headers: string[],
+  rows: (string | number | null | undefined)[][],
+  options: { largeWatermark?: boolean; footer?: string } = {},
+): boolean {
+  const reportWindow = window.open("", "_blank");
+  if (!reportWindow) return false;
+
+  const escapeHtml = (value: string | number | null | undefined) =>
+    String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  const generatedAt = new Date().toLocaleString();
+  const watermarkSize = options.largeWatermark ? "560px" : "340px";
+  const watermarkOpacity = options.largeWatermark ? ".1" : ".055";
+  const footer =
+    options.footer ??
+    "Sensor values are reported by chamber equipment. This report is a read-only snapshot and does not modify recorded readings.";
+  const tableRows = rows
+    .map(
+      (row) =>
+        `<tr>${headers
+          .map((_, index) => {
+            const value = row[index];
+            return `<td>${value === "" || value == null ? "Not recorded" : escapeHtml(value)}</td>`;
+          })
+          .join("")}</tr>`,
+    )
+    .join("");
+
+  reportWindow.document.open();
+  reportWindow.document.write(`<!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>${escapeHtml(title)} · SproutSync</title>
+        <style>
+          @page { size: A4 landscape; margin: 14mm; }
+          * { box-sizing: border-box; }
+          body { margin: 0; color: #233b2e; font: 13px/1.5 Arial, sans-serif; }
+          .report { position: relative; isolation: isolate; }
+          .watermark { position: fixed; z-index: 0; top: 24%; left: 50%; width: ${watermarkSize}; height: ${watermarkSize}; max-width: 80vw; object-fit: contain; opacity: ${watermarkOpacity}; transform: translateX(-50%); pointer-events: none; }
+          header, .summary, table, footer { position: relative; z-index: 1; }
+          header { display: flex; align-items: center; gap: 14px; padding-bottom: 18px; border-bottom: 2px solid #dce8df; }
+          header img { width: 52px; height: 52px; object-fit: contain; }
+          .brand { color: #287346; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+          h1 { margin: 3px 0 0; font-size: 23px; line-height: 1.2; }
+          .subtitle { margin: 5px 0 0; color: #617468; }
+          .summary { display: flex; justify-content: space-between; gap: 16px; margin: 18px 0 10px; color: #63766a; font-size: 11px; }
+          table { width: 100%; border-collapse: collapse; table-layout: auto; font-size: 10px; }
+          thead { display: table-header-group; }
+          th { padding: 9px 8px; background: #edf5ef; color: #345b40; text-align: left; font-size: 9px; text-transform: uppercase; letter-spacing: .04em; }
+          td { padding: 8px; border-bottom: 1px solid #e5ece6; overflow-wrap: anywhere; }
+          tr { break-inside: avoid; }
+          tbody tr:nth-child(even) { background: #fafcfb; }
+          footer { margin-top: 20px; padding-top: 10px; border-top: 1px solid #e1e9e3; color: #728277; font-size: 10px; }
+          @media screen { body { padding: 28px; background: #f5f8f5; } .report { max-width: 1200px; margin: auto; padding: 30px; background: white; border: 1px solid #dce8df; border-radius: 16px; box-shadow: 0 12px 40px #183d2812; } }
+        </style>
+      </head>
+      <body>
+        <main class="report">
+          <img class="watermark" src="${escapeHtml(logoUrl)}" alt="">
+          <header>
+            <img src="${escapeHtml(logoUrl)}" alt="SproutSync logo">
+            <div>
+              <div class="brand">SproutSync · Workspace report</div>
+              <h1>${escapeHtml(title)}</h1>
+              <p class="subtitle">${escapeHtml(subtitle)}</p>
+            </div>
+          </header>
+          <div class="summary"><span>${rows.length} ${rows.length === 1 ? "reading" : "readings"}</span><span>Generated ${escapeHtml(generatedAt)}</span></div>
+          <table>
+            <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
+            <tbody>${tableRows}</tbody>
+          </table>
+          <footer>${escapeHtml(footer)}</footer>
+        </main>
+      </body>
+    </html>`);
+  reportWindow.document.close();
+  reportWindow.focus();
+  reportWindow.setTimeout(() => reportWindow.print(), 500);
+  return true;
+}
 const stages = ["soaking", "rinsing", "growing", "ready", "harvested"];
 type Dialog = {
   kind: string;
@@ -216,6 +309,7 @@ export default function Workspace({
   const [pendingSubmitted, setPendingSubmitted] = useState(false);
   const [evaluationQuery, setEvaluationQuery] = useState("");
   const [evaluationBatch, setEvaluationBatch] = useState("all");
+  const [auditQuery, setAuditQuery] = useState("");
   const [selectedDevice, setSelectedDevice] = useState("all");
   const [preferences, setPreferences] = useState({
     alerts_enabled: true,
@@ -439,6 +533,26 @@ export default function Workspace({
   const deviceReadings = data.readings.filter(
     (r) => selectedDevice === "all" || r.device_id === Number(selectedDevice),
   );
+  const telemetryExportHeaders = [
+    "Chamber",
+    "Air Temperature (°C)",
+    "Humidity (%)",
+    "Fresh Water (%)",
+    "Water Temperature (°C)",
+    "Light (lux)",
+    "Wastewater (%)",
+    "Recorded At (ISO 8601)",
+  ];
+  const telemetryExportRows = deviceReadings.map((reading) => [
+    deviceName(reading.device_id),
+    reading.temperature_c ?? "",
+    reading.humidity_percent ?? "",
+    reading.water_level_percent ?? "",
+    reading.water_temperature_c ?? "",
+    reading.light_lux ?? "",
+    reading.wastewater_level_percent ?? "",
+    reading.recorded_at,
+  ]);
   const currentReading = deviceReadings[0] ?? data.readings[0];
   const initials = (profile.first_name || profile.display_name || profile.email)
     .trim()
@@ -1706,38 +1820,49 @@ export default function Workspace({
                       title="Historical Sensor Telemetry"
                       subtitle="Chronological log of machine-reported chamber sensor packets."
                       action={
+                        <div className="telemetry-export-actions">
                         <Btn
                           variant="outline"
-                          disabled={!data.readings.length}
-                          onClick={() =>
+                          size="sm"
+                          disabled={!deviceReadings.length}
+                          onClick={() => {
                             exportCsv(
                               "sproutsync-sensor-readings.csv",
-                              [
-                                "Chamber",
-                                "Air Temp (C)",
-                                "Humidity (%)",
-                                "Fresh Water (%)",
-                                "Water Temp (C)",
-                                "Light (lux)",
-                                "Wastewater (%)",
-                                "Recorded At",
-                              ],
-                              deviceReadings.map((r) => [
-                                deviceName(r.device_id),
-                                r.temperature_c ?? "",
-                                r.humidity_percent ?? "",
-                                r.water_level_percent ?? "",
-                                r.water_temperature_c ?? "",
-                                r.light_lux ?? "",
-                                r.wastewater_level_percent ?? "",
-                                r.recorded_at,
-                              ]),
-                            )
-                          }
+                              telemetryExportHeaders,
+                              telemetryExportRows,
+                            );
+                            setToast(
+                              `Downloaded ${deviceReadings.length} sensor ${deviceReadings.length === 1 ? "reading" : "readings"} as CSV.`,
+                            );
+                          }}
                         >
-                          <Printer size={16} />
-                          Export CSV
+                          <Download size={15} />
+                          Download CSV
                         </Btn>
+                        <Btn
+                          variant="outline"
+                          size="sm"
+                          disabled={!deviceReadings.length}
+                          onClick={() => {
+                            const opened = printBrandedReport(
+                              "Historical Sensor Telemetry",
+                              selectedDevice === "all"
+                                ? "Readings from all chambers"
+                                : `Chamber: ${deviceName(Number(selectedDevice))}`,
+                              telemetryExportHeaders,
+                              telemetryExportRows,
+                            );
+                            setToast(
+                              opened
+                                ? "Branded report opened. Choose Save as PDF in the print dialog to download it."
+                                : "The report could not open. Allow pop-ups for SproutSync and try again.",
+                            );
+                          }}
+                        >
+                          <Printer size={15} />
+                          Branded report
+                        </Btn>
+                        </div>
                       }
                     />
                     {table(
@@ -1853,7 +1978,34 @@ export default function Workspace({
                         <Btn
                           variant="outline"
                           disabled={!data.batches.length}
-                          onClick={() => window.print()}
+                          onClick={() => {
+                            const waterUseRows = data.batches.map((batch) => {
+                              const events = data.watering.filter(
+                                (watering) => watering.batch_id === batch.id,
+                              );
+                              return [
+                                batch.code,
+                                `${(events.reduce((sum, watering) => sum + watering.volume_ml, 0) / 1000).toFixed(2)} L`,
+                                events.length,
+                              ];
+                            });
+                            const opened = printBrandedReport(
+                              "Water use by batch",
+                              "Recorded irrigation totals for each production batch.",
+                              ["Batch", "Water used", "Irrigation events"],
+                              waterUseRows,
+                              {
+                                largeWatermark: true,
+                                footer:
+                                  "Water totals are calculated from recorded irrigation events. Batches with no recorded events show 0.00 L.",
+                              },
+                            );
+                            setToast(
+                              opened
+                                ? "Water-use report opened. Choose Save as PDF in the print dialog to download it."
+                                : "The report could not open. Allow pop-ups for SproutSync and try again.",
+                            );
+                          }}
                         >
                           <Printer size={16} />
                           Print report
@@ -2080,7 +2232,7 @@ export default function Workspace({
 
                 return (
                   <div className="space-y-6">
-                    <section className="surface">
+                    <section className="surface accounts-directory-table">
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-border">
                         <div>
                           <h3 className="text-base font-bold tracking-tight">Accounts Directory & Governance</h3>
@@ -2461,26 +2613,68 @@ export default function Workspace({
                 );
               })()}
               {page === "audit" && superadmin && (
-                <section className="surface">
-                  <SectionTitle
-                    title="System Audit Log"
-                    subtitle="Tamper-evident record of administrative grants, role updates, and evaluator delegations."
-                  />
-                  {table(
-                    ["Action", "Resource / Target", "Time"],
-                    data.activity.map((a) => [
-                      <span
-                        key="action"
-                        className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-secondary"
-                      >
-                        {a.action}
-                      </span>,
-                      a.resource,
-                      date(a.created_at),
-                    ]),
-                    "No administrative activity recorded yet.",
-                  )}
-                </section>
+                (() => {
+                  const search = auditQuery.trim().toLowerCase();
+                  const events = data.activity.filter((event) =>
+                    `${event.action} ${event.resource} ${event.created_at}`
+                      .toLowerCase()
+                      .includes(search),
+                  );
+                  return (
+                    <section className="surface audit-log">
+                      <SectionTitle
+                        title="System Audit Log"
+                        subtitle="Review administrative changes and access activity. Newest events appear first."
+                      />
+                      <div className="audit-toolbar">
+                        <label className="audit-search">
+                          <Search size={16} aria-hidden="true" />
+                          <span className="sr-only">Search audit events</span>
+                          <input
+                            type="search"
+                            value={auditQuery}
+                            onChange={(event) => setAuditQuery(event.target.value)}
+                            placeholder="Search by action, target, or date"
+                          />
+                          {auditQuery && (
+                            <button
+                              type="button"
+                              aria-label="Clear audit search"
+                              onClick={() => setAuditQuery("")}
+                            >
+                              <X size={15} />
+                            </button>
+                          )}
+                        </label>
+                        <span className="audit-result-count" aria-live="polite">
+                          {events.length} {events.length === 1 ? "event" : "events"}
+                          {search ? " found" : " recorded"}
+                        </span>
+                      </div>
+                      {table(
+                        ["Action", "Resource / Target", "Time"],
+                        events.map((event) => [
+                          <span key="action" className="audit-action">
+                            {event.action.replace(/[_-]+/g, " ")}
+                          </span>,
+                          <span key="resource" className="audit-resource">
+                            {event.resource}
+                          </span>,
+                          <time
+                            key="time"
+                            className="audit-time"
+                            dateTime={event.created_at}
+                          >
+                            {date(event.created_at)}
+                          </time>,
+                        ]),
+                        search
+                          ? "No audit events match your search. Try another action, target, or date."
+                          : "No administrative activity recorded yet.",
+                      )}
+                    </section>
+                  );
+                })()
               )}
               {page === "alerts" && (
                 <section className="surface">
@@ -2858,6 +3052,7 @@ export default function Workspace({
       <Modal
         open={!!dialog}
         onClose={close}
+        className={dialog?.kind === "help" ? "sm:max-w-2xl" : ""}
         title={
           dialog?.kind === "signout"
             ? "Are you sure you want to sign out?"
@@ -2950,19 +3145,87 @@ export default function Workspace({
             "No sensor readings yet.",
           )}
         {dialog?.kind === "help" && (
-          <div className="space-y-4 text-sm text-muted-foreground">
-            <p>
-              Use the five goal-based areas to monitor today, run production,
-              respond to alerts, review evidence, and manage the system.
-            </p>
-            <p>
-              Operators manage production records and evaluator access.
-              Evaluators independently review shared evidence and submit a
-              human assessment without changing machine readings.
-            </p>
-            <p>For device or account access, contact your system operator. Sample records are labelled and saved in the workspace.</p>
-          </div>
-        )}
+            <div className="help-guide space-y-6">
+              <section className="help-hero relative overflow-hidden rounded-2xl border border-emerald-100 p-5 sm:p-6">
+                <div className="relative z-10 max-w-lg">
+                  <span className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-800">
+                    SproutSync workspace guide
+                  </span>
+                  <h2 className="mt-2 text-xl font-bold tracking-tight text-emerald-950 sm:text-2xl">
+                    Grow with confidence.
+                  </h2>
+                  <p className="mt-2 max-w-md text-sm leading-relaxed text-emerald-900/80">
+                    Find your way around the workspace, understand who can do what,
+                    and know where readings and records come from.
+                  </p>
+                </div>
+                <span className="help-hero-mark" aria-hidden="true">
+                  <Logo className="h-36 w-36" />
+                </span>
+              </section>
+
+              <section aria-labelledby="help-areas-title">
+                <h3 id="help-areas-title" className="text-sm font-bold text-foreground">
+                  Find what you need
+                </h3>
+                <div className="help-area-grid mt-3">
+                  {[
+                    ["Overview", "Check today’s conditions, priorities, and active batches."],
+                    ["Production", "Review batches, watering activity, and production records."],
+                    ["Alerts", "Read alerts and document a current situation."],
+                    ["Review", "Check evidence and independent batch evaluations."],
+                    ["System", "Manage equipment, access, and workspace administration."],
+                  ].map(([title, description], index) => (
+                    <div className="help-area-card" key={title}>
+                      <span className="help-area-number">0{index + 1}</span>
+                      <div>
+                        <strong>{title}</strong>
+                        <p>{description}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section aria-labelledby="help-faq-title">
+                <h3 id="help-faq-title" className="text-sm font-bold text-foreground">
+                  Frequently asked questions
+                </h3>
+                <div className="help-faq-list mt-3">
+                  <details>
+                    <summary>Who can change production records?</summary>
+                    <p>
+                      Operators manage production records and evaluator access.
+                      Evaluators can review only batches shared with them and submit
+                      an assessment; they cannot change machine readings.
+                    </p>
+                  </details>
+                  <details>
+                    <summary>Where do chamber readings come from?</summary>
+                    <p>
+                      Readings are shown when a connected chamber reports them.
+                      The workspace does not let users rewrite machine telemetry.
+                    </p>
+                  </details>
+                  <details>
+                    <summary>Are sample records real production data?</summary>
+                    <p>
+                      Sample records are labelled and saved in this workspace.
+                      Check the record labels before using information for
+                      operational decisions.
+                    </p>
+                  </details>
+                  <details>
+                    <summary>How do I get help with account or device access?</summary>
+                    <p>
+                      Contact your system operator. The in-app support request
+                      isn’t connected yet, so it won’t send a message.
+                    </p>
+                  </details>
+                </div>
+              </section>
+            </div>
+          )}
         {dialog?.kind === "support" && (
           <div className="space-y-4">
             <div className="unavailable-action">
@@ -3072,13 +3335,27 @@ export default function Workspace({
               {notificationAlerts.map((a) => (
                 <button
                   key={a.id}
-                  className="alert-row"
+                  className={`alert-row notification-alert ${a.severity}`}
                   onClick={() => open({ kind: "alert", alert: a })}
                 >
-                  <Bell size={18} />
-                  <span className="text-left">
+                  <span className={`alert-symbol ${a.severity}`} aria-hidden="true">
+                    <Bell size={18} />
+                  </span>
+                  <span className="min-w-0 flex-1 text-left">
                     <strong>{a.title}</strong>
-                    <small>{date(a.created_at)}</small>
+                    {a.message && (
+                      <span className="notification-message">{a.message}</span>
+                    )}
+                    <span className="notification-meta">
+                      <small>{date(a.created_at)}</small>
+                      <span className={`notification-severity ${a.severity}`}>
+                        {a.severity === "critical"
+                          ? "Critical"
+                          : a.severity === "warning"
+                            ? "Warning"
+                            : "Info"}
+                      </span>
+                    </span>
                   </span>
                   <ChevronRight size={16} />
                 </button>
@@ -3263,7 +3540,7 @@ export default function Workspace({
                 Current Chamber Environment
               </h3>
               {currentReading ? (
-                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-center">
                   <div className="p-2.5 rounded-xl bg-card border border-border/80">
                     <span className="block text-xs text-muted-foreground">
                       Air Temp
