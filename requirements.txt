@@ -1,0 +1,4 @@
+# Run at the repository root inside a Python 3.12+ virtual environment:
+# python -m pip install -r requirements.txt
+# pyproject.toml is the single source of truth for Python dependencies.
+-e ./backend/api[dev,tools]

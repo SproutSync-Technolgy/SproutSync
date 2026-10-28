@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.auth import get_current_user
+from app.config import settings
 from app.db import Base, get_db
 from app.main import app
 from app.models import User
@@ -71,6 +72,18 @@ def test_send_verification_and_cooldown(auth_test_env):
         assert data2["retry_after_seconds"] <= 60
         # No extra email dispatched during cooldown
         assert mock_email.call_count == 1
+
+
+def test_missing_smtp_is_unavailable_without_false_sent_or_cooldown(auth_test_env, monkeypatch):
+    client, db, user = auth_test_env
+    monkeypatch.setattr(settings, "google_smtp_email", "")
+    monkeypatch.setattr(settings, "google_app_password", "")
+    response = client.post("/api/v1/auth/verify/send")
+    assert response.status_code == 503
+    assert "not configured" in response.json()["detail"]
+    db.refresh(user)
+    assert user.verification_last_sent_at is None
+    assert user.verification_code_hash is None
 
 
 def test_multi_attempt_verification_and_lockout(auth_test_env):

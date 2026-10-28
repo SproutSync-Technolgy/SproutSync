@@ -4,7 +4,9 @@ The SDP defines two controllers: the ESP32 owns time-sensitive sensing, sequenti
 
 ```mermaid
 flowchart LR
-  Browser[React dashboard] -->|REST / planned WebSocket| Pi[FastAPI on Raspberry Pi]
+  Browser[React dashboard] -->|Bearer-token REST| Pi[FastAPI]
+  Browser -->|Auth and protected PostgREST/RPC| Supabase[Supabase project]
+  Pi -->|Auth verification| Supabase
   Pi --> DB[(Local PostgreSQL)]
   Pi <-->|planned subscriber| Broker[Mosquitto]
   Broker <-->|MQTT over TLS in deployment| ESP[ESP32]
@@ -12,10 +14,12 @@ flowchart LR
   ESP --> HW[Sensors and actuators]
 ```
 
-PostgreSQL is the application database. Local Compose PostgreSQL is the
-default for offline development; Supabase PostgreSQL can be selected with
-`DATABASE_URL` for hosted development. Supabase must not become a dependency
-of local irrigation.
+The implemented workspace requires Supabase Auth, PostgREST/RPCs, and PostgreSQL
+with row-level policies. FastAPI and the browser must use the same project.
+Use hosted development Supabase or the complete local Supabase stack; optional
+Compose PostgreSQL alone does not provide the required Auth schemas or HTTP
+APIs. See [SETUP.md](../SETUP.md). Local hardware irrigation must not depend on
+cloud availability.
 
 No AI service, mobile app or multiple admin portals are specified in the SDP, so those reference-image modules are not included.
 

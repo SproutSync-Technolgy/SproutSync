@@ -6,11 +6,13 @@ Run again after saving Supabase Authentication > URL Configuration.
 
 import base64
 import json
+import os
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit, urlunsplit
 from uuid import UUID
 
 import httpx
+from dotenv import dotenv_values
 from sqlalchemy import create_engine, text
 
 CALLBACK = "io.sproutsync.app://login-callback/"
@@ -18,12 +20,8 @@ CALLBACK = "io.sproutsync.app://login-callback/"
 
 def main():
     """Report the actual hosted callback without accessing private credentials."""
-    settings = {}
     root = Path(__file__).resolve().parents[1]
-    for line in (root / ".env").read_text(encoding="utf-8").splitlines():
-        if "=" in line and not line.lstrip().startswith("#"):
-            key, value = line.split("=", 1)
-            settings[key.strip()] = value.strip().strip('"').strip("'")
+    settings = {**dotenv_values(root / ".env", encoding="utf-8-sig"), **os.environ}
     base = settings.get("SUPABASE_URL") or settings.get("VITE_SUPABASE_URL")
     key = settings.get("SUPABASE_ANON_KEY") or settings.get("VITE_SUPABASE_ANON_KEY")
     if not base or not key or urlsplit(base).scheme != "https":

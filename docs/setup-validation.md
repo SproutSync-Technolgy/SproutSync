@@ -1,3 +1,60 @@
+# Setup validation - October 29, 2026
+
+Local evidence for the clone/setup repair. Runtime on this Windows machine:
+Node 24.18.0 and Python 3.14.6. The documented Docker/CI baseline remains
+Node 22 and Python 3.12; other operating systems were not executed here.
+
+Passed:
+
+- `npm ci`: clean locked workspace installation; audit reported zero vulnerabilities.
+- Native `python -m pip install -r requirements.txt`; `python -m pip check`.
+- `npm run test:setup`: 7 environment validation tests.
+- `npm run check:setup -- --docker`: existing configuration passes; optional API
+  SMTP warning remains because no sender credentials are configured.
+- `npm run test:setup:browser`: isolated real browser confirms missing-config
+  recovery UI, favicon HTTP 200, and JSON HTTP 503 for unreachable health/auth.
+- `npm run test:browser -w @sproutsync/dashboard`: all 7 mocked workspace flows.
+  Updated stale navigation labels, dialog locators, and the required device grant
+  in the operator fixture; application access rules were preserved.
+- `npm run build`: TypeScript and production Vite bundle.
+- `python -m pytest backend/api/tests -q`: 25 tests, including shallow container
+  paths, root dotenv/BOM handling, no startup schema mutation, missing-SMTP
+  recovery, full offline PostgreSQL migration SQL, and checkout paths with spaces.
+- `python -m ruff check backend/api`, repository verifier, and `git diff --check`.
+- Compose/workflow YAML parsing, PowerShell launcher AST parsing, entrypoint shell syntax.
+- Read-only `python -m app.check_setup`: configured Supabase database is reachable
+  and has the required Auth schemas/functions/roles.
+- Read-only Alembic `current`: database is at `0010_verification_attempts`;
+  checked-in head is `0012_role_hierarchy_access_requests`. No hosted migrations,
+  account changes, or schema changes were applied during this task.
+
+Remaining validation / administration:
+
+- Docker CLI/Engine is unavailable on this machine. A real container build,
+  Compose interpolation/health wait, and fresh Supabase migration execution were
+  not run. SQL compilation and YAML parsing do not substitute for those checks.
+- Apply the pending migrations to the intended development project through the
+  documented Compose/native startup workflow. Coordinate shared database upgrades
+  and backup first. The migration environment widens a narrow revision column
+  without changing the existing revision IDs; Alembic `current` stays read-only.
+- Real Google login, Supabase Auth email delivery, and API Gmail delivery were not
+  tested. Optional Gmail sender credentials remain blank; API OTP requests now
+  return 503 instead of claiming an email was sent.
+- macOS/Linux execution, Python 3.12 CI, native mobile builds, firmware compilation,
+  deployed hosting, and hardware bench checks were not run in this task.
+- The installed Starlette/FastAPI test client emits a deprecation warning about
+  httpx; the documented test suite passes. No new httpx2 dependency is required by
+  the application's current imports.
+
+The local ignored `.env` was supplemented with missing documented optional keys
+and the frontend origin. Existing database and Supabase credentials were preserved.
+See **[SETUP.md](../SETUP.md)** for current instructions.
+
+---
+
+The following is historical evidence from the initial scaffold, not current
+setup instructions:
+
 # Setup validation — October 20, 2026
 
 - Passed: npm dependency installation and package-lock.json generation.

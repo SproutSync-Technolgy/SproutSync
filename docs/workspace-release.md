@@ -1,5 +1,10 @@
 # Connected workspace release
 
+This is a historical release record. Use [SETUP.md](../SETUP.md) for current
+startup/configuration instructions and `alembic heads` for the required schema
+revision. Later migrations changed role/grant and onboarding behavior; their
+checked-in definitions are the source of truth.
+
 ## Database
 
 The existing Supabase database was upgraded through `0009_database_demo` without

@@ -11,8 +11,10 @@ Future ESP32 ── MQTT/HTTP contract ── ingestion boundary ── FastAPI
 Future Flutter ── HTTPS/JSON ────────────────┘
 ```
 
-The browser and mobile clients never connect directly to PostgreSQL, MQTT, or
-hardware. Time-sensitive automation remains local to the device.
+The browser and mobile clients use Supabase Auth and protected PostgREST/RPCs,
+plus the FastAPI HTTP API where implemented. They do not open raw PostgreSQL,
+MQTT, or hardware connections. Time-sensitive automation remains local to the
+device. See SETUP.md at the repository root for the current configuration.
 
 ## 2. Required technology
 
@@ -39,8 +41,8 @@ hardware. Time-sensitive automation remains local to the device.
 
 ## 4. Data and security
 
-- Store only password-free Google identity fields and hashed session tokens.
-- Use HTTP-only, SameSite cookies; enable Secure cookies outside local HTTP.
+- Store password-free provider identity fields; Supabase manages authentication.
+- Verify Supabase bearer tokens and enforce role/ownership checks on the API and RLS boundaries.
 - Never log OAuth codes, session tokens, credentials, or personal secrets.
 - Use foreign keys, check constraints, indexes, and migration review for
   operational data.

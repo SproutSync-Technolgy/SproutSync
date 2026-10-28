@@ -86,7 +86,10 @@ async function mock(
       };
       body = profile;
     } else if (path.endsWith("/notification_preferences")) body = null;
-    else if (path.endsWith("/batches")) {
+    else if (path.endsWith("/devices") && role === "operator") {
+      // An operator needs a device grant before the operational workspace opens.
+      body = [{ id: 1, owner_id: 1, name: "Test chamber", serial_number: "TEST-001", status: "offline", last_seen_at: null, created_at: "2026-10-26T00:00:00Z" }];
+    } else if (path.endsWith("/batches")) {
       if (request.method() === "POST") {
         const next = {
           id: 2,
@@ -149,7 +152,7 @@ test("evaluator cannot enter operator route or see operational controls", async 
   ).toHaveCount(5);
   await page
     .getByRole("navigation", { name: "Main navigation" })
-    .getByRole("button", { name: "Production", exact: true })
+    .getByRole("button", { name: "Batch Evaluations", exact: true })
     .click();
   await expect(page.getByText("MB-001", { exact: true })).toBeVisible();
   await expect(
@@ -159,38 +162,38 @@ test("evaluator cannot enter operator route or see operational controls", async 
     .getByRole("button", { name: "View MB-001 stage: growing" })
     .click();
   await expect(
-    page.getByRole("dialog").getByRole("heading", { name: "MB-001" }),
+    page.getByRole("dialog").getByRole("heading", { name: "Inspect Batch · MB-001", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Close dialog" }).click();
   await page
     .getByRole("navigation", { name: "Main navigation" })
-    .getByRole("button", { name: "Review", exact: true })
+    .getByRole("button", { name: "Evidence & Checks", exact: true })
     .click();
-  await expect(page.getByText("Use the same five-point rubric for every batch"))
+  await expect(page.getByText("Use the standard five-point rubric for every batch"))
     .toBeVisible();
   await page.getByRole("button", { name: "Evaluate a batch" }).click();
   await expect(page.getByRole("radio")).toHaveCount(5);
   await page.getByRole("radio", { name: "4" }).check();
   await expect(page.getByRole("radio", { name: "4" })).toBeChecked();
 });
-test("operator redirect, real batch form and minimal signout", async ({
+test("operator real batch form and minimal signout", async ({
   page,
 }) => {
   await mock(page);
-  await page.goto("/admin");
+  await page.goto("/operator");
   await expect(page).toHaveURL(/operator/);
   await page
     .getByRole("navigation", { name: "Main navigation" })
-    .getByRole("button", { name: "Production", exact: true })
+    .getByRole("button", { name: "Batch Production", exact: true })
     .click();
   await page.getByRole("button", { name: "New batch", exact: true }).click();
   await page.getByLabel("Batch code").fill("MB-002");
-  await page.getByLabel("Start date").fill("2026-10-26T10:00");
+  await page.getByRole("dialog").getByLabel("Start date", { exact: true }).fill("2026-10-26T10:00");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText("MB-002", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "New batch", exact: true }).click();
   await page.getByLabel("Batch code").fill("mb-002");
-  await page.getByLabel("Start date").fill("2026-10-26T11:00");
+  await page.getByRole("dialog").getByLabel("Start date", { exact: true }).fill("2026-10-26T11:00");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(
     page.getByText(
@@ -231,7 +234,7 @@ test("operator redirect, real batch form and minimal signout", async ({
   await expect(dialog).toBeHidden();
   await page
     .getByRole("navigation", { name: "Main navigation" })
-    .getByRole("button", { name: "System", exact: true })
+    .getByRole("button", { name: "Chamber & Access", exact: true })
     .click();
   await expect(
     page.getByRole("heading", { name: "Sensors & chamber equipment" }),
@@ -250,7 +253,7 @@ test("mobile bottom navigation and records fit 390px without overflow", async ({
   await mock(page, "evaluator");
   await page.goto("/mobile");
   const mobile = page.getByRole("navigation", { name: "Mobile navigation" });
-  await mobile.getByRole("button", { name: "Production", exact: true }).click();
+  await mobile.getByRole("button", { name: "Batch Evaluations", exact: true }).click();
   await expect(page.getByText("MB-001", { exact: true })).toBeVisible();
   expect(
     await page.evaluate(

@@ -8,6 +8,7 @@ from sqlalchemy import engine_from_config, pool
 from app import models  # noqa: F401
 from app.config import settings
 from app.db import Base
+from app.migration_support import widen_existing_version_table
 
 config = context.config
 # Alembic's ConfigParser treats URL-encoded percent signs as interpolation.
@@ -30,6 +31,14 @@ def run_migrations_online() -> None:
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
+            # Inspection commands such as `current` have no destination and
+            # must stay read-only. Only revision changes may widen the stamp.
+            try:
+                destination = context.get_revision_argument()
+            except KeyError:
+                destination = None
+            if connection.dialect.name == "postgresql" and destination is not None:
+                widen_existing_version_table(connection)
             context.run_migrations()
 
 

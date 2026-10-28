@@ -9,6 +9,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from dotenv import dotenv_values
+
 root = Path(__file__).resolve().parents[1]
 version_match = re.search(
     r"^version:\s*([^+\s]+)\+(\d+)\s*$",
@@ -17,11 +19,7 @@ version_match = re.search(
 )
 if not version_match:
     raise SystemExit("Set a version and build number in mobile/pubspec.yaml.")
-settings = {}
-for line in (root / ".env").read_text(encoding="utf-8").splitlines():
-    if "=" in line and not line.lstrip().startswith("#"):
-        key, value = line.split("=", 1)
-        settings[key.strip()] = value.strip().strip('"').strip("'")
+settings = {**dotenv_values(root / ".env", encoding="utf-8-sig"), **os.environ}
 url = settings.get("SUPABASE_URL") or settings.get("VITE_SUPABASE_URL")
 anon = settings.get("SUPABASE_ANON_KEY") or settings.get("VITE_SUPABASE_ANON_KEY")
 if not url or not anon:
@@ -31,13 +29,21 @@ if not url or not anon:
 environment = dict(os.environ)
 environment.pop("DEBUG", None)
 java = list((root / ".tools/java").glob("jdk*"))
-if java:
+if java and not environment.get("JAVA_HOME"):
     environment["JAVA_HOME"] = str(java[0])
-environment["ANDROID_HOME"] = str(root / ".tools/android-sdk")
-environment["GRADLE_USER_HOME"] = str(root / ".tools/gradle")
-flutter = root / ".tools/flutter/bin/flutter.bat"
+if not environment.get("ANDROID_HOME") and not environment.get("ANDROID_SDK_ROOT") and (root / ".tools/android-sdk").is_dir():
+    environment["ANDROID_HOME"] = str(root / ".tools/android-sdk")
+flutter = shutil.which("flutter")
+if not flutter:
+    local_flutter = root / ".tools/flutter/bin" / ("flutter.bat" if os.name == "nt" else "flutter")
+    if local_flutter.is_file():
+        flutter = str(local_flutter)
+if not flutter:
+    raise SystemExit("Install Flutter and add its bin directory to PATH; run flutter doctor. See SETUP.md.")
+tool_root = root / ".tools"
+tool_root.mkdir(exist_ok=True)
 with tempfile.TemporaryDirectory(
-    prefix="mobile-build-", dir=root / ".tools"
+    prefix="mobile-build-", dir=tool_root
 ) as temporary:
     config = Path(temporary) / "public-config.json"
     config.write_text(

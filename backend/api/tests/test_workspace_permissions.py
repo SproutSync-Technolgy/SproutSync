@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from app.auth import get_current_user
 from app.db import Base, get_db
 from app.main import app
-from app.models import AccessRequest, Batch, EvaluatorAccess, User
+from app.models import Batch, EvaluatorAccess, User
 
 
 @pytest.fixture

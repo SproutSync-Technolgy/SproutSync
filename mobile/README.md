@@ -19,7 +19,9 @@ and a foreground 30-second refresh keep records current.
 
 ## Run and validate
 
-Use Flutter stable (the local SDK is at `../.tools/flutter`):
+Install a compatible Flutter stable SDK on PATH and run `flutter doctor` first.
+An optional local SDK at `../.tools/flutter` is supported. See [SETUP.md](../SETUP.md)
+for system dependencies; do not copy SDK paths from another developer's machine.
 
 ```powershell
 flutter pub get

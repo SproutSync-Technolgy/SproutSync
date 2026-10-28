@@ -1,6 +1,8 @@
 # Frontend
 
 Browser-facing SproutSync applications live here.
+Follow [SETUP.md](../SETUP.md) for dependencies, the required root environment,
+and Docker/native backend setup on Windows, macOS, or Linux.
 
 ## Dashboard
 

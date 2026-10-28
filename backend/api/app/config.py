@@ -5,8 +5,9 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-def _find_repo_root() -> Path:
-    current = Path(__file__).resolve()
+def _find_repo_root(module_file: str | Path = __file__) -> Path:
+    """Support both a source checkout and the shallow /app container layout."""
+    current = Path(module_file).resolve()
     for parent in current.parents:
         if (parent / ".git").exists() or (parent / "compose.yaml").exists():
             return parent

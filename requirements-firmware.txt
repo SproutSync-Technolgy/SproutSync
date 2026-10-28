@@ -1,0 +1,2 @@
+# Optional ESP32 build tool; not needed for the web app or API.
+platformio==6.1.18

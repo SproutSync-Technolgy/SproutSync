@@ -6,5 +6,5 @@ Run applicable checks from README. PRs should state the changed behavior, eviden
 
 Definition of done: acceptance criteria met, appropriate checks passing, reviewed, relevant docs updated, no credentials committed, and known limitations recorded. Hardware functionality requires bench evidence in addition to compilation.
 
-Use npm.cmd on PowerShell when npm.ps1 is blocked; do not change system execution policy. Commit package-lock.json and use npm ci. Python dependencies currently have bounded ranges; add a reviewed lock workflow before reproducible releases. PlatformIO platform is pinned in platformio.ini.
+Use npm.cmd on PowerShell when npm.ps1 is blocked; do not change system execution policy. Commit package-lock.json and use npm ci. Install native Python development dependencies with the virtual environment's `python -m pip install -r requirements.txt` at the repository root. Python dependencies currently have bounded ranges; add a reviewed lock workflow before reproducible releases. PlatformIO platform is pinned in platformio.ini. Follow [SETUP.md](SETUP.md); do not add competing environment templates or startup instructions.
 

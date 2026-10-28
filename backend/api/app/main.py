@@ -20,61 +20,7 @@ from app.models import AccessRequest, ActivityLog, Batch, Device, EvaluatorAcces
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_SYNC_SQL = """
-ALTER TABLE public.users ADD COLUMN IF NOT EXISTS verification_code_hash text;
-ALTER TABLE public.users ADD COLUMN IF NOT EXISTS verification_expires_at timestamptz;
-ALTER TABLE public.users ADD COLUMN IF NOT EXISTS verification_attempts integer NOT NULL DEFAULT 0;
-ALTER TABLE public.users ADD COLUMN IF NOT EXISTS verification_last_sent_at timestamptz;
-ALTER TABLE public.users ADD COLUMN IF NOT EXISTS verification_locked_until timestamptz;
-
-UPDATE public.users
-SET onboarding_email_verified_at = COALESCE(onboarding_email_verified_at, NOW())
-WHERE onboarding_email_verified_at IS NULL;
-
-CREATE OR REPLACE FUNCTION public.save_profile(given_name text, family_name text, company text DEFAULT '', contact_phone text DEFAULT '')
-RETURNS public.users LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
-DECLARE result public.users;
-BEGIN
-  IF length(trim(given_name)) NOT BETWEEN 1 AND 80 OR length(trim(family_name))>80 OR length(company)>160 OR length(contact_phone)>40 THEN
-    RAISE EXCEPTION 'Check your personal details';
-  END IF;
-  UPDATE public.users SET
-    first_name=trim(given_name),
-    last_name=trim(family_name),
-    display_name=trim(trim(given_name)||' '||trim(family_name)),
-    organization=trim(company),
-    phone=trim(contact_phone),
-    profile_complete=true,
-    onboarding_email_verified_at=COALESCE(onboarding_email_verified_at, NOW()),
-    updated_at=now()
-  WHERE id=public.current_profile_id() RETURNING * INTO result;
-  RETURN result;
-END $$;
-
-NOTIFY pgrst, 'reload schema';
-"""
-
-
-def execute_schema_sync() -> tuple[bool, str]:
-    """Sync database schema and bypass email verification blockers."""
-    try:
-        from app.db import engine
-        with engine.begin() as conn:
-            conn.execute(text(SCHEMA_SYNC_SQL))
-        logger.info("Successfully synced database schema and bypassed verification requirements.")
-        return True, "Database schema synchronized successfully."
-    except Exception as exc:
-        logger.warning("Could not execute automatic database schema sync: %s", exc)
-        return False, str(exc)
-
-
 app = FastAPI(title="SproutSync API", version="0.2.0")
-
-
-@app.on_event("startup")
-def on_startup() -> None:
-    """Run database schema sync on application startup."""
-    execute_schema_sync()
 
 
 def require_operator(user: User = Depends(get_current_user)) -> User:
@@ -105,11 +51,10 @@ def send_verification_email(to_email: str, code: str) -> None:
     smtp_email = settings.google_smtp_email
     smtp_password = settings.clean_google_app_password
     if not smtp_email or not smtp_password:
-        logger.warning(
-            "Google SMTP credentials not configured (GOOGLE_SMTP_EMAIL or GOOGLE_APP_PASSWORD missing). Email to %s suppressed.",
-            to_email,
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Verification email delivery is not configured. Set GOOGLE_SMTP_EMAIL and GOOGLE_APP_PASSWORD on the server.",
         )
-        return
 
     msg = EmailMessage()
     msg["Subject"] = "SproutSync - Your Verification Code"
@@ -362,13 +307,6 @@ def update_profile(
     return UserResponse.model_validate(user)
 
 
-@app.get("/api/v1/auth/sync-schema", tags=["auth"])
-def api_sync_schema() -> dict[str, str | bool]:
-    """Manually trigger database schema synchronization and verification bypass."""
-    success, message = execute_schema_sync()
-    return {"success": success, "message": message}
-
-
 @app.post(
     "/api/v1/auth/verify/send",
     response_model=VerifySendResponse,
@@ -409,16 +347,20 @@ def send_verification_code(
     user.verification_attempts = 0
     user.verification_last_sent_at = now
     user.verification_locked_until = None
-    db.commit()
 
     try:
         send_verification_email(user.email, code)
-    except Exception as err:
-        logger.exception("Failed to dispatch verification email via Gmail SMTP: %s", err)
+    except HTTPException:
+        db.rollback()
+        raise
+    except (smtplib.SMTPException, OSError) as err:
+        db.rollback()
+        logger.warning("Verification email delivery failed (%s)", type(err).__name__)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Failed to send verification email. Please verify SMTP settings.",
         ) from err
+    db.commit()
 
     return VerifySendResponse(
         status="sent",
@@ -709,7 +651,7 @@ async def update_account(
         admin_count = (
             db.scalar(
                 select(func.count(User.id)).where(
-                    User.role.in_(["superadmin", "admin"]), User.is_active == True
+                    User.role.in_(["superadmin", "admin"]), User.is_active.is_(True)
                 )
             )
             or 0
@@ -1229,7 +1171,7 @@ def create_access_request(
         select(User).where(
             func.lower(User.email) == clean_operator_email,
             User.role.in_(["operator", "admin", "superadmin"]),
-            User.is_active == True,
+            User.is_active.is_(True),
         )
     )
     if operator is None:

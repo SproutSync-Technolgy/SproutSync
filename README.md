@@ -1,101 +1,77 @@
 # SproutSync
 
-IoT-based automated mung bean sprout production, plant life-cycle monitoring, and water-use optimization.
+IoT-based mung bean sprout production, monitoring, and water-use optimization.
 
-Development monorepo based on the supplied Software Development Plan dated August 26, 2026. The reference image informed the folder organization; the SDP defines the technology stack.
+## Setup after cloning
+
+Follow **[SETUP.md](SETUP.md)** for Windows, macOS, and Linux prerequisites,
+Supabase configuration, Docker/native startup, validation, mobile/firmware tools,
+and fixes for the reported container, proxy, migration, and environment errors.
+
+The current application requires a matching Supabase Auth/PostgREST/database
+project. Plain PostgreSQL alone cannot run the workspace migrations or browser
+RPCs. Use a dedicated hosted development project or a full local Supabase stack.
+
+After installing Node 22.12+ and Docker with Compose, create the root `.env` from
+[.env.example](.env.example) and fill its five required values. Preserve an
+existing configured `.env`. Then run from the repository root:
+
+```sh
+npm ci
+npm run check:setup -- --docker
+docker compose up --build --wait --wait-timeout 120 api
+npm run dev
+```
+
+On PowerShell use `npm.cmd`. Windows users can run `start.bat` after filling
+`.env`; it installs locked npm dependencies and waits for API startup.
+Open http://localhost:5173 and http://localhost:8000/docs.
+
+For native Python development, create a Python 3.12 virtual environment and run
+`python -m pip install -r requirements.txt` using its interpreter at the repo
+root. This installs the API, pytest, Ruff, and image utility dependency from
+[pyproject.toml](backend/api/pyproject.toml). Follow SETUP.md to check the database,
+apply migrations, and start Uvicorn. Optional ESP32 build dependencies are in
+[requirements-firmware.txt](requirements-firmware.txt). npm and Flutter packages
+use their own manifests; pip does not install system runtimes or those packages.
 
 ## Repository layout
 
 ```text
-SPROUTSYNC/
-??? frontend/dashboard/         React + Vite + TypeScript + Tailwind
-??? backend/api/                Python + FastAPI + PostgreSQL auth
-??? iot/esp32/                  PlatformIO + Arduino + C++
-??? mobile/                     Flutter + Dart mobile scaffold
-??? packages/contracts/         Shared integration specifications
-??? database/                   Data model and migration conventions
-??? infrastructure/mosquitto/   Local MQTT configuration
-??? docs/                       Architecture, backlog, testing, team
-??? scripts/                    Repository verification
-??? .github/                    CI, issue and PR templates
-??? compose.yaml                Local API, PostgreSQL and Mosquitto
-??? CONTRIBUTING.md
-??? SECURITY.md
-??? REPOSITORY-STANDARDS-CHECKLIST.md
-??? PR-COMPLIANCE-TRACKER.md
+frontend/dashboard/          React, Vite, TypeScript, Tailwind dashboard
+backend/api/                 FastAPI, SQLAlchemy, Alembic, API tests
+mobile/                      Flutter Android/iOS/web client
+supabase/templates/          Hosted Auth email templates
+packages/contracts/          Shared integration specifications
+database/                    Data model and migration guidance
+infrastructure/mosquitto/    Optional local MQTT broker configuration
+iot/esp32/                   PlatformIO serial-only firmware starter
+scripts/                     Setup, validation, and build utilities
+docs/                        Architecture, product, and release documentation
+compose.yaml                 API and optional standalone infrastructure
+requirements.txt             Native Python development install entry point
+SETUP.md                     Setup instructions and troubleshooting
 ```
 
-The top-level code folders are intentionally separated by responsibility:
-[frontend](frontend/), [backend](backend/), and [iot](iot/). Shared contracts,
-database guidance, infrastructure, scripts, and documentation stay at the
-repository root so contributors can find them without crossing application
-boundaries.
-The future mobile client is isolated in [mobile](mobile/) and does not change
-the current web-first development workflow.
+## Validation
 
-Root-level files are limited to repository-wide configuration and governance:
-`package.json` and `package-lock.json` manage frontend workspaces,
-`compose.yaml` manages local services, `.env.example` documents required
-configuration, `.github/` contains automation, and the Markdown files describe
-contribution, security, architecture, setup, and planning rules.
-
-## Quick start (PowerShell)
-
-Install Node.js 22.12+ and Docker Desktop with Compose. Copy the environment template:
-
-```powershell
-Copy-Item .env.example .env
-npm.cmd ci
-docker compose up --build -d
-npm.cmd run dev
-```
-
-Open http://localhost:5173 and the API documentation at http://localhost:8000/docs. The dashboard proxies /api to the local backend. The public landing page is at `/`, the administrator workspace is at `/admin`, and the grower workspace is at `/grower`. Docker services bind only to loopback. Stop services with `docker compose down`; database data persists in a named volume.
-
-### Backend without Docker
-
-Install Python 3.12+; from the repository root:
-
-```powershell
-py -3.12 -m venv backend/api/.venv
-backend/api/.venv/Scripts/python.exe -m pip install -e "./backend/api[dev]"
-backend/api/.venv/Scripts/python.exe -m uvicorn app.main:app --app-dir backend/api --reload --host 127.0.0.1
-```
-
-### Validation
-
-```powershell
-npm.cmd run build
+```sh
+npm run test:setup
+npm run build
 node scripts/verify-repository.mjs
-Push-Location backend/api
-.venv/Scripts/python.exe -m ruff check .
-.venv/Scripts/python.exe -m pytest
-Pop-Location
-pio run --project-dir iot/esp32
 ```
 
-Install PlatformIO Core 6.1.18 for the last command. Compilation does not upload firmware. Verify actual board and pin mapping before implementing hardware outputs.
+Use the virtual environment interpreter for `python -m ruff check backend/api`
+and `python -m pytest backend/api/tests -q`. See SETUP.md for browser, mobile,
+firmware, and migration checks. API liveness does not prove database readiness
+or email delivery.
 
-## Implementation status
+The web/mobile workspace implements Supabase sign-in, profiles, role-based access,
+and persisted operational records. Hardware telemetry ingestion, physical
+irrigation, and production deployment remain separate work. Compilation does
+not establish hardware safety. Local services bind to loopback by default.
 
-Implemented: responsive dashboard landing slice aligned to the reference prototype, working sign-in/sign-up and mobile-app prototype actions, API connection status, typed health endpoint and contract test, local infrastructure configuration, serial-only firmware starter, and GitHub CI configuration.
-
-Implemented foundation: Google OAuth configuration, PostgreSQL users/sessions
-schema, Alembic migration, server-side HTTP-only sessions, and authenticated
-identity endpoints. Planned next: device/batch persistence, telemetry
-ingestion, WebSockets, production batches/trays, irrigation
-scheduling/interlocks, MicroSD event replay, alerts, yield, analytics and
-reports. API health is process liveness only. MQTT is provisioned but not yet
-used by the API. No sensors or actuators are connected by this starter.
-
-Prototype: https://sproutsync-prototype.figma.site/ . The current dashboard implements the public landing-page content and responsive layout from this reference. Product authentication, mobile distribution, device data, and production imagery remain future slices.
-
-## Start development
-
-Read [architecture](docs/architecture.md), [MVP scope](docs/mvp.md), [planning structure](docs/planning-structure.md), [backlog](docs/backlog.md), [team](docs/team.md), [testing](docs/testing.md), and [contribution rules](CONTRIBUTING.md).
-
-For a precise dependency and environment checklist, read [development setup](docs/development-setup.md) and the [technology stack](docs/tech-stack.md). They record what is installed, what is optional, and which planned features still require additional libraries or hardware decisions.
-
-The repository is published at [SproutSync-Technolgy/SproutSync](https://github.com/SproutSync-Technolgy/SproutSync). Branch protection, collaborator access, licensing, and deployment secrets remain team setup tasks. See [GitHub setup](docs/github-setup.md).
-
+Read [architecture](docs/architecture.md), [technology stack](docs/tech-stack.md),
+[workspace release](docs/workspace-release.md), [testing](docs/testing.md),
+[contribution rules](CONTRIBUTING.md), and [security](SECURITY.md).
 Licensing remains a team decision; no open-source license is assumed.
