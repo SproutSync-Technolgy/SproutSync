@@ -4,11 +4,20 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from pydantic_settings import SettingsConfigDict
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.check_setup import main, validate_settings
 from app.config import Settings, _find_repo_root
 from app.main import app
+
+
+class IsolatedSettings(Settings):
+    """Use the supported class configuration to isolate tests from the root .env."""
+
+    model_config = SettingsConfigDict(
+        env_file=None, env_file_encoding="utf-8-sig", extra="ignore"
+    )
 
 
 def test_shallow_container_layout_does_not_index_past_root(tmp_path):
@@ -31,22 +40,27 @@ def test_runtime_environment_overrides_root_dotenv(tmp_path, monkeypatch):
     env_file.write_text(
         "\ufeffSUPABASE_URL=https://file.supabase.co\n", encoding="utf-8"
     )
+
+    class FileSettings(IsolatedSettings):
+        model_config = SettingsConfigDict(
+            env_file=env_file, env_file_encoding="utf-8-sig", extra="ignore"
+        )
+
     monkeypatch.setenv("SUPABASE_URL", "https://runtime.supabase.co")
-    assert Settings(_env_file=env_file).supabase_url == "https://runtime.supabase.co"
+    assert FileSettings().supabase_url == "https://runtime.supabase.co"
     monkeypatch.delenv("SUPABASE_URL")
-    assert Settings(_env_file=env_file).supabase_url == "https://file.supabase.co"
+    assert FileSettings().supabase_url == "https://file.supabase.co"
 
 
 def test_startup_check_rejects_in_memory_database_for_runtime():
-    config = Settings(
-        _env_file=None, database_url="sqlite://", supabase_url="", supabase_anon_key=""
+    config = IsolatedSettings(
+        database_url="sqlite://", supabase_url="", supabase_anon_key=""
     )
     assert len(validate_settings(config)) == 2
 
 
 def test_database_check_errors_do_not_print_credentials(capsys):
-    config = Settings(
-        _env_file=None,
+    config = IsolatedSettings(
         database_url="postgresql+psycopg://postgres:private-password@db.example.invalid/postgres",
         supabase_url="https://dev.supabase.co",
         supabase_anon_key="public-key",
@@ -65,8 +79,7 @@ def test_database_check_errors_do_not_print_credentials(capsys):
 
 
 def test_plain_postgres_is_rejected_before_migrations(capsys):
-    config = Settings(
-        _env_file=None,
+    config = IsolatedSettings(
         database_url="postgresql+psycopg://postgres:postgres@localhost/postgres",
         supabase_url="https://dev.supabase.co",
         supabase_anon_key="public-key",

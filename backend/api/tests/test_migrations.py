@@ -18,7 +18,9 @@ def test_alembic_config_handles_checkout_paths_with_spaces(tmp_path):
     copied = api / "alembic.ini"
     copied.write_text(original.read_text(encoding="utf-8"), encoding="utf-8")
     config = Config(str(copied))
-    assert [Path(path) for path in config.get_prepend_sys_paths_list()] == [api]
+    paths = config.get_prepend_sys_paths_list()
+    assert paths is not None
+    assert [Path(path) for path in paths] == [api]
 
 
 def test_fresh_upgrade_sql_supports_all_existing_revision_ids(monkeypatch):
@@ -39,6 +41,8 @@ def test_fresh_upgrade_sql_supports_all_existing_revision_ids(monkeypatch):
     command.upgrade(config, "head", sql=True)
     sql = output.getvalue()
     assert f"version_num VARCHAR({REVISION_LENGTH})" in sql
-    assert script.get_current_head() in sql
+    head = script.get_current_head()
+    assert head is not None
+    assert head in sql
     assert "CREATE TABLE users" in sql
     assert "public.request_operator_access" in sql

@@ -271,6 +271,12 @@ itself. If `py` or `python` opens the Microsoft Store, install actual Python and
 disable the conflicting Windows App Execution Alias or use its full path.
 Never reuse an old virtual environment after moving/renaming the checkout.
 
+VS Code workspace settings point Python/Pylance to `backend/api/.venv` and the
+API source path, and Ruff to the repository's API configuration. If VS Code
+already remembers another interpreter, use **Python: Select Interpreter** to
+choose this virtual environment, then **Developer: Reload Window** to refresh
+existing diagnostics after installation.
+
 ## 5. Validate
 
 ```sh
