@@ -122,7 +122,7 @@ Execute `sproutsync-qa-rbac-ui-redesign-plan.md` sprint-by-sprint, running the v
 ### Sprint 1: Access Matrix, Multi-Tenant RLS, Serial ID Grants & Audit Logs
 **AAS Skills to Load:** `access-matrix`, `auth-implementation-patterns`, `saas-multi-tenant`, `audit-log`
 
-- [ ] **Task 1.1: Create Migration `0011_superadmin_device_grants_rbac.sql` & `.py` for Strict RBAC & Serial Grants**
+- [x] **Task 1.1: Create Migration `0011_superadmin_device_grants_rbac.sql` & `.py` for Strict RBAC & Serial Grants**
   - **Action:** Create `backend/api/migrations/versions/0011_superadmin_device_grants_rbac.sql` and its Alembic wrapper `0011_superadmin_device_grants_rbac.py` (`down_revision = "0010_verification_attempts"`):
     1. Add `granted_by integer references public.users(id)` and `granted_at timestamptz default now()` to `public.devices` and `public.evaluator_access`.
     2. Create `public.is_superadmin() returns boolean` checking `role in ('superadmin', 'admin')`.
@@ -135,14 +135,14 @@ Execute `sproutsync-qa-rbac-ui-redesign-plan.md` sprint-by-sprint, running the v
     6. Add trigger `evaluator_access_audit` on `public.evaluator_access` (`AFTER INSERT OR DELETE`) to log `grant_evaluator_access` and `revoke_evaluator_access` in `public.activity_logs`.
   - **Verify:** Run `python -m compileall -q backend/api/migrations` and `python scripts/validate_pending_migrations.py` → exits `0`.
 
-- [ ] **Task 1.2: Add Superadmin & Grant Endpoints in FastAPI (`backend/api/app/main.py` & `models.py`)**
+- [x] **Task 1.2: Add Superadmin & Grant Endpoints in FastAPI (`backend/api/app/main.py` & `models.py`)**
   - **Action:**
     1. In `backend/api/app/main.py`, add `require_superadmin(user: User = Depends(get_current_user)) -> User` raising `403` unless `user.role in ("superadmin", "admin")`.
     2. Add `GET /api/v1/superadmin/accounts` (lists all users with role, email, name, granted serial count, and evaluator grant count), `PATCH /api/v1/superadmin/accounts/{user_id}` (updates `first_name`, `last_name`, `display_name`, `email`, `role`, `organization` and logs to `activity_logs`), and `POST /api/v1/superadmin/device-grants` (assigns `serial_number` + `name` to an `operator_id` and logs to `activity_logs`).
     3. Update `/api/v1/batches` (`list_batches`) so Evaluators only receive batches where `Batch.owner_id` is in their `evaluator_access` grants, and Operators only receive batches for their granted devices.
   - **Verify:** Run `pytest backend/api/tests -q` → all existing and new permission tests pass (`0` failures).
 
-- [ ] **Task 1.3: Extend Frontend Workspace Data Layer for Superadmin, Grants & Access Checks (`src/data/workspace.ts` & `App.tsx`)**
+- [x] **Task 1.3: Extend Frontend Workspace Data Layer for Superadmin, Grants & Access Checks (`src/data/workspace.ts` & `App.tsx`)**
   - **Action:**
     1. In `frontend/dashboard/src/data/workspace.ts`, add helpers:
        - `export const isSuperAdmin = (profile: Profile) => ["superadmin", "admin"].includes(profile.role);`
@@ -155,7 +155,7 @@ Execute `sproutsync-qa-rbac-ui-redesign-plan.md` sprint-by-sprint, running the v
 ### Sprint 2: Role-Specific Tabs, Clickable Overview KPIs & Quality Grade Charts
 **AAS Skills to Load:** `site-architecture`, `kpi-dashboard-design`, `ux-flow`
 
-- [ ] **Task 2.1: Implement Role-Unique Navigation Tabs (`site-architecture` in `Workspace.tsx`)**
+- [x] **Task 2.1: Implement Role-Unique Navigation Tabs (`site-architecture` in `Workspace.tsx`)**
   - **Action:** Replace the static `const pages = [...]` array in `frontend/dashboard/src/components/Workspace.tsx` with `getRolePages(profile: Profile, hasGrant: boolean)`:
     - **If `!hasGrant` (and not Superadmin):** Return `[{ key: "home", title: "Access Status", icon: ShieldCheck }]` so ungranted users cannot browse empty tabs.
     - **Superadmin (`isSuperAdmin`):** `Overview` (`home`), `Accounts & Roles` (`accounts`), `Serial ID Grants` (`serials`), `Readings` (`readings`), `Alerts` (`alerts`), `Audit Log` (`audit`).
@@ -163,13 +163,13 @@ Execute `sproutsync-qa-rbac-ui-redesign-plan.md` sprint-by-sprint, running the v
     - **Evaluator (`isEvaluator`):** `Overview` (`home`), `Batch Evaluations` (`production`), `Readings` (`readings`), `Evidence & Checks` (`evidence`), `Alerts` (`alerts`).
   - **Verify:** Run `npm run typecheck -w @sproutsync/dashboard` and verify each role renders its unique sidebar and mobile bottom navigation labels.
 
-- [ ] **Task 2.2: Make Overview Metric Cards & Tracking Map Steps Clickable (`ux-flow` in `Workspace.tsx`)**
+- [x] **Task 2.2: Make Overview Metric Cards & Tracking Map Steps Clickable (`ux-flow` in `Workspace.tsx`)**
   - **Action:**
     1. Update `Metric` in `Workspace.tsx` to accept `onClick?: () => void` and `targetLabel?: string`. Render `<button type="button" onClick={onClick} className="summary-card summary-card-interactive">` with a subtle right chevron and hover/focus elevation so clicking any KPI card jumps directly to its tab (e.g., clicking `Batches needing review` jumps to `production` with filter set to unreviewed/ready; clicking `Machine status` or `Current conditions` jumps to `readings`; clicking `Open alerts` jumps to `alerts`).
     2. Convert the 5 items in `<ol className="tracking-map">` (`1 Batch`, `2 Sensors & alerts`, `3 Evidence`, `4 Evaluation`, `5 Activity log`) into interactive buttons that call `navigate(...)` for the matching tab in the active role's navigation.
   - **Verify:** Click each KPI card and tracking step in the browser / Playwright test and confirm `page` state updates to the target tab.
 
-- [ ] **Task 2.3: Build Role-Specific Top Overview KPIs & Evaluator Quality Grade Chart (`kpi-dashboard-design` in `Workspace.tsx` & `ProtoCharts.tsx`)**
+- [x] **Task 2.3: Build Role-Specific Top Overview KPIs & Evaluator Quality Grade Chart (`kpi-dashboard-design` in `Workspace.tsx` & `ProtoCharts.tsx`)**
   - **Action:**
     1. In `ProtoCharts.tsx`, add `QualityGradeChart({ evaluations }: { evaluations: Evaluation[] })` which renders:
        - A 5-tier horizontal bar / donut breakdown of batch ratings: **1★ Poor** (`#EF4444`), **2★ Fair** (`#F59E0B`), **3★ Good** (`#3B82F6`), **4★ Very Good** (`#10B981`), **5★ Excellent** (`#059669`).
@@ -183,7 +183,7 @@ Execute `sproutsync-qa-rbac-ui-redesign-plan.md` sprint-by-sprint, running the v
 ### Sprint 3: Single Paginated Batches Table, Calendar Datepicker, Notebook-Magnifier Icon & Readings Tab
 **AAS Skills to Load:** `build-ui`, `redesign-existing-projects`, `api-patterns`, `iconsax-library`
 
-- [ ] **Task 3.1: Simplify Batches View into One Singular Newest-First Paginated Table with Inline Star Ratings (`build-ui` & `api-patterns`)**
+- [x] **Task 3.1: Simplify Batches View into One Singular Newest-First Paginated Table with Inline Star Ratings (`build-ui` & `api-patterns`)**
   - **Action:**
     1. In `Workspace.tsx`, remove `Irrigation schedule` and `Watering history` from `page === "production"` (moving them to `page === "irrigation"` for Operators and into the Batch In-Depth Modal for all roles) so `page === "production"` contains **only one singular, clean card and table**.
     2. Sort `batches` deterministically newest-first:
@@ -198,7 +198,7 @@ Execute `sproutsync-qa-rbac-ui-redesign-plan.md` sprint-by-sprint, running the v
     4. Update `DataTable` in `Workspace.tsx` so the bottom pagination bar (`Previous`, page numbers `1, 2, ...`, `Next`, plus `"Showing X–Y of Z batches (Newest first)"`) is always visible at the bottom of the singular batch table and resets to `page = 1` when filters change.
   - **Verify:** Inspect `page === "production"` to confirm there is exactly 1 table on the page, sorted newest batch first (`MB-2410`, `MB-2409`, `MB-2408`), with star ratings beside each batch and pagination at the bottom.
 
-- [ ] **Task 3.2: Build Compact Search, Dropdown & Calendar Icon Datepicker Toolbar (`build-ui` & `iconsax-library`)**
+- [x] **Task 3.2: Build Compact Search, Dropdown & Calendar Icon Datepicker Toolbar (`build-ui` & `iconsax-library`)**
   - **Action:**
     1. In `Workspace.tsx` and `workspace.css`, refactor `.table-toolbar` into a compact, single-row flex/grid bar (`gap-2`, `items-center`, `h-10` controls):
        - **Compact Search Input:** `max-w-[240px]` input with search icon (`placeholder="Search batch, crop…"`).
@@ -206,7 +206,7 @@ Execute `sproutsync-qa-rbac-ui-redesign-plan.md` sprint-by-sprint, running the v
        - **Calendar Icon Datepicker (`CalendarDatePicker`):** Replace the manual `START MONTH` `<input type="month">` box with a compact **Calendar Icon button** (`<Calendar size={16} />` + selected date badge or `"Filter date"`). Clicking the calendar icon opens a sleek popover calendar datepicker (or triggers `inputRef.current?.showPicker()` with a custom popover calendar grid) allowing the user to pick a specific start/harvest date or date range with one click, plus an inline `×` clear button.
   - **Verify:** Run `npm run typecheck -w @sproutsync/dashboard` and verify selecting a date from the calendar icon filters the batch table and resets pagination to Page 1.
 
-- [ ] **Task 3.3: Replace `"View >"` with Notebook-with-Magnifying-Glass Icon & Rich In-Depth Batch Modal (`iconsax-library` & `fixing-accessibility`)**
+- [x] **Task 3.3: Replace `"View >"` with Notebook-with-Magnifying-Glass Icon & Rich In-Depth Batch Modal (`iconsax-library` & `fixing-accessibility`)**
   - **Action:**
     1. In `ProtoPrimitives.tsx` (or `Workspace.tsx`), create `<NotebookInspectIcon size={18} />`: a crisp dual-path SVG icon combining a **Notebook/Journal with ruled lines** and a **Magnifying Glass loupe** over the bottom-right corner (matching `iconsax` `NoteSearch` / `BookSaved` aesthetic).
     2. In `batchTable` (`Workspace.tsx`), replace `View <ChevronRight size={14} />` with:
@@ -230,7 +230,7 @@ Execute `sproutsync-qa-rbac-ui-redesign-plan.md` sprint-by-sprint, running the v
        - **Evaluator Star Rating & Assessment Section** (Displays all submitted star ratings + comments for `batch.id`, and provides an inline `"Submit / Update Rating"` form for Evaluators or stage update form for Operators).
   - **Verify:** Click the Notebook-with-Magnifying-Glass icon on any batch row and confirm the tooltip, `aria-label`, and full in-depth modal render properly.
 
-- [ ] **Task 3.4: Build the Detailed `Readings` Tab with 6 Sensor Sparkline Cards & Telemetry Log (`redesign-existing-projects`)**
+- [x] **Task 3.4: Build the Detailed `Readings` Tab with 6 Sensor Sparkline Cards & Telemetry Log (`redesign-existing-projects`)**
   - **Action:**
     1. In `Workspace.tsx`, replace `page === "review"` with `page === "readings"`.
     2. At the top of `page === "readings"`, render a compact device selector dropdown (`All granted chambers` or specific `serial_number` / `device.name`) and the **6 Detailed Sensor Telemetry Cards** (matching `image_e0a5e9.png`):
@@ -246,7 +246,7 @@ Execute `sproutsync-qa-rbac-ui-redesign-plan.md` sprint-by-sprint, running the v
 ### Sprint 4: Superadmin Management UI, Empty/No-Grant States, Accessibility & RBAC Verification
 **AAS Skills to Load:** `ui-states`, `fixing-accessibility`, `marketplace-rbac-audit`
 
-- [ ] **Task 4.1: Build Superadmin `Accounts & Roles`, `Serial ID Grants` & `Audit Log` Views (`Workspace.tsx`)**
+- [x] **Task 4.1: Build Superadmin `Accounts & Roles`, `Serial ID Grants` & `Audit Log` Views (`Workspace.tsx`)**
   - **Action:**
     1. **`page === "accounts"` (Superadmin only):** Render a compact search + role filter toolbar and a paginated table of all user accounts (`Display Name`, `First & Last Name`, `Email Address`, `Current Role`, `Granted Serials / Evaluators`, `Actions`). Clicking `Edit account & role` opens a modal wired to `superadmin_update_account` / `PATCH /api/v1/superadmin/accounts/{id}` allowing Superadmin to edit `first_name`, `last_name`, `email`, `organization`, and `role` (`superadmin`, `operator`, `evaluator`).
     2. **`page === "serials"` (Superadmin only):** Render a `"Grant Device Serial ID to Operator"` button and paginated table of all hardware devices (`Serial ID`, `Equipment Name`, `Assigned Operator Name & Email`, `Status`, `Last Seen`, `Granted At`). Superadmin can assign a new `serial_number` to any Operator account or reassign/revoke access.
@@ -254,7 +254,7 @@ Execute `sproutsync-qa-rbac-ui-redesign-plan.md` sprint-by-sprint, running the v
     4. **`page === "audit"` (Superadmin only):** Render the immutable audit trail from `data.activity` showing who granted which serial ID, role change, or evaluator access and when.
   - **Verify:** Run `npm run typecheck -w @sproutsync/dashboard` and test Superadmin account/role editing and serial ID assignment.
 
-- [ ] **Task 4.2: Implement Dedicated No-Grant & Empty UI States (`ui-states` in `Workspace.tsx`)**
+- [x] **Task 4.2: Implement Dedicated No-Grant & Empty UI States (`ui-states` in `Workspace.tsx`)**
   - **Action:**
     1. When an Evaluator logs in and `data.batches.length === 0 && data.devices.length === 0` (no Operator has granted them access in `evaluator_access`), render a clean, reassuring **No-Grant Restricted Screen** on `Workspace`:
        - Icon: `<ShieldCheck size={36} />`
@@ -264,7 +264,7 @@ Execute `sproutsync-qa-rbac-ui-redesign-plan.md` sprint-by-sprint, running the v
     2. When an Operator logs in with zero Superadmin-granted device serial IDs (`data.devices.length === 0`), display a prominent banner on `Overview`: `"No Chamber Serial ID Assigned — Ask your Superadmin to grant a device Serial ID to {profile.email} to begin live telemetry and batch production."`
   - **Verify:** Log in as a newly created Evaluator with zero `evaluator_access` rows and confirm 0 demo batches are leaked and the `"Waiting for Operator Access Grant"` state appears.
 
-- [ ] **Task 4.3: End-to-End RBAC Penetration Audit & Browser Verification (`marketplace-rbac-audit` & `fixing-accessibility`)**
+- [x] **Task 4.3: End-to-End RBAC Penetration Audit & Browser Verification (`marketplace-rbac-audit` & `fixing-accessibility`)**
   - **Action:**
     1. Update `scripts/verify_workspace_rls.py` and `backend/api/tests/test_workspace_permissions.py` to test all 4 personas:
        - **No-Grant Evaluator:** `SELECT count(*) FROM public.batches` returns `0`; `SELECT count(*) FROM public.telemetry_readings` returns `0`; cannot insert evaluations on ungranted batches.
@@ -283,8 +283,8 @@ Execute `sproutsync-qa-rbac-ui-redesign-plan.md` sprint-by-sprint, running the v
 
 ## 6. Definition of Done Checklist (`@plan-writing`)
 
-- [ ] **Strict Evaluator & Operator Grant Scoping:** Evaluators only see data from Operators who granted them access; ungranted Evaluators see the `"Waiting for Operator Access Grant"` state with zero leaked demo batches.
-- [ ] **Superadmin Full Control:** Superadmin can manage all roles, edit account names and email addresses, and grant Device Serial IDs to Operators, with full audit logging.
-- [ ] **Single Paginated Batches Table (Newest First) + Star Ratings:** The cluttered 3-table Production view is simplified into one newest-first paginated table with star ratings right beside each batch.
-- [ ] **Compact Filter Bar with Calendar Icon Datepicker & Notebook-Magnifier Icon:** Manual month input is replaced by a Calendar Icon Datepicker, `"View >"` is replaced by an accessible Notebook-with-Magnifying-Glass icon opening in-depth batch details, and the search/dropdown toolbar is compact.
-- [ ] **Clickable Overview, Role-Tailored KPIs/Charts & `Readings` Tab:** Overview cards and tracking steps are clickable to navigate to tabs, top KPIs match each role (including the Evaluator Quality Grade chart for Poor/Fair/Good/Very Good/Excellent), and `Review` is replaced by `Readings` showing the 6 detailed sensor telemetry cards (`image_e0a5e9.png`).
+- [x] **Strict Evaluator & Operator Grant Scoping:** Evaluators only see data from Operators who granted them access; ungranted Evaluators see the `"Waiting for Operator Access Grant"` state with zero leaked demo batches.
+- [x] **Superadmin Full Control:** Superadmin can manage all roles, edit account names and email addresses, and grant Device Serial IDs to Operators, with full audit logging.
+- [x] **Single Paginated Batches Table (Newest First) + Star Ratings:** The cluttered 3-table Production view is simplified into one newest-first paginated table with star ratings right beside each batch.
+- [x] **Compact Filter Bar with Calendar Icon Datepicker & Notebook-Magnifier Icon:** Manual month input is replaced by a Calendar Icon Datepicker, `"View >"` is replaced by an accessible Notebook-with-Magnifying-Glass icon opening in-depth batch details, and the search/dropdown toolbar is compact.
+- [x] **Clickable Overview, Role-Tailored KPIs/Charts & `Readings` Tab:** Overview cards and tracking steps are clickable to navigate to tabs, top KPIs match each role (including the Evaluator Quality Grade chart for Poor/Fair/Good/Very Good/Excellent), and `Review` is replaced by `Readings` showing the 6 detailed sensor telemetry cards (`image_e0a5e9.png`).

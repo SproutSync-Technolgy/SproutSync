@@ -300,6 +300,19 @@ button:disabled {
   padding: 20px;
   box-shadow: var(--card-shadow);
 }
+.summary-card-interactive {
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  font: inherit;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.summary-card-interactive:hover,
+.summary-card-interactive:focus-visible {
+  border-color: #378353;
+  box-shadow: 0 4px 12px rgba(55, 131, 83, 0.12);
+  transform: translateY(-2px);
+}
 .summary-icon {
   color: #378353;
   width: 36px;
@@ -501,8 +514,33 @@ button:disabled {
 }
 .table-toolbar {
   display: flex;
-  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
   margin-bottom: 20px;
+}
+.icon-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid #dce5df;
+  background: #ffffff;
+  color: #27824d;
+  cursor: pointer;
+  transition: all 0.15s ease-in-out;
+}
+.icon-action-btn:hover {
+  background: #e7f7eb;
+  border-color: #27824d;
+  color: #1a5733;
+  transform: scale(1.05);
+}
+.icon-action-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(39, 130, 77, 0.25);
 }
 .search-field {
   display: flex;
@@ -775,14 +813,47 @@ button:disabled {
 .tracking-map li {
   position: relative;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 9px;
   min-width: 0;
   border: 1px solid #dce7df;
   border-radius: 13px;
-  padding: 13px;
+  padding: 10px 12px;
   background: #f8fbf8;
+  transition: all 0.15s ease;
+}
+.tracking-map li:hover,
+.tracking-map li:focus-within {
+  border-color: #378353;
+  background: #f0f7f2;
+  box-shadow: 0 2px 8px rgba(55, 131, 83, 0.1);
+}
+.tracking-step-btn {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.tracking-map span.step-num {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #dff1e4;
+  color: #216d40;
+  font-size: 11px;
+  font-weight: 800;
 }
 .tracking-map li > span {
   display: grid;

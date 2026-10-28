@@ -268,3 +268,118 @@ export function WaterUseChart({
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Evaluator Quality Grade Distribution Chart & Rubric Guide          */
+/* ------------------------------------------------------------------ */
+
+export function QualityGradeChart({
+  evaluations = [],
+}: {
+  evaluations?: { rating: number }[];
+}) {
+  const tiers = [
+    {
+      stars: 5,
+      grade: "5★ Excellent",
+      color: "#059669",
+      criteria: "Vibrant ivory-green shoots, zero rot, optimal turgor and peak harvest yield.",
+    },
+    {
+      stars: 4,
+      grade: "4★ Very Good",
+      color: "#10B981",
+      criteria: "Crisp cotyledons, uniform 4–5 cm stems, clean fresh aroma, minimal husk retention.",
+    },
+    {
+      stars: 3,
+      grade: "3★ Good",
+      color: "#3B82F6",
+      criteria: "Market-standard quality: uniform 3–4 cm sprouts, clean scent, firm hypocotyls.",
+    },
+    {
+      stars: 2,
+      grade: "2★ Fair",
+      color: "#F59E0B",
+      criteria: "Uneven sprout length, slight hypocotyl discoloration, or sub-optimal moisture.",
+    },
+    {
+      stars: 1,
+      grade: "1★ Poor",
+      color: "#EF4444",
+      criteria: "Sour odor, slimy hypocotyls, root discoloration, or >20% ungerminated seed.",
+    },
+  ];
+
+  const total = evaluations.length;
+  const counts = tiers.map((t) => {
+    const matching = evaluations.filter((e) => Math.round(e.rating) === t.stars).length;
+    return {
+      ...t,
+      count: matching,
+      percentage: total > 0 ? Math.round((matching / total) * 100) : 0,
+    };
+  });
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-12 items-start">
+      <div className="lg:col-span-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            Quality Grade Spread
+          </span>
+          <span className="text-xs font-medium text-muted-foreground">
+            {total} evaluated {total === 1 ? "batch" : "batches"}
+          </span>
+        </div>
+        <div className="space-y-2.5">
+          {counts.map((tier) => (
+            <div key={tier.stars} className="space-y-1">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-foreground flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: tier.color }} />
+                  {tier.grade}
+                </span>
+                <span className="text-muted-foreground">
+                  <b className="text-foreground">{tier.count}</b> ({tier.percentage}%)
+                </span>
+              </div>
+              <div className="h-2.5 w-full rounded-full bg-secondary overflow-hidden">
+                <motion.div
+                  className="h-full rounded-full"
+                  style={{ backgroundColor: tier.color }}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${tier.percentage}%` }}
+                  transition={{ duration: 0.6, ease: "easeOut" }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="lg:col-span-7 rounded-xl border border-border/70 bg-secondary/30 p-4 space-y-2.5">
+        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Visual Quality Inspection Rubric
+        </h4>
+        <div className="grid gap-2 text-xs">
+          {tiers.map((t) => (
+            <div key={t.stars} className="flex items-start gap-2.5 p-2 rounded-lg bg-card/60 border border-border/40">
+              <span
+                className="shrink-0 px-2 py-0.5 rounded font-bold text-[11px] text-white"
+                style={{ backgroundColor: t.color }}
+              >
+                {t.stars}★
+              </span>
+              <p className="text-muted-foreground leading-relaxed">
+                <strong className="text-foreground font-semibold">{t.grade.split(" ")[1]}: </strong>
+                {t.criteria}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+

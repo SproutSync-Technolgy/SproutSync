@@ -76,11 +76,13 @@ async def get_current_user(
         metadata.get("full_name") or metadata.get("name") or email.split("@")[0]
     )
     normalized_email = email.lower().strip()
-    user = db.scalar(
-        select(User).where(
-            (User.google_subject == subject) | (User.email == normalized_email)
-        )
-    )
+    # Match strictly by google_subject. Fall back to email only if user has never linked subject.
+    user = db.scalar(select(User).where(User.google_subject == subject))
+    if user is None:
+        user = db.scalar(select(User).where(User.email == normalized_email))
+        if user is not None:
+            user.google_subject = subject
+
     now_utc = datetime.now(timezone.utc)
     if user is None:
         user = User(
@@ -88,20 +90,19 @@ async def get_current_user(
             email=normalized_email,
             display_name=display_name,
             avatar_url=metadata.get("avatar_url") or metadata.get("picture"),
-            role="evaluator",
+            role="pending",
             registration_provider="google" if is_google else "email",
             onboarding_email_verified_at=now_utc,
         )
         db.add(user)
     else:
-        user.google_subject = subject
-        user.email = normalized_email
-        if is_google:
+        # Never overwrite user.email or user.display_name after link!
+        if is_google and not user.registration_provider:
             user.registration_provider = "google"
         if user.onboarding_email_verified_at is None:
             user.onboarding_email_verified_at = now_utc
 
-        if metadata.get("avatar_url") or metadata.get("picture"):
+        if (metadata.get("avatar_url") or metadata.get("picture")) and not user.avatar_url:
             user.avatar_url = metadata.get("avatar_url") or metadata.get("picture")
     db.commit()
     db.refresh(user)
@@ -110,3 +111,27 @@ async def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN, detail="User account is inactive"
         )
     return user
+
+
+async def sync_supabase_user_email(google_subject: str | None, new_email: str) -> bool:
+    """Sync an email correction to Supabase Auth admin API if service-role key is configured."""
+    if (
+        not settings.supabase_url
+        or not settings.supabase_service_role_key
+        or not google_subject
+    ):
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            res = await client.put(
+                f"{settings.supabase_url.rstrip('/')}/auth/v1/admin/users/{google_subject}",
+                headers={
+                    "apikey": settings.supabase_service_role_key,
+                    "Authorization": f"Bearer {settings.supabase_service_role_key}",
+                },
+                json={"email": new_email.lower().strip(), "email_confirm": True},
+            )
+            return res.is_success
+    except Exception:
+        return False
+

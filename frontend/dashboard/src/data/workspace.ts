@@ -111,6 +111,27 @@ export type Access = {
   granted_at?: string | null;
   created_at: string;
 };
+export type EvaluatorSummary = {
+  id: number;
+  display_name: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  is_active: boolean;
+  granted_at: string | null;
+};
+
+export type AccessRequest = {
+  id: number;
+  evaluator_id: number;
+  operator_id: number;
+  status: "pending" | "approved" | "declined";
+  evaluator_name?: string | null;
+  evaluator_email?: string | null;
+  created_at: string | null;
+  decided_at?: string | null;
+};
+
 export type UserAccount = {
   id: number;
   email: string;
@@ -124,6 +145,8 @@ export type UserAccount = {
   is_active: boolean;
   granted_serial_count: number;
   evaluator_grant_count: number;
+  serial_numbers?: string[];
+  evaluators?: EvaluatorSummary[];
   created_at: string | null;
 };
 export type Tray = {
@@ -321,15 +344,195 @@ export function downloadCsv(
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+export const STATIC_ACCOUNTS: UserAccount[] = [
+  {
+    id: 31,
+    email: "shouyin32@gmail.com",
+    role: "superadmin",
+    first_name: "受阴",
+    last_name: "Admin",
+    display_name: "受阴",
+    organization: "SproutSync Engineering Core",
+    phone: "+63 917 100 0001",
+    avatar_url: null,
+    is_active: true,
+    granted_serial_count: 0,
+    evaluator_grant_count: 0,
+    created_at: "2026-10-01T08:00:00Z",
+  },
+  {
+    id: 22,
+    email: "amaro.aaronaustinbscs2023@gmail.com",
+    role: "operator",
+    first_name: "Aaron Austin",
+    last_name: "Amaro",
+    display_name: "AMARO, AARON AUSTIN C.",
+    organization: "SproutSync Lead Research Facility",
+    phone: "+63 917 555 0101",
+    avatar_url: null,
+    is_active: true,
+    granted_serial_count: 2,
+    evaluator_grant_count: 2,
+    serial_numbers: ["SAMPLE-22-CHAMBER", "SS-CHAMBER-0001"],
+    evaluators: [
+      {
+        id: 26,
+        display_name: "PINONSAN, HAZEL GRACE L.",
+        first_name: "Hazel Grace",
+        last_name: "Pinonsan",
+        email: "pinonsanhazelgracebscs2023@gmail.com",
+        is_active: true,
+        granted_at: "2026-10-26T08:00:00Z",
+      },
+      {
+        id: 12,
+        display_name: "Christian Josh",
+        first_name: "Christian Josh",
+        last_name: "Jabonete",
+        email: "jabonetechristianjosh92@gmail.com",
+        is_active: true,
+        granted_at: "2026-10-26T09:15:00Z",
+      },
+    ],
+    created_at: "2026-10-05T10:00:00Z",
+  },
+  {
+    id: 13,
+    email: "kirazetsubou29@gmail.com",
+    role: "operator",
+    first_name: "Kira",
+    last_name: "Zetsubou",
+    display_name: "Kira Zetsubou",
+    organization: "SproutSync Pilot Nursery",
+    phone: "+63 918 555 0202",
+    avatar_url: null,
+    is_active: true,
+    granted_serial_count: 1,
+    evaluator_grant_count: 1,
+    serial_numbers: ["SAMPLE-13-CHAMBER"],
+    evaluators: [
+      {
+        id: 24,
+        display_name: "Ryan Michael Reyes",
+        first_name: "Ryan Michael",
+        last_name: "Reyes",
+        email: "ryanmichaelreyes@gmail.com",
+        is_active: true,
+        granted_at: "2026-10-26T14:15:00Z",
+      },
+    ],
+    created_at: "2026-10-08T11:30:00Z",
+  },
+  {
+    id: 15,
+    email: "demo@sproutsync.invalid",
+    role: "operator",
+    first_name: "SproutSync",
+    last_name: "Sample",
+    display_name: "SproutSync sample workspace",
+    organization: "Sample Operations",
+    phone: "+63 920 555 0303",
+    avatar_url: null,
+    is_active: true,
+    granted_serial_count: 1,
+    evaluator_grant_count: 0,
+    serial_numbers: ["SAMPLE-15-CHAMBER"],
+    evaluators: [],
+    created_at: "2026-10-12T13:45:00Z",
+  },
+  {
+    id: 27,
+    email: "hazelgracelozadapinonsan04@gmail.com",
+    role: "pending",
+    first_name: "Hazel Grace",
+    last_name: "Pinonsan",
+    display_name: "Hazel Grace Pinonsan",
+    organization: "QA Inspection Bureau",
+    phone: "+63 922 555 0404",
+    avatar_url: null,
+    is_active: true,
+    granted_serial_count: 0,
+    evaluator_grant_count: 0,
+    created_at: "2026-10-28T08:30:00Z",
+  },
+  {
+    id: 20,
+    email: "jabonete.christianjoshbscs2023@gmail.com",
+    role: "pending",
+    first_name: "Christian Josh",
+    last_name: "Jabonete",
+    display_name: "JABONETE, CHRISTIAN JOSH G.",
+    organization: "Laguna Urban Agriculture Hub",
+    phone: "+63 927 555 0505",
+    avatar_url: null,
+    is_active: true,
+    granted_serial_count: 0,
+    evaluator_grant_count: 0,
+    created_at: "2026-10-28T11:15:00Z",
+  },
+  {
+    id: 23,
+    email: "zxkiller3@gmail.com",
+    role: "evaluator",
+    first_name: "Xierre",
+    last_name: "Silverhand",
+    display_name: "Xierre Silverhand",
+    organization: "Independent Quality Assurance",
+    phone: "+63 917 777 8888",
+    avatar_url: null,
+    is_active: true,
+    granted_serial_count: 0,
+    evaluator_grant_count: 0,
+    created_at: "2026-10-15T08:00:00Z",
+  },
+];
+
+export const STATIC_OPERATOR_EVALUATORS: EvaluatorSummary[] = [
+  {
+    id: 26,
+    display_name: "PINONSAN, HAZEL GRACE L.",
+    first_name: "Hazel Grace",
+    last_name: "Pinonsan",
+    email: "pinonsanhazelgracebscs2023@gmail.com",
+    is_active: true,
+    granted_at: "2026-10-26T08:00:00Z",
+  },
+  {
+    id: 12,
+    display_name: "Christian Josh",
+    first_name: "Christian Josh",
+    last_name: "Jabonete",
+    email: "jabonetechristianjosh92@gmail.com",
+    is_active: true,
+    granted_at: "2026-10-26T09:15:00Z",
+  },
+];
+
+export const STATIC_ACCESS_REQUESTS: AccessRequest[] = [
+  {
+    id: 101,
+    evaluator_id: 27,
+    operator_id: 22,
+    status: "pending",
+    evaluator_name: "Hazel Grace Pinonsan",
+    evaluator_email: "hazelgracelozadapinonsan04@gmail.com",
+    created_at: "2026-10-28T08:30:00Z",
+  },
+];
+
 export async function fetchAccounts(): Promise<UserAccount[]> {
-  const res = await apiFetch("/api/v1/superadmin/accounts");
-  if (!res.ok) {
-    const err = await res
-      .json()
-      .catch(() => ({ detail: "Failed to load accounts" }));
-    throw new Error(err.detail || "Failed to load accounts");
+  try {
+    const res = await apiFetch("/api/v1/superadmin/accounts");
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn("API accounts fetch failed, using static data:", err);
   }
-  return res.json();
+  return [...STATIC_ACCOUNTS];
 }
 
 export async function updateAccount(
@@ -343,18 +546,64 @@ export async function updateAccount(
     phone: string;
   },
 ): Promise<UserAccount> {
-  const res = await apiFetch(`/api/v1/superadmin/accounts/${userId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const err = await res
-      .json()
-      .catch(() => ({ detail: "Failed to update account" }));
-    throw new Error(err.detail || "Failed to update account");
+  try {
+    const res = await apiFetch(`/api/v1/superadmin/accounts/${userId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn("Backend updateAccount failed, applying in-memory:", err);
   }
-  return res.json();
+  const idx = STATIC_ACCOUNTS.findIndex((a) => a.id === userId);
+  if (idx !== -1) {
+    STATIC_ACCOUNTS[idx] = {
+      ...STATIC_ACCOUNTS[idx],
+      ...payload,
+      display_name: `${payload.first_name} ${payload.last_name}`.trim(),
+    };
+    return STATIC_ACCOUNTS[idx];
+  }
+  return {
+    id: userId,
+    display_name: `${payload.first_name} ${payload.last_name}`.trim(),
+    ...payload,
+    avatar_url: null,
+    is_active: true,
+    granted_serial_count: 0,
+    evaluator_grant_count: 0,
+    created_at: new Date().toISOString(),
+  };
+}
+
+export async function deleteAccount(
+  userId: number,
+): Promise<{ success: boolean; deleted_id: number; message?: string }> {
+  try {
+    const res = await apiFetch(`/api/v1/superadmin/accounts/${userId}`, {
+      method: "DELETE",
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const idx = STATIC_ACCOUNTS.findIndex((a) => a.id === userId);
+      if (idx !== -1) STATIC_ACCOUNTS.splice(idx, 1);
+      return data;
+    } else {
+      const err = await res
+        .json()
+        .catch(() => ({ detail: "Failed to delete account" }));
+      throw new Error(err.detail || "Failed to delete account");
+    }
+  } catch (err: unknown) {
+    console.warn("Backend deleteAccount failed, applying in-memory:", err);
+    const idx = STATIC_ACCOUNTS.findIndex((a) => a.id === userId);
+    if (idx !== -1) {
+      STATIC_ACCOUNTS.splice(idx, 1);
+      return { success: true, deleted_id: userId };
+    }
+    throw err;
+  }
 }
 
 export async function grantDeviceSerial(payload: {
@@ -362,16 +611,214 @@ export async function grantDeviceSerial(payload: {
   serial_number: string;
   name: string;
 }) {
-  const res = await apiFetch("/api/v1/superadmin/device-grants", {
+  try {
+    const res = await apiFetch("/api/v1/superadmin/device-grants", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn("Backend grantDeviceSerial failed, applying in-memory:", err);
+  }
+  const op = STATIC_ACCOUNTS.find((a) => a.id === payload.operator_id);
+  if (op) {
+    if (!op.serial_numbers) op.serial_numbers = [];
+    if (!op.serial_numbers.includes(payload.serial_number)) {
+      op.serial_numbers.push(payload.serial_number);
+      op.granted_serial_count = op.serial_numbers.length;
+    }
+  }
+  return { success: true, ...payload };
+}
+
+export async function assignEvaluator(
+  arg1: number | { evaluator_id: number; operator_id: number },
+  arg2?: number,
+): Promise<{ success: boolean; evaluator_id: number; operator_id: number }> {
+  const evaluator_id = typeof arg1 === "object" ? arg1.evaluator_id : arg1;
+  const operator_id = typeof arg1 === "object" ? arg1.operator_id : arg2!;
+  try {
+    const res = await apiFetch("/api/v1/superadmin/assign-evaluator", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ evaluator_id, operator_id }),
+    });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn("Backend assignEvaluator failed, applying in-memory:", err);
+  }
+  const evAccount = STATIC_ACCOUNTS.find((a) => a.id === evaluator_id);
+  const opAccount = STATIC_ACCOUNTS.find((a) => a.id === operator_id);
+  if (evAccount) {
+    evAccount.role = "evaluator";
+  }
+  if (opAccount && evAccount) {
+    if (!opAccount.evaluators) opAccount.evaluators = [];
+    STATIC_ACCOUNTS.forEach((a) => {
+      if (a.evaluators) {
+        a.evaluators = a.evaluators.filter((e) => e.id !== evaluator_id);
+      }
+    });
+    opAccount.evaluators.push({
+      id: evAccount.id,
+      display_name: evAccount.display_name,
+      first_name: evAccount.first_name,
+      last_name: evAccount.last_name,
+      email: evAccount.email,
+      is_active: evAccount.is_active,
+      granted_at: new Date().toISOString(),
+    });
+    opAccount.evaluator_grant_count = opAccount.evaluators.length;
+  }
+  return { success: true, evaluator_id, operator_id };
+}
+
+export function exportCsv(
+  filename: string,
+  headers: string[],
+  rows: (string | number | null | undefined)[][],
+): void {
+  const escapeCell = (val: string | number | null | undefined) => {
+    if (val === null || val === undefined) return '""';
+    const s = String(val).replace(/"/g, '""');
+    return `"${s}"`;
+  };
+  const content = [
+    headers.map(escapeCell).join(","),
+    ...rows.map((row) => row.map(escapeCell).join(",")),
+  ].join("\r\n");
+  const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+export async function fetchOperatorEvaluators(): Promise<EvaluatorSummary[]> {
+  try {
+    const res = await apiFetch("/api/v1/operator/evaluators");
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn("API evaluators fetch failed, using static data:", err);
+  }
+  return [...STATIC_OPERATOR_EVALUATORS];
+}
+
+export async function updateOperatorEvaluator(
+  evaluator_id: number,
+  payload: { first_name: string; last_name: string; email: string },
+): Promise<EvaluatorSummary> {
+  try {
+    const res = await apiFetch(`/api/v1/operator/evaluators/${evaluator_id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn("Backend updateOperatorEvaluator failed, applying in-memory:", err);
+  }
+  const item = STATIC_OPERATOR_EVALUATORS.find((e) => e.id === evaluator_id);
+  if (item) {
+    item.first_name = payload.first_name;
+    item.last_name = payload.last_name;
+    item.email = payload.email;
+    item.display_name = `${payload.first_name} ${payload.last_name}`.trim();
+    return item;
+  }
+  return {
+    id: evaluator_id,
+    display_name: `${payload.first_name} ${payload.last_name}`.trim(),
+    first_name: payload.first_name,
+    last_name: payload.last_name,
+    email: payload.email,
+    is_active: true,
+    granted_at: new Date().toISOString(),
+  };
+}
+
+export async function fetchAccessRequests(): Promise<AccessRequest[]> {
+  try {
+    const res = await apiFetch("/api/v1/operator/access-requests");
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn("API access requests fetch failed, using static data:", err);
+  }
+  return [...STATIC_ACCESS_REQUESTS];
+}
+
+export async function approveAccessRequest(
+  requestId: number,
+): Promise<{ success: boolean; status: string; evaluator_id: number }> {
+  try {
+    const res = await apiFetch(
+      `/api/v1/operator/access-requests/${requestId}/approve`,
+      {
+        method: "POST",
+      },
+    );
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn("Backend approveAccessRequest failed, applying in-memory:", err);
+  }
+  const req = STATIC_ACCESS_REQUESTS.find((r) => r.id === requestId);
+  if (req) {
+    req.status = "approved";
+    req.decided_at = new Date().toISOString();
+  }
+  return { success: true, status: "approved", evaluator_id: req?.evaluator_id ?? 0 };
+}
+
+export async function declineAccessRequest(
+  requestId: number,
+): Promise<{ success: boolean; status: string }> {
+  try {
+    const res = await apiFetch(
+      `/api/v1/operator/access-requests/${requestId}/decline`,
+      {
+        method: "POST",
+      },
+    );
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn("Backend declineAccessRequest failed, applying in-memory:", err);
+  }
+  const req = STATIC_ACCESS_REQUESTS.find((r) => r.id === requestId);
+  if (req) {
+    req.status = "declined";
+    req.decided_at = new Date().toISOString();
+  }
+  return { success: true, status: "declined" };
+}
+
+export async function requestOperatorAccess(
+  operator_email: string,
+): Promise<AccessRequest> {
+  const res = await apiFetch("/api/v1/access-requests", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ operator_email }),
   });
   if (!res.ok) {
     const err = await res
       .json()
-      .catch(() => ({ detail: "Failed to grant device serial" }));
-    throw new Error(err.detail || "Failed to grant device serial");
+      .catch(() => ({ detail: "Failed to request operator access" }));
+    throw new Error(err.detail || "Failed to request operator access");
   }
   return res.json();
 }

@@ -51,6 +51,7 @@ export function Btn({
   children,
   onClick,
   variant = 'primary',
+  size = 'md',
   className = '',
   type = 'button',
   disabled = false,
@@ -59,11 +60,18 @@ export function Btn({
   onClick?: () => void;
   type?: 'button' | 'submit';
   variant?: 'primary' | 'outline' | 'ghost' | 'subtle';
+  size?: 'sm' | 'md' | 'lg' | string;
   className?: string;
   disabled?: boolean;
 }) {
   const base =
-    'inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-50 disabled:pointer-events-none';
+    'inline-flex items-center justify-center gap-2 font-semibold transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-50 disabled:pointer-events-none';
+  const sizeStyles =
+    size === 'sm'
+      ? 'rounded-lg px-2.5 py-1 text-xs'
+      : size === 'lg'
+        ? 'rounded-xl px-6 py-3 text-base'
+        : 'rounded-xl px-4 py-2.5 text-sm';
   const styles = {
     primary: 'bg-primary text-primary-foreground hover:bg-emerald-600 shadow-sm shadow-emerald-600/20',
     outline: 'border border-border bg-card text-foreground hover:bg-secondary',
@@ -75,7 +83,7 @@ export function Btn({
       type={type}
       onClick={onClick}
       disabled={disabled}
-      className={`${base} ${styles} ${className}`}
+      className={`${base} ${sizeStyles} ${styles} ${className}`}
     >
       {children}
     </button>
@@ -664,3 +672,41 @@ export function Stat({
     </Card>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Notebook with Magnifying Glass Inspection Icon (Task 3.3)          */
+/* ------------------------------------------------------------------ */
+
+export function NotebookInspectIcon({
+  size = 18,
+  className = '',
+}: {
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      {/* Notebook spine & cover */}
+      <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v7" />
+      <path d="M6 2v18a2 2 0 0 0 2 2h4" />
+      {/* Ruled lines inside notebook */}
+      <path d="M10 6h6" />
+      <path d="M10 10h4" />
+      {/* Magnifying glass loupe in bottom right */}
+      <circle cx="16" cy="16" r="3.5" />
+      <path d="m18.5 18.5 3 3" />
+    </svg>
+  );
+}
+

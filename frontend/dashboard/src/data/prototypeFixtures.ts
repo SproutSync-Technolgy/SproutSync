@@ -77,12 +77,14 @@ export const WATER_TODAY = WATER_WEEK[WATER_WEEK.length - 1].L; // 4.2 L
 /* Account-driven role & capability resolution                        */
 /* ------------------------------------------------------------------ */
 
-export type Role = 'admin' | 'operator' | 'evaluator';
+export type Role = 'admin' | 'superadmin' | 'operator' | 'evaluator' | 'pending';
 
 export const ROLE_LABEL: Record<Role, string> = {
-  admin: 'Administrator',
+  admin: 'Superadmin',
+  superadmin: 'Superadmin',
   operator: 'Operator',
   evaluator: 'Evaluator',
+  pending: 'Pending Access',
 };
 
 export type Capability =
@@ -97,6 +99,16 @@ export type Capability =
 
 export const PERMISSIONS: Record<Role, Record<Capability, boolean>> = {
   admin: {
+    runBatch: false,
+    ackAlert: false,
+    recordMaintenance: false,
+    manageAccounts: true,
+    manageProfiles: true,
+    manageServices: true,
+    reviewEvidence: true,
+    editOwnProfile: true,
+  },
+  superadmin: {
     runBatch: false,
     ackAlert: false,
     recordMaintenance: false,
@@ -126,20 +138,31 @@ export const PERMISSIONS: Record<Role, Record<Capability, boolean>> = {
     reviewEvidence: true,
     editOwnProfile: true,
   },
+  pending: {
+    runBatch: false,
+    ackAlert: false,
+    recordMaintenance: false,
+    manageAccounts: false,
+    manageProfiles: false,
+    manageServices: false,
+    reviewEvidence: false,
+    editOwnProfile: true,
+  },
 };
 
 export const can = (role: Role, cap: Capability): boolean => PERMISSIONS[role][cap];
 
 /**
- * Normalizes backend account role from /api/v1/auth/me into the 3 dashboard roles.
- * Defaults new/unassigned users to 'evaluator' (read-only tier).
+ * Normalizes backend account role from /api/v1/auth/me into the dashboard roles.
+ * Defaults new/unassigned users to 'pending' (zero-data tier awaiting operator grant).
  */
 export function normalizeAccountRole(apiRole?: string | null): Role {
-  if (!apiRole) return 'evaluator';
+  if (!apiRole) return 'pending';
   const cleaned = apiRole.toLowerCase().trim();
-  if (cleaned === 'admin') return 'admin';
+  if (cleaned === 'admin' || cleaned === 'superadmin') return 'superadmin';
   if (cleaned === 'operator') return 'operator';
-  return 'evaluator';
+  if (cleaned === 'evaluator') return 'evaluator';
+  return 'pending';
 }
 
 /* ------------------------------------------------------------------ */

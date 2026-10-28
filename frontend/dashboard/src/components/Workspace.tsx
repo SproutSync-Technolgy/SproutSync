@@ -29,38 +29,99 @@ import {
   ShieldCheck,
   HelpCircle,
   ChevronDown,
+  ChevronUp,
   Star,
   LifeBuoy,
+  Users,
+  UserPlus,
+  UserCheck,
+  Clock,
+  FileText,
+  Key,
+  Thermometer,
+  Sun,
+  Pencil,
+  Trash2,
+  AlertTriangle,
 } from "lucide-react";
 import { supabase } from "../supabase";
 import {
   emptyWorkspace,
   loadWorkspace,
   isOperator,
+  isSuperAdmin,
+  isStrictOperator,
+  isEvaluator,
+  hasActiveGrant,
   errorMessage,
+  fetchAccounts,
+  updateAccount,
+  deleteAccount,
+  grantDeviceSerial,
+  assignEvaluator,
+  fetchOperatorEvaluators,
+  updateOperatorEvaluator,
+  fetchAccessRequests,
+  approveAccessRequest,
+  declineAccessRequest,
+  requestOperatorAccess,
+  exportCsv,
+  STATIC_ACCOUNTS,
+  STATIC_OPERATOR_EVALUATORS,
+  STATIC_ACCESS_REQUESTS,
   type Profile,
   type WorkspaceData,
   type Batch,
   type Alert,
   type Evaluation,
+  type UserAccount,
+  type Reading,
+  type EvaluatorSummary,
+  type AccessRequest,
 } from "../data/workspace";
-import { Logo, Btn, Modal } from "./ProtoPrimitives";
+import { Logo, Btn, Modal, NotebookInspectIcon } from "./ProtoPrimitives";
 import { PersonalDetails } from "./PersonalDetails";
-import { WaterUseChart } from "./ProtoCharts";
+import { WaterUseChart, Spark, QualityGradeChart } from "./ProtoCharts";
+import { CalendarDatePicker } from "./CalendarDatePicker";
 
-const pages = [
-  { key: "home", title: "Overview", icon: LayoutDashboard },
-  { key: "production", title: "Production", icon: Sprout },
-  { key: "alerts", title: "Alerts", icon: Bell },
-  { key: "review", title: "Review", icon: ClipboardCheck },
-  { key: "system", title: "System", icon: Settings },
-];
+export function getRolePages(profile: Profile, hasGrant: boolean) {
+  if (profile.role === "pending" || (!hasGrant && !isSuperAdmin(profile))) {
+    return [{ key: "home", title: "Access Pending", icon: ShieldCheck }];
+  }
+  if (isSuperAdmin(profile)) {
+    return [
+      { key: "home", title: "Overview", icon: LayoutDashboard },
+      { key: "accounts", title: "Accounts", icon: Users },
+      { key: "readings", title: "Readings", icon: Activity },
+      { key: "alerts", title: "Alerts", icon: Bell },
+      { key: "audit", title: "Audit Log", icon: FileText },
+    ];
+  }
+  if (isStrictOperator(profile) || profile.role === "operator") {
+    return [
+      { key: "home", title: "Overview", icon: LayoutDashboard },
+      { key: "production", title: "Batch Production", icon: Sprout },
+      { key: "readings", title: "Readings", icon: Activity },
+      { key: "irrigation", title: "Irrigation & Water", icon: Droplets },
+      { key: "alerts", title: "Alerts", icon: Bell },
+      { key: "system", title: "Chamber & Access", icon: Settings },
+    ];
+  }
+  // Evaluator
+  return [
+    { key: "home", title: "Overview", icon: LayoutDashboard },
+    { key: "production", title: "Batch Evaluations", icon: ClipboardCheck },
+    { key: "readings", title: "Readings", icon: Activity },
+    { key: "evidence", title: "Evidence & Checks", icon: CheckCircle2 },
+    { key: "alerts", title: "Alerts", icon: Bell },
+  ];
+}
 const date = (value: string | null) =>
   value
     ? new Date(value).toLocaleString([], {
-        dateStyle: "medium",
-        timeStyle: "short",
-      })
+      dateStyle: "medium",
+      timeStyle: "short",
+    })
     : "Not set";
 const stages = ["soaking", "rinsing", "growing", "ready", "harvested"];
 type Dialog = {
@@ -68,6 +129,11 @@ type Dialog = {
   batch?: Batch;
   alert?: Alert;
   evaluation?: Evaluation;
+  account?: UserAccount;
+  evaluator?: EvaluatorSummary;
+  operator_id?: number;
+  evaluator_id?: number;
+  batch_id?: number;
 } | null;
 
 export default function Workspace({
@@ -79,9 +145,15 @@ export default function Workspace({
   onProfile: (value: Profile) => void;
   onSignOut: () => Promise<void>;
 }) {
+  const superadmin = isSuperAdmin(profile);
+  const strictOperator = isStrictOperator(profile);
+  const evaluator = isEvaluator(profile);
   const operator = isOperator(profile);
-  const roleLabel =
-    profile.role === "admin" ? "Admin IT" : operator ? "Operator" : "Evaluator";
+  const roleLabel = superadmin
+    ? "Superadmin"
+    : strictOperator
+      ? "Operator"
+      : "Evaluator";
   const [page, setPage] = useState("home");
   const [menu, setMenu] = useState(false);
   const [accountMenu, setAccountMenu] = useState(false);
@@ -100,6 +172,48 @@ export default function Workspace({
   const [query, setQuery] = useState("");
   const [batchFilter, setBatchFilter] = useState("all");
   const [batchMonth, setBatchMonth] = useState("");
+  const [batchDate, setBatchDate] = useState("");
+  const initialAccounts = (() => {
+    const list = [...STATIC_ACCOUNTS];
+    if (
+      superadmin &&
+      !list.some(
+        (a) =>
+          a.id === profile.id ||
+          (profile.email && a.email.toLowerCase() === profile.email.toLowerCase()),
+      )
+    ) {
+      list.unshift({
+        id: profile.id,
+        email: profile.email,
+        role: profile.role,
+        first_name: profile.first_name || "",
+        last_name: profile.last_name || "",
+        display_name: profile.display_name || profile.email,
+        organization: profile.organization || "SproutSync Administration",
+        phone: profile.phone || "",
+        avatar_url: profile.avatar_url || null,
+        is_active: true,
+        granted_serial_count: 0,
+        evaluator_grant_count: 0,
+        created_at: new Date().toISOString(),
+      });
+    }
+    return list;
+  })();
+  const [accounts, setAccounts] = useState<UserAccount[]>(initialAccounts);
+  const [operatorEvaluators, setOperatorEvaluators] = useState<EvaluatorSummary[]>(
+    STATIC_OPERATOR_EVALUATORS,
+  );
+  const [accessRequests, setAccessRequests] = useState<AccessRequest[]>(
+    STATIC_ACCESS_REQUESTS,
+  );
+  const [expandedOperatorId, setExpandedOperatorId] = useState<number | null>(null);
+  const [accountSearchQuery, setAccountSearchQuery] = useState("");
+  const [accountRoleFilter, setAccountRoleFilter] = useState("all");
+  const [showSearchSuggestions, setShowSearchSuggestions] = useState(false);
+  const [pendingOperatorEmail, setPendingOperatorEmail] = useState("");
+  const [pendingSubmitted, setPendingSubmitted] = useState(false);
   const [evaluationQuery, setEvaluationQuery] = useState("");
   const [evaluationBatch, setEvaluationBatch] = useState("all");
   const [selectedDevice, setSelectedDevice] = useState("all");
@@ -163,7 +277,7 @@ export default function Workspace({
           : event.key === "End"
             ? items.length - 1
             : (current + (event.key === "ArrowUp" ? -1 : 1) + items.length) %
-              items.length;
+            items.length;
       items[index].focus();
     };
     document.addEventListener("pointerdown", outside);
@@ -173,7 +287,14 @@ export default function Workspace({
       document.removeEventListener("keydown", keyboard);
     };
   }, [accountMenu]);
-  const nav = pages;
+  const hasGrant = hasActiveGrant(profile, data);
+  const nav = getRolePages(profile, hasGrant);
+
+  useEffect(() => {
+    if (!nav.some((item) => item.key === page) && page !== "settings") {
+      setPage("home");
+    }
+  }, [nav, page]);
   const reload = useCallback(async () => {
     pending.current?.abort();
     const controller = new AbortController();
@@ -185,6 +306,25 @@ export default function Workspace({
         setData(next);
         setError("");
         setUpdated(new Date());
+        if (superadmin) {
+          fetchAccounts()
+            .then((res) => {
+              if (Array.isArray(res) && res.length > 0) setAccounts(res);
+            })
+            .catch(console.error);
+        }
+        if (operator) {
+          fetchOperatorEvaluators()
+            .then((res) => {
+              if (Array.isArray(res) && res.length > 0) setOperatorEvaluators(res);
+            })
+            .catch(console.error);
+          fetchAccessRequests()
+            .then((res) => {
+              if (Array.isArray(res) && res.length > 0) setAccessRequests(res);
+            })
+            .catch(console.error);
+        }
       }
     } catch (error) {
       if (!controller.signal.aborted) setError(errorMessage(error));
@@ -194,7 +334,7 @@ export default function Workspace({
         setRefreshing(false);
       }
     }
-  }, []);
+  }, [superadmin, operator]);
   useEffect(() => {
     void reload();
     const timer = setInterval(() => {
@@ -254,13 +394,33 @@ export default function Workspace({
       ? preferences.harvest_enabled
       : preferences.alerts_enabled,
   );
-  const batches = data.batches.filter(
-    (b) =>
-      (batchFilter === "all" || b.status === batchFilter) &&
+  const batches = data.batches.filter((b) => {
+    const matchesFilter =
+      batchFilter === "all"
+        ? true
+        : batchFilter === "active"
+          ? b.status === "active"
+          : batchFilter === "archived"
+            ? b.status === "archived"
+            : batchFilter === "unrated"
+              ? data.evaluations.every((e) => e.batch_id !== b.id)
+              : b.stage === batchFilter;
+
+    const matchesDate =
       (!batchMonth || b.started_at.slice(0, 7) === batchMonth) &&
-      `${b.code} ${b.seed_type} ${b.stage}`
-        .toLowerCase()
-        .includes(query.toLowerCase()),
+      (!batchDate || b.started_at.startsWith(batchDate));
+
+    const matchesQuery = `${b.code} ${b.seed_type} ${b.stage}`
+      .toLowerCase()
+      .includes(query.toLowerCase());
+
+    return matchesFilter && matchesDate && matchesQuery;
+  });
+
+  const sortedBatches = [...batches].sort(
+    (a, b) =>
+      new Date(b.started_at).getTime() - new Date(a.started_at).getTime() ||
+      b.id - a.id,
   );
   const deviceName = (id: number) =>
     data.devices.find((d) => d.id === id)?.name ?? `Device ${id}`;
@@ -276,9 +436,10 @@ export default function Workspace({
         .includes(evaluationQuery.toLowerCase())
     );
   });
-  const currentReading = data.readings.find(
+  const deviceReadings = data.readings.filter(
     (r) => selectedDevice === "all" || r.device_id === Number(selectedDevice),
   );
+  const currentReading = deviceReadings[0] ?? data.readings[0];
   const initials = (profile.first_name || profile.display_name || profile.email)
     .trim()
     .split(/\s+/)
@@ -305,30 +466,76 @@ export default function Workspace({
         "Crop",
         "Stage",
         "Status",
+        "Quality Rating",
         "Target harvest",
-        "Details",
+        "Actions",
       ],
-      rows.map((b) => [
-        <strong>{b.code}</strong>,
-        `Operator #${b.owner_id}`,
-        b.seed_type,
-        <button
-          className="table-link"
-          onClick={() => open({ kind: "batch-details", batch: b })}
-          aria-label={`${operator ? "Update" : "View"} ${b.code} stage: ${b.stage}`}
-        >
-          <Status value={b.stage} />
-        </button>,
-        <Status value={b.status} />,
-        date(b.target_harvest_at),
-        <button
-          className="table-link"
-          onClick={() => open({ kind: "batch-details", batch: b })}
-          aria-label={`View ${b.code}`}
-        >
-          View <ChevronRight size={14} />
-        </button>,
-      ]),
+      rows.map((b) => {
+        const batchEvaluations = data.evaluations.filter(
+          (e) => e.batch_id === b.id,
+        );
+        const avgRating = batchEvaluations.length
+          ? Math.round(
+            batchEvaluations.reduce((acc, cur) => acc + cur.rating, 0) /
+            batchEvaluations.length,
+          )
+          : null;
+
+        return [
+          <strong key="code">{b.code}</strong>,
+          `Operator #${b.owner_id}`,
+          b.seed_type,
+          <button
+            key="stage"
+            className="table-link"
+            onClick={() => open({ kind: "batch-details", batch: b })}
+            aria-label={`${operator ? "Update" : "View"} ${b.code} stage: ${b.stage}`}
+          >
+            <Status value={b.stage} />
+          </button>,
+          <Status key="status" value={b.status} />,
+          <span
+            key="rating"
+            className="inline-flex items-center gap-1.5"
+            title={
+              avgRating !== null
+                ? `Rated ${avgRating}/5 stars (${batchEvaluations.length} evaluation${batchEvaluations.length > 1 ? "s" : ""})`
+                : "Not yet evaluated"
+            }
+          >
+            {avgRating !== null ? (
+              <>
+                <Rating value={avgRating} />
+                <span className="text-xs font-semibold text-muted-foreground">
+                  ({avgRating}★)
+                </span>
+              </>
+            ) : evaluator ? (
+              <button
+                type="button"
+                className="text-xs text-primary font-semibold hover:underline"
+                onClick={() => open({ kind: "evaluation", batch_id: b.id })}
+              >
+                + Rate batch
+              </button>
+            ) : (
+              <span className="text-xs text-muted-foreground italic">Unrated</span>
+            )}
+          </span>,
+          date(b.target_harvest_at),
+          <button
+            key="action"
+            type="button"
+            className="icon-action-btn"
+            onClick={() => open({ kind: "batch-details", batch: b })}
+            aria-label={`In-depth batch details for ${b.code}`}
+            title={`Inspect ${b.code} in depth (readings, watering, evidence & evaluation)`}
+          >
+            <NotebookInspectIcon size={18} />
+            <span className="sr-only">Inspect {b.code} in depth</span>
+          </button>,
+        ];
+      }),
       operator
         ? "No batches yet. Create your first batch to start tracking."
         : "No batches have been shared with your account yet.",
@@ -340,7 +547,7 @@ export default function Workspace({
         Skip to content
       </a>
       <aside className="app-sidebar">
-        <a href={operator ? "/operator" : "/dashboard"} className="app-brand">
+        <a href={superadmin ? "/superadmin" : strictOperator ? "/operator" : "/dashboard"} className="app-brand">
           <Logo className="h-16 w-16" />
           <span>SproutSync</span>
         </a>
@@ -539,37 +746,186 @@ export default function Workspace({
               transition={{ duration: 0.18 }}
               className="space-y-6"
             >
-              {page === "home" && (
-                <>
-                  {showWelcome && (
-                  <section className="welcome-panel">
+              {page === "home" && (profile.role === "pending" || (!hasGrant && !superadmin)) ? (
+                profile.role === "pending" ? (
+                  <div className="surface text-center py-12 px-6 max-w-lg mx-auto space-y-5 my-8">
+                    <div className="mx-auto w-16 h-16 rounded-2xl flex items-center justify-center bg-amber-500/10 text-amber-600">
+                      <Clock size={36} />
+                    </div>
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-widest text-emerald-200">
-                        {operator
-                          ? "Your growing space"
-                          : "Your evaluation space"}
+                      <h2 className="text-2xl font-bold text-foreground">Access Pending</h2>
+                      <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
+                        Welcome, <strong>{profile.display_name || profile.email}</strong>. Your account is awaiting an Operator assignment. Enter your designated Chamber Operator&apos;s email address below to request evaluator access.
                       </p>
-                      <h2>Welcome back, {profile.first_name}.</h2>
-                      <p>
-                        {operator
-                          ? "A clear view of your batches, chamber, and daily operations."
-                          : "Review shared batches, inspect evidence, and submit your assessment."}
+                    </div>
+                    {pendingSubmitted ? (
+                      <div className="p-4 rounded-xl bg-emerald-500/10 text-emerald-700 text-sm font-medium">
+                        Your access request has been submitted to your Operator. Please wait for their approval.
+                      </div>
+                    ) : (
+                      <form
+                        className="space-y-3 text-left"
+                        onSubmit={async (e) => {
+                          e.preventDefault();
+                          if (!pendingOperatorEmail.trim()) return;
+                          setBusy(true);
+                          try {
+                            await requestOperatorAccess(pendingOperatorEmail.trim());
+                            setPendingSubmitted(true);
+                            setToast("Access request submitted to Operator.");
+                          } catch (err) {
+                            setToast(errorMessage(err));
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      >
+                        <label className="block text-xs font-semibold text-foreground">
+                          Operator Email Address
+                        </label>
+                        <input
+                          type="email"
+                          required
+                          placeholder="operator@farm.com"
+                          value={pendingOperatorEmail}
+                          onChange={(e) => setPendingOperatorEmail(e.target.value)}
+                          className="w-full px-3 py-2 text-sm rounded-xl border border-border bg-background focus:ring-2 focus:ring-primary/40 focus:outline-none"
+                        />
+                        <Btn type="submit" disabled={busy} className="w-full justify-center">
+                          {busy ? <RefreshCw className="animate-spin" size={16} /> : <UserCheck size={16} />}
+                          Submit Access Request
+                        </Btn>
+                      </form>
+                    )}
+                    <div className="pt-4 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
+                      <span>Signed in as {profile.email}</span>
+                      <Btn variant="outline" size="sm" onClick={() => open({ kind: "signout" })}>
+                        <LogOut size={14} /> Sign out
+                      </Btn>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="surface text-center py-12 px-6 max-w-xl mx-auto space-y-4 my-6">
+                    <div
+                      className={`mx-auto w-14 h-14 rounded-2xl flex items-center justify-center ${evaluator
+                          ? "bg-amber-500/10 text-amber-600"
+                          : "bg-emerald-500/10 text-emerald-600"
+                        }`}
+                    >
+                      {evaluator ? <ShieldCheck size={32} /> : <Cpu size={32} />}
+                    </div>
+                    <h2 className="text-xl font-bold text-foreground">
+                      {evaluator
+                        ? "Waiting for Operator Access Grant"
+                        : "No Chamber Serial ID Assigned"}
+                    </h2>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                      {evaluator ? (
+                        <>
+                          You are signed in as an <strong>Evaluator</strong> (
+                          <span className="text-foreground">{profile.email}</span>
+                          ). An authorized chamber operator must grant your
+                          account email address before you can inspect production
+                          batches, view chamber sensors, or submit quality
+                          evaluations.
+                        </>
+                      ) : (
+                        <>
+                          You are registered as an <strong>Operator</strong> (
+                          <span className="text-foreground">{profile.email}</span>
+                          ). A SproutSync Superadmin must provision and assign at
+                          least one hardware chamber serial ID to your account
+                          before you can control production batches or irrigation.
+                        </>
+                      )}
+                    </p>
+                    <div className="p-4 bg-secondary/50 rounded-xl text-xs text-muted-foreground text-left space-y-2">
+                      <p className="font-semibold text-foreground">
+                        Next steps for activation:
                       </p>
-                      {data.batches.some((b) => b.is_demo) && (
-                        <span className="preview-label">
-                          Sample records · Saved in your workspace
-                        </span>
+                      {evaluator ? (
+                        <>
+                          <p>
+                            1. Contact your SproutSync Chamber Operator or
+                            Facility Manager.
+                          </p>
+                          <p>
+                            2. Ask them to approve your request under <em>Chamber & Access → Pending requests</em>.
+                          </p>
+                          <p>
+                            3. Click <strong>Check Grant Status</strong> once
+                            granted.
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <p>
+                            1. Provide your SproutSync chamber printed hardware
+                            serial number (e.g. <code>SS-CHAMBER-0001</code>) to
+                            your Superadmin.
+                          </p>
+                          <p>
+                            2. The Superadmin assigns the serial ID to your Operator
+                            ID (#{profile.id}) in <em>Accounts</em>.
+                          </p>
+                          <p>
+                            3. Click <strong>Check Equipment Status</strong> once
+                            assigned.
+                          </p>
+                        </>
                       )}
                     </div>
-                    <Sprout className="welcome-leaf" size={88} />
-                    <button
-                      className="welcome-dismiss"
-                      aria-label="Dismiss welcome"
-                      onClick={() => setShowWelcome(false)}
-                    >
-                      <X size={17} />
-                    </button>
-                  </section>
+                    <div className="flex items-center justify-center gap-3">
+                      <Btn
+                        variant="outline"
+                        disabled={refreshing}
+                        onClick={() => void reload()}
+                      >
+                        <RefreshCw
+                          size={14}
+                          className={refreshing ? "animate-spin" : ""}
+                        />
+                        {evaluator
+                          ? "Check Grant Status"
+                          : "Check Equipment Status"}
+                      </Btn>
+                      <Btn variant="outline" onClick={() => open({ kind: "signout" })}>
+                        <LogOut size={14} /> Sign out
+                      </Btn>
+                    </div>
+                  </div>
+                )
+              ) : page === "home" && (
+                <>
+                  {showWelcome && (
+                    <section className="welcome-panel">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-widest text-emerald-200">
+                          {operator
+                            ? "Your growing space"
+                            : "Your evaluation space"}
+                        </p>
+                        <h2>Welcome back, {profile.first_name}.</h2>
+                        <p>
+                          {operator
+                            ? "A clear view of your batches, chamber, and daily operations."
+                            : "Review shared batches, inspect evidence, and submit your assessment."}
+                        </p>
+                        {data.batches.some((b) => b.is_demo) && (
+                          <span className="preview-label">
+                            Sample records · Saved in your workspace
+                          </span>
+                        )}
+                      </div>
+                      <Sprout className="welcome-leaf" size={88} />
+                      <button
+                        className="welcome-dismiss"
+                        aria-label="Dismiss welcome"
+                        onClick={() => setShowWelcome(false)}
+                      >
+                        <X size={17} />
+                      </button>
+                    </section>
                   )}
                   <section className="role-brief" aria-labelledby="role-scope-title">
                     <span className="role-brief-icon" aria-hidden="true">
@@ -577,99 +933,279 @@ export default function Workspace({
                     </span>
                     <div>
                       <p className="role-kicker">
-                        {profile.role === "admin"
-                          ? "Admin IT scope"
-                          : operator
+                        {superadmin
+                          ? "Superadmin scope"
+                          : strictOperator
                             ? "Operator scope"
                             : "Evaluator scope"}
                       </p>
                       <h2 id="role-scope-title">
-                        {profile.role === "admin"
-                          ? "Provision access and equipment; preserve audit boundaries"
-                          : operator
+                        {superadmin
+                          ? "Provision accounts, roles and hardware serial ID grants"
+                          : strictOperator
                             ? "Run production; keep machine evidence intact"
                             : "Review evidence independently; never rewrite machine data"}
                       </h2>
                       <p>
-                        {profile.role === "admin"
-                          ? "Register equipment, provision operators, and oversee access. Admin tools do not replace operator production decisions or evaluator judgment."
-                          : operator
-                            ? "Create and update batches, schedules, alerts, maintenance, and reviewer access. The chamber controller remains responsible for live sensing and safety interlocks."
-                            : "Inspect only the batches shared with you and submit a separate human assessment. If your observation conflicts with a sensor reading, document the discrepancy and request a recheck—the original reading remains traceable."}
+                        {superadmin
+                          ? "Manage all user accounts (names, emails, roles) and grant hardware serial IDs to operators. Oversee full fleet telemetry, alerts, and immutable audit logs."
+                          : strictOperator
+                            ? "Create and update batches, schedules, alerts, maintenance, and evaluator access. The chamber controller remains responsible for live sensing and safety interlocks."
+                            : "Inspect only the batches shared with you by authorized operators and submit your independent evaluation. If your observation conflicts with a sensor reading, document the discrepancy—all records remain traceable."}
                       </p>
                     </div>
                   </section>
                   <section className="surface">
                     <SectionTitle
                       title="How a record is tracked"
-                      subtitle="One traceable path from production through review—without overwriting the source record."
+                      subtitle="One traceable path from production through review—click any step to jump to its records."
                     />
                     <ol className="tracking-map">
                       {[
-                        ["1", "Batch", "Owner, crop, dates and stage"],
-                        ["2", "Sensors & alerts", "Machine readings and current problems"],
-                        ["3", "Evidence", "Checks, notes and maintenance"],
-                        ["4", "Evaluation", "Independent human rating"],
-                        ["5", "Activity log", "Who changed what and when"],
-                      ].map(([step, name, detail], index, items) => (
-                        <li key={step}>
-                          <span>{step}</span>
-                          <div>
-                            <strong>{name}</strong>
-                            <small>{detail}</small>
-                          </div>
-                          {index < items.length - 1 && (
-                            <ChevronRight size={18} aria-hidden="true" />
-                          )}
-                        </li>
-                      ))}
+                        [
+                          "1",
+                          "Batch",
+                          "Owner, crop, dates and stage",
+                          () => navigate("production"),
+                          "Batch records",
+                        ],
+                        [
+                          "2",
+                          "Sensors & alerts",
+                          "Machine readings and current problems",
+                          () => navigate("readings"),
+                          "Sensor readings",
+                        ],
+                        [
+                          "3",
+                          "Evidence",
+                          "Checks, notes and maintenance",
+                          () => navigate(evaluator ? "evidence" : "irrigation"),
+                          evaluator ? "Evidence checks" : "Irrigation & Water",
+                        ],
+                        [
+                          "4",
+                          "Evaluation",
+                          "Independent human rating",
+                          () => navigate("production"),
+                          "Batch evaluations",
+                        ],
+                        [
+                          "5",
+                          "Activity log",
+                          "Who changed what and when",
+                          () => navigate(superadmin ? "audit" : "system"),
+                          superadmin ? "Audit Log" : "Chamber & Access",
+                        ],
+                      ].map(
+                        (
+                          [step, name, detail, onStepClick, targetLabel],
+                          index,
+                          items,
+                        ) => (
+                          <li key={step as string}>
+                            <button
+                              type="button"
+                              onClick={onStepClick as () => void}
+                              className="tracking-step-btn"
+                              aria-label={`Step ${step}: ${name} (${detail}). Click to jump to ${targetLabel}.`}
+                            >
+                              <span className="step-num">{step as string}</span>
+                              <div>
+                                <strong>{name as string}</strong>
+                                <small>{detail as string}</small>
+                              </div>
+                            </button>
+                            {index < items.length - 1 && (
+                              <ChevronRight size={18} aria-hidden="true" />
+                            )}
+                          </li>
+                        ),
+                      )}
                     </ol>
                   </section>
-                  <div className="summary-grid">
-                    <Metric
-                      icon={<Cpu />}
-                      label="System status"
-                      value={
-                        data.devices.length
-                          ? `${data.devices.filter((d) => d.status === "online" && (d.is_demo || (d.last_seen_at && Date.now() - new Date(d.last_seen_at).getTime() < 300000))).length} online`
-                          : "No devices"
-                      }
-                      detail={`${data.devices.length} linked devices`}
-                    />
-                    <Metric
-                      icon={<Sprout />}
-                      label="Active batches"
-                      value={String(
-                        data.batches.filter((b) => b.status === "active")
-                          .length,
-                      )}
-                      detail="Current production"
-                    />
-                    <Metric
-                      icon={<Activity />}
-                      label="Tray status"
-                      value={`${data.trays.filter((t) => t.status === "active").length} / ${data.trays.length}`}
-                      detail="Active / total trays"
-                    />
-                    <Metric
-                      icon={<Bell />}
-                      label="Open alerts"
-                      value={String(activeAlerts.length)}
-                      detail="Awaiting resolution"
-                    />
-                    <Metric
-                      icon={<Droplets />}
-                      label="Water usage"
-                      value={`${totalLitres.toFixed(1)} L`}
-                      detail="All recorded watering events"
-                    />
-                    <Metric
-                      icon={<ClipboardCheck />}
-                      label="Evidence"
-                      value={String(data.evidence.length)}
-                      detail={`${data.evaluations.length} evaluations submitted`}
-                    />
-                  </div>
+                  {evaluator && (
+                    <>
+                      <div className="summary-grid">
+                        <Metric
+                          icon={<ClipboardCheck />}
+                          label="Batches needing review"
+                          value={String(
+                            data.batches.filter((b) =>
+                              data.evaluations.every(
+                                (e) => e.batch_id !== b.id,
+                              ),
+                            ).length,
+                          )}
+                          detail="Pending evaluator rating"
+                          onClick={() => {
+                            setBatchFilter("unrated");
+                            navigate("production");
+                          }}
+                          targetLabel="Batch Evaluations"
+                        />
+                        <Metric
+                          icon={<Sprout />}
+                          label="Batches ready for harvest"
+                          value={String(
+                            data.batches.filter((b) => b.stage === "ready")
+                              .length,
+                          )}
+                          detail="Ready for harvest review"
+                          onClick={() => {
+                            setBatchFilter("ready");
+                            navigate("production");
+                          }}
+                          targetLabel="Batch Evaluations"
+                        />
+                        <Metric
+                          icon={<Cpu />}
+                          label="Granted chambers online"
+                          value={
+                            data.devices.length
+                              ? `${data.devices.filter((d) => d.status === "online").length} / ${data.devices.length} online`
+                              : "No chambers"
+                          }
+                          detail="Monitored growth chambers"
+                          onClick={() => navigate("readings")}
+                          targetLabel="Readings"
+                        />
+                        <Metric
+                          icon={<Bell />}
+                          label="Open alerts"
+                          value={String(activeAlerts.length)}
+                          detail="Awaiting review"
+                          onClick={() => navigate("alerts")}
+                          targetLabel="Alerts"
+                        />
+                      </div>
+                      <section className="surface mt-5">
+                        <SectionTitle
+                          title="Quality Grade Distribution & Visual Rubric"
+                          subtitle="Standardized 5-tier evaluation breakdown and sprout inspection criteria."
+                        />
+                        <QualityGradeChart evaluations={data.evaluations} />
+                      </section>
+                    </>
+                  )}
+
+                  {superadmin && (
+                    <div className="summary-grid">
+                      <Metric
+                        icon={<Users />}
+                        label="Managed accounts"
+                        value={`${data.activity.filter((a) => a.resource.startsWith("users:")).length || "Fleet"} accounts`}
+                        detail="Operators, evaluators & admins"
+                        onClick={() => navigate("accounts")}
+                        targetLabel="Accounts & Roles"
+                      />
+                      <Metric
+                        icon={<Key />}
+                        label="Granted serial IDs"
+                        value={`${data.devices.length} chambers`}
+                        detail="Hardware serial provisioning"
+                        onClick={() => navigate("serials")}
+                        targetLabel="Serial ID Grants"
+                      />
+                      <Metric
+                        icon={<Cpu />}
+                        label="Fleet machine status"
+                        value={
+                          data.devices.length
+                            ? `${data.devices.filter((d) => d.status === "online").length} / ${data.devices.length} online`
+                            : "No devices"
+                        }
+                        detail="Telemetry connection status"
+                        onClick={() => navigate("readings")}
+                        targetLabel="Readings"
+                      />
+                      <Metric
+                        icon={<FileText />}
+                        label="Audit events recorded"
+                        value={String(data.activity.length)}
+                        detail="Immutable access & grant logs"
+                        onClick={() => navigate("audit")}
+                        targetLabel="Audit Log"
+                      />
+                    </div>
+                  )}
+
+                  {!evaluator && !superadmin && (
+                    <div className="summary-grid">
+                      <Metric
+                        icon={<Cpu />}
+                        label="Machine status"
+                        value={
+                          data.devices.length
+                            ? `${data.devices.filter((d) => d.status === "online" && (d.is_demo || (d.last_seen_at && Date.now() - new Date(d.last_seen_at).getTime() < 300000))).length} online`
+                            : "No devices"
+                        }
+                        detail={`${data.devices.length} linked devices`}
+                        onClick={() => navigate("readings")}
+                        targetLabel="Readings"
+                      />
+                      <Metric
+                        icon={<ClipboardCheck />}
+                        label="Batches ready / review"
+                        value={String(
+                          data.batches.filter((b) => b.stage === "ready")
+                            .length,
+                        )}
+                        detail="Ready for harvest & check"
+                        onClick={() => {
+                          setBatchFilter("ready");
+                          navigate("production");
+                        }}
+                        targetLabel="Batch Production"
+                      />
+                      <Metric
+                        icon={<Sprout />}
+                        label="Active batches"
+                        value={String(
+                          data.batches.filter((b) => b.status === "active")
+                            .length,
+                        )}
+                        detail="Current production"
+                        onClick={() => {
+                          setBatchFilter("active");
+                          navigate("production");
+                        }}
+                        targetLabel="Batch Production"
+                      />
+                      <Metric
+                        icon={<Droplets />}
+                        label="Fresh-water & tank status"
+                        value={
+                          currentReading
+                            ? `${currentReading.water_level_percent ?? "—"}%`
+                            : "Normal"
+                        }
+                        detail="Fresh-water level"
+                        onClick={() => navigate("readings")}
+                        targetLabel="Readings"
+                      />
+                      <Metric
+                        icon={<Droplets />}
+                        label="Next irrigation run"
+                        value={
+                          nextSchedule
+                            ? date(nextSchedule.next_run_at)
+                            : "Scheduled"
+                        }
+                        detail={`${data.watering.length} watering events`}
+                        onClick={() => navigate("irrigation")}
+                        targetLabel="Irrigation & Water"
+                      />
+                      <Metric
+                        icon={<Bell />}
+                        label="Open alerts"
+                        value={String(activeAlerts.length)}
+                        detail="Awaiting resolution"
+                        onClick={() => navigate("alerts")}
+                        targetLabel="Alerts"
+                      />
+                    </div>
+                  )}
                   <div className="grid gap-5 xl:grid-cols-2">
                     <section className="surface">
                       <SectionTitle
@@ -743,7 +1279,7 @@ export default function Workspace({
                             {date(currentReading.recorded_at)}
                             {Date.now() -
                               new Date(currentReading.recorded_at).getTime() >
-                            300000
+                              300000
                               ? " · Reading is stale"
                               : ""}
                           </p>
@@ -791,8 +1327,14 @@ export default function Workspace({
               {page === "production" && (
                 <section className="surface">
                   <SectionTitle
-                    title="Production batches"
-                    subtitle="Track every batch from soaking to harvest."
+                    title={
+                      evaluator ? "Batch evaluations" : "Production batches"
+                    }
+                    subtitle={
+                      evaluator
+                        ? "Inspect production batches, view machine conditions, and record human quality ratings."
+                        : "Track every batch from soaking to harvest."
+                    }
                     action={
                       operator && (
                         <Btn onClick={() => open({ kind: "batch-create" })}>
@@ -814,35 +1356,37 @@ export default function Workspace({
                     </label>
                     <select
                       className="filter-select"
-                      aria-label="Batch status filter"
+                      aria-label="Batch status and stage filter"
                       value={batchFilter}
                       onChange={(e) => setBatchFilter(e.target.value)}
                     >
-                      <option value="all">All batches</option>
-                      <option value="active">Active</option>
+                      <option value="all">All stages & statuses</option>
+                      <option value="active">Active batches</option>
+                      <option value="ready">Ready for review / harvest</option>
+                      <option value="soaking">Soaking</option>
+                      <option value="growing">Growing</option>
+                      <option value="harvested">Harvested</option>
+                      {evaluator && <option value="unrated">Unrated by me</option>}
                       <option value="archived">Archived</option>
                     </select>
-                    <label className="month-filter">
-                      <span>Start month</span>
-                      <input
-                        type="month"
-                        aria-label="Batch start month"
-                        value={batchMonth}
-                        onChange={(event) => setBatchMonth(event.target.value)}
-                      />
-                    </label>
+                    <CalendarDatePicker
+                      value={batchDate}
+                      onChange={setBatchDate}
+                      placeholder="Filter start date"
+                    />
                   </div>
-                  {(query || batchFilter !== "all" || batchMonth) && (
+                  {(query || batchFilter !== "all" || batchDate || batchMonth) && (
                     <div className="filter-summary" role="status">
                       <span>
-                        {batches.length} matching batch
-                        {batches.length === 1 ? "" : "es"}
+                        {sortedBatches.length} matching batch
+                        {sortedBatches.length === 1 ? "" : "es"} (Newest first)
                       </span>
                       <button
                         className="table-link"
                         onClick={() => {
                           setQuery("");
                           setBatchFilter("all");
+                          setBatchDate("");
                           setBatchMonth("");
                         }}
                       >
@@ -850,7 +1394,1092 @@ export default function Workspace({
                       </button>
                     </div>
                   )}
-                  {batchTable(batches)}
+                  {batchTable(sortedBatches)}
+                </section>
+              )}
+              {page === "readings" && (
+                <div className="space-y-6">
+                  <section className="surface">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                      <div>
+                        <h2 className="text-xl font-bold text-foreground">
+                          Readings & Chamber Telemetry
+                        </h2>
+                        <p className="text-sm text-muted-foreground">
+                          Live telemetry and historical conditions across granted chambers.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <label className="text-xs font-semibold text-muted-foreground flex items-center gap-2">
+                          <span>Chamber:</span>
+                          <select
+                            className="filter-select"
+                            value={selectedDevice}
+                            onChange={(e) => setSelectedDevice(e.target.value)}
+                            aria-label="Filter readings by chamber"
+                          >
+                            <option value="all">
+                              All chambers ({data.devices.length})
+                            </option>
+                            {data.devices.map((d) => (
+                              <option key={d.id} value={d.id}>
+                                {d.name} ({d.serial_number})
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* 6 Detailed Sensor Telemetry Cards matching image_e0a5e9.png */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+                      {/* 1. Air Temperature */}
+                      <div className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm hover:border-border transition-all">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                            <Thermometer size={16} className="text-emerald-500" />
+                            Air Temperature
+                          </span>
+                          <span
+                            className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${currentReading?.temperature_c &&
+                                currentReading.temperature_c >= 21 &&
+                                currentReading.temperature_c <= 27
+                                ? "bg-emerald-500/10 text-emerald-600"
+                                : "bg-amber-500/10 text-amber-600"
+                              }`}
+                          >
+                            {currentReading?.temperature_c &&
+                              currentReading.temperature_c >= 21 &&
+                              currentReading.temperature_c <= 27
+                              ? "Within range"
+                              : "Check range"}
+                          </span>
+                        </div>
+                        <div className="flex items-baseline justify-between mb-1">
+                          <span className="text-2xl font-bold tracking-tight text-foreground">
+                            {currentReading?.temperature_c !== null &&
+                              currentReading?.temperature_c !== undefined
+                              ? `${currentReading.temperature_c} °C`
+                              : "—"}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            Ref 21–27 °C
+                          </span>
+                        </div>
+                        <div className="mt-2 pt-2 border-t border-border/40">
+                          <Spark
+                            data={deviceReadings
+                              .slice(-10)
+                              .map((r) => r.temperature_c ?? 24)}
+                            color="#10b981"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 2. Humidity */}
+                      <div className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm hover:border-border transition-all">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                            <Droplets size={16} className="text-blue-500" />
+                            Humidity
+                          </span>
+                          <span
+                            className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${currentReading?.humidity_percent &&
+                                currentReading.humidity_percent >= 80 &&
+                                currentReading.humidity_percent <= 90
+                                ? "bg-emerald-500/10 text-emerald-600"
+                                : "bg-amber-500/10 text-amber-600"
+                              }`}
+                          >
+                            {currentReading?.humidity_percent &&
+                              currentReading.humidity_percent >= 80 &&
+                              currentReading.humidity_percent <= 90
+                              ? "Within range"
+                              : "Check range"}
+                          </span>
+                        </div>
+                        <div className="flex items-baseline justify-between mb-1">
+                          <span className="text-2xl font-bold tracking-tight text-foreground">
+                            {currentReading?.humidity_percent !== null &&
+                              currentReading?.humidity_percent !== undefined
+                              ? `${currentReading.humidity_percent} %`
+                              : "—"}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            Ref 80–90 %
+                          </span>
+                        </div>
+                        <div className="mt-2 pt-2 border-t border-border/40">
+                          <Spark
+                            data={deviceReadings
+                              .slice(-10)
+                              .map((r) => r.humidity_percent ?? 85)}
+                            color="#3b82f6"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 3. Fresh-Water Tank */}
+                      <div className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm hover:border-border transition-all">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                            <Droplets size={16} className="text-amber-500" />
+                            Fresh-Water Tank
+                          </span>
+                          <span
+                            className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${currentReading?.water_level_percent &&
+                                currentReading.water_level_percent > 40
+                                ? "bg-emerald-500/10 text-emerald-600"
+                                : "bg-amber-500/10 text-amber-600"
+                              }`}
+                          >
+                            {currentReading?.water_level_percent &&
+                              currentReading.water_level_percent > 40
+                              ? "Within range"
+                              : "Getting low"}
+                          </span>
+                        </div>
+                        <div className="flex items-baseline justify-between mb-1">
+                          <span className="text-2xl font-bold tracking-tight text-foreground">
+                            {currentReading?.water_level_percent !== null &&
+                              currentReading?.water_level_percent !== undefined
+                              ? `${currentReading.water_level_percent} %`
+                              : "—"}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            Ref &gt; 40 %
+                          </span>
+                        </div>
+                        <div className="mt-2 pt-2 border-t border-border/40">
+                          <Spark
+                            data={deviceReadings
+                              .slice(-10)
+                              .map((r) => r.water_level_percent ?? 70)}
+                            color="#f59e0b"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 4. Water Temperature */}
+                      <div className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm hover:border-border transition-all">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                            <Thermometer size={16} className="text-purple-500" />
+                            Water Temperature
+                          </span>
+                          <span
+                            className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${currentReading?.water_temperature_c &&
+                                currentReading.water_temperature_c >= 18 &&
+                                currentReading.water_temperature_c <= 22
+                                ? "bg-emerald-500/10 text-emerald-600"
+                                : "bg-amber-500/10 text-amber-600"
+                              }`}
+                          >
+                            {currentReading?.water_temperature_c &&
+                              currentReading.water_temperature_c >= 18 &&
+                              currentReading.water_temperature_c <= 22
+                              ? "Within range"
+                              : "Check range"}
+                          </span>
+                        </div>
+                        <div className="flex items-baseline justify-between mb-1">
+                          <span className="text-2xl font-bold tracking-tight text-foreground">
+                            {currentReading?.water_temperature_c !== null &&
+                              currentReading?.water_temperature_c !== undefined
+                              ? `${currentReading.water_temperature_c} °C`
+                              : "—"}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            Ref 18–22 °C
+                          </span>
+                        </div>
+                        <div className="mt-2 pt-2 border-t border-border/40">
+                          <Spark
+                            data={deviceReadings
+                              .slice(-10)
+                              .map((r) => r.water_temperature_c ?? 20)}
+                            color="#8b5cf6"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 5. Light Level */}
+                      <div className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm hover:border-border transition-all">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                            <Sun size={16} className="text-indigo-500" />
+                            Light Level
+                          </span>
+                          <span
+                            className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${currentReading?.light_lux !== null &&
+                                currentReading?.light_lux !== undefined &&
+                                currentReading.light_lux < 5
+                                ? "bg-emerald-500/10 text-emerald-600"
+                                : "bg-rose-500/10 text-rose-600"
+                              }`}
+                          >
+                            {currentReading?.light_lux !== null &&
+                              currentReading?.light_lux !== undefined &&
+                              currentReading.light_lux < 5
+                              ? "Nice & dark"
+                              : "Light detected"}
+                          </span>
+                        </div>
+                        <div className="flex items-baseline justify-between mb-1">
+                          <span className="text-2xl font-bold tracking-tight text-foreground">
+                            {currentReading?.light_lux !== null &&
+                              currentReading?.light_lux !== undefined
+                              ? `${currentReading.light_lux} lux`
+                              : "—"}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            Ref ~0 lux
+                          </span>
+                        </div>
+                        <div className="mt-2 pt-2 border-t border-border/40">
+                          <Spark
+                            data={deviceReadings
+                              .slice(-10)
+                              .map((r) => r.light_lux ?? 0)}
+                            color="#6366f1"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 6. Wastewater Tank */}
+                      <div className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm hover:border-border transition-all">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                            <Droplets size={16} className="text-cyan-500" />
+                            Wastewater Tank
+                          </span>
+                          <span
+                            className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${currentReading?.wastewater_level_percent !== null &&
+                                currentReading?.wastewater_level_percent !== undefined &&
+                                currentReading.wastewater_level_percent < 85
+                                ? "bg-emerald-500/10 text-emerald-600"
+                                : "bg-rose-500/10 text-rose-600"
+                              }`}
+                          >
+                            {currentReading?.wastewater_level_percent !== null &&
+                              currentReading?.wastewater_level_percent !== undefined &&
+                              currentReading.wastewater_level_percent < 85
+                              ? "Room available"
+                              : "Near full"}
+                          </span>
+                        </div>
+                        <div className="flex items-baseline justify-between mb-1">
+                          <span className="text-2xl font-bold tracking-tight text-foreground">
+                            {currentReading?.wastewater_level_percent !== null &&
+                              currentReading?.wastewater_level_percent !== undefined
+                              ? `${currentReading.wastewater_level_percent} %`
+                              : "—"}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            Ref &lt; 85 %
+                          </span>
+                        </div>
+                        <div className="mt-2 pt-2 border-t border-border/40">
+                          <Spark
+                            data={deviceReadings
+                              .slice(-10)
+                              .map((r) => r.wastewater_level_percent ?? 15)}
+                            color="#06b6d4"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-muted-foreground mb-6">
+                      {currentReading
+                        ? `Latest reading from ${deviceName(currentReading.device_id)} recorded at ${date(currentReading.recorded_at)}${Date.now() -
+                          new Date(currentReading.recorded_at).getTime() >
+                          300000
+                          ? " · Warning: Sensor reading is stale (> 5m ago)"
+                          : ""
+                        }`
+                        : "No sensor readings available for this chamber selection."}
+                    </p>
+
+                    {/* Historical Telemetry Log */}
+                    <SectionTitle
+                      title="Historical Sensor Telemetry"
+                      subtitle="Chronological log of machine-reported chamber sensor packets."
+                      action={
+                        <Btn
+                          variant="outline"
+                          disabled={!data.readings.length}
+                          onClick={() =>
+                            exportCsv(
+                              "sproutsync-sensor-readings.csv",
+                              [
+                                "Chamber",
+                                "Air Temp (C)",
+                                "Humidity (%)",
+                                "Fresh Water (%)",
+                                "Water Temp (C)",
+                                "Light (lux)",
+                                "Wastewater (%)",
+                                "Recorded At",
+                              ],
+                              deviceReadings.map((r) => [
+                                deviceName(r.device_id),
+                                r.temperature_c ?? "",
+                                r.humidity_percent ?? "",
+                                r.water_level_percent ?? "",
+                                r.water_temperature_c ?? "",
+                                r.light_lux ?? "",
+                                r.wastewater_level_percent ?? "",
+                                r.recorded_at,
+                              ]),
+                            )
+                          }
+                        >
+                          <Printer size={16} />
+                          Export CSV
+                        </Btn>
+                      }
+                    />
+                    {table(
+                      [
+                        "Chamber",
+                        "Air °C",
+                        "Humidity %",
+                        "Fresh water %",
+                        "Water °C",
+                        "Light lux",
+                        "Wastewater %",
+                        "Recorded",
+                      ],
+                      deviceReadings.map((r) => [
+                        deviceName(r.device_id),
+                        r.temperature_c !== null ? `${r.temperature_c} °C` : "—",
+                        r.humidity_percent !== null ? `${r.humidity_percent} %` : "—",
+                        r.water_level_percent !== null ? `${r.water_level_percent} %` : "—",
+                        r.water_temperature_c !== null ? `${r.water_temperature_c} °C` : "—",
+                        r.light_lux !== null ? `${r.light_lux} lux` : "—",
+                        r.wastewater_level_percent !== null ? `${r.wastewater_level_percent} %` : "—",
+                        date(r.recorded_at),
+                      ]),
+                      "No sensor readings recorded for this chamber.",
+                    )}
+                  </section>
+
+                  {/* 7-Day Water Consumption Chart */}
+                  <section className="surface">
+                    <SectionTitle
+                      title="Water use this week"
+                      subtitle="Recorded water consumption over the last seven days."
+                    />
+                    <WaterUseChart
+                      data={Array.from({ length: 7 }, (_, index) => {
+                        const day = new Date();
+                        day.setHours(0, 0, 0, 0);
+                        day.setDate(day.getDate() - 6 + index);
+                        const end = new Date(day);
+                        end.setDate(end.getDate() + 1);
+                        const litres =
+                          data.watering
+                            .filter(
+                              (record) =>
+                                new Date(record.occurred_at) >= day &&
+                                new Date(record.occurred_at) < end,
+                            )
+                            .reduce(
+                              (sum, record) => sum + record.volume_ml,
+                              0,
+                            ) / 1000;
+                        return {
+                          day: day.toLocaleDateString([], {
+                            weekday: "short",
+                          }),
+                          L: Number(litres.toFixed(2)),
+                        };
+                      })}
+                    />
+                  </section>
+                </div>
+              )}
+              {page === "irrigation" && (
+                <div className="space-y-6">
+                  <section className="surface">
+                    <SectionTitle
+                      title="Irrigation schedule"
+                      subtitle="Configured watering intervals and automated triggers."
+                      action={
+                        operator && (
+                          <Btn
+                            disabled={!data.devices.length}
+                            onClick={() => open({ kind: "schedule" })}
+                          >
+                            <Plus size={16} />
+                            Add schedule
+                          </Btn>
+                        )
+                      }
+                    />
+                    {table(
+                      ["Device", "Next run", "Duration", "Status"],
+                      data.schedules.map((s) => [
+                        deviceName(s.device_id),
+                        date(s.next_run_at),
+                        `${s.duration_seconds}s`,
+                        s.enabled ? "Enabled" : "Paused",
+                      ]),
+                      "No irrigation schedules yet.",
+                    )}
+                  </section>
+                  <section className="surface">
+                    <SectionTitle
+                      title="Watering history"
+                      subtitle="Logged irrigation events and delivered volume."
+                    />
+                    {table(
+                      ["Device", "Batch", "Water", "Duration", "Time"],
+                      data.watering.map((w) => [
+                        deviceName(w.device_id),
+                        batchName(w.batch_id),
+                        `${(w.volume_ml / 1000).toFixed(2)} L`,
+                        `${w.duration_seconds}s`,
+                        date(w.occurred_at),
+                      ]),
+                      "No watering events have been received.",
+                    )}
+                  </section>
+                  <section className="surface">
+                    <SectionTitle
+                      title="Water use by batch"
+                      action={
+                        <Btn
+                          variant="outline"
+                          disabled={!data.batches.length}
+                          onClick={() => window.print()}
+                        >
+                          <Printer size={16} />
+                          Print report
+                        </Btn>
+                      }
+                    />
+                    <div className="report-goal">
+                      <strong>Report goal</strong>
+                      <p>
+                        Trace water use back to each production batch so an
+                        operator or evaluator can review exceptions with source
+                        records intact.
+                      </p>
+                    </div>
+                    {table(
+                      ["Batch", "Water used", "Events"],
+                      data.batches.map((b) => {
+                        const events = data.watering.filter(
+                          (w) => w.batch_id === b.id,
+                        );
+                        return [
+                          b.code,
+                          `${(events.reduce((sum, w) => sum + w.volume_ml, 0) / 1000).toFixed(2)} L`,
+                          events.length,
+                        ];
+                      }),
+                      "No batch data to report.",
+                    )}
+                  </section>
+                </div>
+              )}
+              {page === "evidence" && (
+                <div className="space-y-6">
+                  <section className="surface">
+                    <SectionTitle
+                      title="Evaluation evidence & machine checks"
+                      subtitle="Independent sensor proofs and acceptance testing records."
+                      action={
+                        operator && (
+                          <Btn onClick={() => open({ kind: "evidence" })}>
+                            <Plus size={16} />
+                            Record evidence
+                          </Btn>
+                        )
+                      }
+                    />
+                    {table(
+                      [
+                        "Test",
+                        "Category",
+                        "Batch",
+                        "Result",
+                        "Notes",
+                        "Recorded",
+                      ],
+                      data.evidence.map((e) => [
+                        e.title,
+                        e.category.replaceAll("_", " "),
+                        batchName(e.batch_id),
+                        <Status key="res" value={e.result} />,
+                        e.notes,
+                        date(e.recorded_at),
+                      ]),
+                      "No evidence has been recorded yet.",
+                    )}
+                  </section>
+                  <section className="surface">
+                    <SectionTitle
+                      title={
+                        operator ? "Submitted evaluations" : "Your evaluations"
+                      }
+                      subtitle="Human quality ratings, tasting notes, and visual sprout inspection."
+                      action={
+                        evaluator && (
+                          <Btn
+                            disabled={!data.batches.length}
+                            onClick={() => open({ kind: "evaluation" })}
+                          >
+                            <Plus size={16} />
+                            Evaluate a batch
+                          </Btn>
+                        )
+                      }
+                    />
+                    <div className="evaluation-guide mb-5">
+                      <div>
+                        <p className="role-kicker">Rating basis</p>
+                        <h3 className="text-base font-bold text-foreground">
+                          Use the standard five-point rubric for every batch
+                        </h3>
+                        <div
+                          className="rating-rubric"
+                          aria-label="Evaluation rating guide"
+                        >
+                          {[
+                            [1, "Poor"],
+                            [2, "Fair"],
+                            [3, "Good"],
+                            [4, "Very good"],
+                            [5, "Excellent"],
+                          ].map(([value, label]) => (
+                            <span key={value}>
+                              <strong>{value}★</strong>
+                              {label}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="table-toolbar">
+                      <label className="search-field">
+                        <Search size={17} />
+                        <input
+                          aria-label="Search evaluations"
+                          placeholder="Search batch or observation…"
+                          value={evaluationQuery}
+                          onChange={(event) =>
+                            setEvaluationQuery(event.target.value)
+                          }
+                        />
+                      </label>
+                      <select
+                        className="filter-select"
+                        aria-label="Evaluation batch filter"
+                        value={evaluationBatch}
+                        onChange={(event) =>
+                          setEvaluationBatch(event.target.value)
+                        }
+                      >
+                        <option value="all">All operators & batches</option>
+                        {data.batches.map((batch) => (
+                          <option key={batch.id} value={batch.id}>
+                            Operator #{batch.owner_id} · {batch.code}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {table(
+                      [
+                        "Owner",
+                        "Batch",
+                        "Rating",
+                        "Comments",
+                        "Submitted",
+                        "Details",
+                      ],
+                      evaluationRows.map((evaluation) => {
+                        const batch = data.batches.find(
+                          (item) => item.id === evaluation.batch_id,
+                        );
+                        return [
+                          batch
+                            ? `Operator #${batch.owner_id}`
+                            : "Unknown operator",
+                          <button
+                            key="batch"
+                            className="table-link"
+                            onClick={() =>
+                              batch && open({ kind: "batch-details", batch })
+                            }
+                          >
+                            {batchName(evaluation.batch_id)}
+                          </button>,
+                          <Rating key="rating" value={evaluation.rating} />,
+                          evaluation.comments,
+                          date(evaluation.created_at),
+                          <button
+                            key="view"
+                            className="table-link"
+                            onClick={() =>
+                              open({
+                                kind: "evaluation-details",
+                                evaluation,
+                              })
+                            }
+                          >
+                            View <ChevronRight size={14} />
+                          </button>,
+                        ];
+                      }),
+                      "No evaluations submitted yet.",
+                    )}
+                  </section>
+                </div>
+              )}
+              {page === "accounts" && superadmin && (() => {
+                const query = accountSearchQuery.toLowerCase().trim();
+                const filteredAccounts = accounts.filter((acc) => {
+                  if (accountRoleFilter !== "all") {
+                    if (accountRoleFilter === "superadmin") {
+                      if (acc.role !== "superadmin" && acc.role !== "admin") return false;
+                    } else if (acc.role !== accountRoleFilter) {
+                      return false;
+                    }
+                  }
+                  if (query) {
+                    const name = (acc.display_name || `${acc.first_name} ${acc.last_name}`).toLowerCase();
+                    const email = (acc.email || "").toLowerCase();
+                    const org = (acc.organization || "").toLowerCase();
+                    const role = (acc.role || "").toLowerCase();
+                    const idStr = String(acc.id);
+
+                    const serials = Array.from(
+                      new Set([
+                        ...(acc.serial_numbers || []),
+                        ...data.devices
+                          .filter((d) => d.owner_id === acc.id && d.serial_number)
+                          .map((d) => d.serial_number!),
+                      ]),
+                    ).map((s) => s.toLowerCase());
+
+                    const matchesText =
+                      name.includes(query) ||
+                      email.includes(query) ||
+                      org.includes(query) ||
+                      role.includes(query) ||
+                      idStr.includes(query) ||
+                      serials.some((s) => s.includes(query));
+
+                    if (!matchesText) return false;
+                  }
+                  return true;
+                });
+
+                return (
+                  <div className="space-y-6">
+                    <section className="surface">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-border">
+                        <div>
+                          <h3 className="text-base font-bold tracking-tight">Accounts Directory & Governance</h3>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Manage fleet credentials, chamber assignments, and user roles across all tiers.
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Btn
+                            variant="outline"
+                            size="sm"
+                            onClick={async () => {
+                              try {
+                                const res = await fetchAccounts();
+                                setAccounts(Array.isArray(res) && res.length > 0 ? res : initialAccounts);
+                                setToast("Accounts refreshed.");
+                              } catch {
+                                setAccounts(initialAccounts);
+                                setToast("Accounts refreshed with fallback data.");
+                              }
+                            }}
+                          >
+                            <RefreshCw size={14} /> Refresh
+                          </Btn>
+                        </div>
+                      </div>
+
+                      {/* TOOLBAR: Search with Intellisense & Role Filter */}
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-4 pb-2">
+                        {/* Search bar with intellisense popup */}
+                        <div className="relative flex-1 max-w-md">
+                          <div className="relative flex items-center">
+                            <Search size={15} className="absolute left-3 text-muted-foreground pointer-events-none" />
+                            <input
+                              type="text"
+                              placeholder="Search accounts by name, email, serial..."
+                              value={accountSearchQuery}
+                              onChange={(e) => {
+                                setAccountSearchQuery(e.target.value);
+                                setShowSearchSuggestions(true);
+                              }}
+                              onFocus={() => setShowSearchSuggestions(true)}
+                              className="w-full pl-9 pr-8 py-2 text-xs rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                            />
+                            {accountSearchQuery && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAccountSearchQuery("");
+                                  setShowSearchSuggestions(false);
+                                }}
+                                className="absolute right-2.5 text-muted-foreground hover:text-foreground"
+                              >
+                                <X size={14} />
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Intellisense Overlay & Dropdown Popup */}
+                          {showSearchSuggestions && query.length > 0 && (
+                            <>
+                              <div
+                                className="fixed inset-0 z-10"
+                                onClick={() => setShowSearchSuggestions(false)}
+                              />
+                              <div className="absolute z-20 left-0 right-0 mt-1 bg-popover border border-border rounded-lg shadow-lg overflow-hidden max-h-60 overflow-y-auto">
+                                {(() => {
+                                  const suggestions: {
+                                    key: string;
+                                    label: string;
+                                    subtext: string;
+                                    value: string;
+                                    badge: string;
+                                  }[] = [];
+
+                                  accounts.forEach((acc) => {
+                                    const name = acc.display_name || `${acc.first_name} ${acc.last_name}`.trim();
+                                    if (name.toLowerCase().includes(query) || acc.email.toLowerCase().includes(query)) {
+                                      suggestions.push({
+                                        key: `user-${acc.id}`,
+                                        label: name,
+                                        subtext: `${acc.email} · ID #${acc.id}`,
+                                        value: name,
+                                        badge: acc.role,
+                                      });
+                                    }
+                                    const serials = Array.from(
+                                      new Set([
+                                        ...(acc.serial_numbers || []),
+                                        ...data.devices
+                                          .filter((d) => d.owner_id === acc.id && d.serial_number)
+                                          .map((d) => d.serial_number!),
+                                      ]),
+                                    );
+                                    serials.forEach((s) => {
+                                      if (s.toLowerCase().includes(query)) {
+                                        suggestions.push({
+                                          key: `serial-${acc.id}-${s}`,
+                                          label: s,
+                                          subtext: `Assigned to ${name}`,
+                                          value: s,
+                                          badge: "serial",
+                                        });
+                                      }
+                                    });
+                                  });
+
+                                  if (suggestions.length === 0) {
+                                    return (
+                                      <div className="p-3 text-xs text-muted-foreground italic text-center">
+                                        No matching accounts or serial numbers
+                                      </div>
+                                    );
+                                  }
+
+                                  return suggestions.slice(0, 6).map((item) => (
+                                    <button
+                                      key={item.key}
+                                      type="button"
+                                      className="w-full px-3 py-2 text-left hover:bg-secondary flex items-center justify-between text-xs transition-colors border-b last:border-b-0 border-border/50"
+                                      onClick={() => {
+                                        setAccountSearchQuery(item.value);
+                                        setShowSearchSuggestions(false);
+                                      }}
+                                    >
+                                      <div>
+                                        <span className="font-semibold text-foreground">{item.label}</span>
+                                        <span className="block text-[11px] text-muted-foreground">{item.subtext}</span>
+                                      </div>
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] uppercase font-mono font-medium bg-secondary text-muted-foreground">
+                                        {item.badge}
+                                      </span>
+                                    </button>
+                                  ));
+                                })()}
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Role Filter */}
+                        <div className="flex items-center gap-2">
+                          <label htmlFor="account-role-filter" className="text-xs text-muted-foreground whitespace-nowrap">
+                            Filter Role:
+                          </label>
+                          <select
+                            id="account-role-filter"
+                            value={accountRoleFilter}
+                            onChange={(e) => setAccountRoleFilter(e.target.value)}
+                            className="text-xs rounded-lg border border-border bg-background px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
+                          >
+                            <option value="all">All Roles ({accounts.length})</option>
+                            <option value="operator">Operators ({accounts.filter((a) => a.role === "operator").length})</option>
+                            <option value="evaluator">Evaluators ({accounts.filter((a) => a.role === "evaluator").length})</option>
+                            <option value="superadmin">
+                              Superadmins ({accounts.filter((a) => a.role === "superadmin" || a.role === "admin").length})
+                            </option>
+                            <option value="pending">Pending ({accounts.filter((a) => a.role === "pending").length})</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* UNIFIED TABLE */}
+                      {table(
+                        ["User", "Email", "Role", "Assigned Serials / Scope", "Status", "Actions"],
+                        filteredAccounts.map((acc) => {
+                          const isOp = acc.role === "operator";
+                          const liveSerials = Array.from(
+                            new Set([
+                              ...(acc.serial_numbers || []),
+                              ...data.devices
+                                .filter((d) => d.owner_id === acc.id && d.serial_number)
+                                .map((d) => d.serial_number!),
+                            ]),
+                          );
+                          const evalCount =
+                            (acc.evaluators && acc.evaluators.length) ||
+                            data.access.filter((a) => a.owner_id === acc.id).length ||
+                            acc.evaluator_grant_count ||
+                            0;
+
+                          const roleBadge = (() => {
+                            if (acc.role === "superadmin" || acc.role === "admin") {
+                              return (
+                                <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                                  Superadmin
+                                </span>
+                              );
+                            }
+                            if (acc.role === "operator") {
+                              return (
+                                <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                  Operator
+                                </span>
+                              );
+                            }
+                            if (acc.role === "evaluator") {
+                              return (
+                                <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                                  Evaluator
+                                </span>
+                              );
+                            }
+                            return (
+                              <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                                Pending
+                              </span>
+                            );
+                          })();
+
+                          const scopeCell = (() => {
+                            if (isOp) {
+                              return liveSerials.length > 0 ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {liveSerials.map((s) => (
+                                    <span
+                                      key={s}
+                                      className="px-2 py-0.5 rounded-md bg-primary/10 text-primary font-mono text-xs font-semibold"
+                                    >
+                                      {s}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-muted-foreground text-xs italic">No serials assigned</span>
+                              );
+                            }
+                            if (acc.role === "evaluator") {
+                              return (
+                                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                  <ClipboardCheck size={13} className="text-blue-500" /> Linked Evaluator
+                                </span>
+                              );
+                            }
+                            if (acc.role === "superadmin" || acc.role === "admin") {
+                              return (
+                                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                  <ShieldCheck size={13} className="text-purple-500" /> Fleet Governance
+                                </span>
+                              );
+                            }
+                            return (
+                              <span className="text-xs text-amber-600 dark:text-amber-400 italic flex items-center gap-1">
+                                <Clock size={13} /> Awaiting Verification
+                              </span>
+                            );
+                          })();
+
+                          return [
+                            <div key="name">
+                              <strong>
+                                {acc.display_name || `${acc.first_name} ${acc.last_name}`.trim() || "Unnamed"}
+                              </strong>
+                              <small className="block text-muted-foreground text-xs">
+                                ID #{acc.id} {acc.organization ? `· ${acc.organization}` : ""}
+                              </small>
+                            </div>,
+                            acc.email,
+                            roleBadge,
+                            scopeCell,
+                            <Status key="status" value={acc.is_active ? "active" : "offline"} />,
+                            <div key="actions" className="flex items-center gap-1.5">
+                              {isOp && (
+                                <>
+                                  <Btn
+                                    variant="outline"
+                                    size="sm"
+                                    className="text-xs px-2 py-1 h-7 text-primary border-primary/30 hover:bg-primary/10"
+                                    onClick={() => open({ kind: "superadmin-grant-serial", operator_id: acc.id })}
+                                    title="Grant Serial Number"
+                                  >
+                                    <Plus size={12} className="mr-0.5" /> Serial
+                                  </Btn>
+                                  <button
+                                    type="button"
+                                    title={`Linked Evaluators (${evalCount})`}
+                                    className={`p-1.5 rounded-md border text-xs flex items-center gap-1 transition-colors ${expandedOperatorId === acc.id
+                                        ? "bg-primary text-primary-foreground border-primary"
+                                        : "border-border hover:bg-secondary text-muted-foreground hover:text-foreground"
+                                      }`}
+                                    onClick={() =>
+                                      setExpandedOperatorId(expandedOperatorId === acc.id ? null : acc.id)
+                                    }
+                                  >
+                                    <Users size={14} />
+                                    <span className="font-semibold text-xs">{evalCount}</span>
+                                  </button>
+                                </>
+                              )}
+                              <button
+                                type="button"
+                                title="Edit Account"
+                                className="p-1.5 rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                                onClick={() => open({ kind: "superadmin-account-edit", account: acc })}
+                              >
+                                <Pencil size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                title={acc.id === profile.id ? "Cannot delete own account" : "Delete Account"}
+                                disabled={acc.id === profile.id}
+                                className="p-1.5 rounded-md border border-destructive/20 hover:bg-destructive/10 text-destructive disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                                onClick={() => open({ kind: "superadmin-account-delete", account: acc })}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>,
+                          ];
+                        }),
+                        "No accounts match the current search query or filter.",
+                      )}
+
+                      {/* EXPANDABLE EVALUATORS DRAWER */}
+                      {expandedOperatorId !== null && (() => {
+                        const op = accounts.find((a) => a.id === expandedOperatorId);
+                        if (!op) return null;
+                        return (
+                          <div className="mt-4 p-4 rounded-xl bg-secondary/40 border border-border">
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center gap-2">
+                                <Users size={16} className="text-primary" />
+                                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                                  Evaluators Linked to {op.display_name || op.email} (ID #{op.id})
+                                </h4>
+                              </div>
+                              <Btn
+                                size="sm"
+                                variant="outline"
+                                onClick={() =>
+                                  open({
+                                    kind: "superadmin-assign-evaluator",
+                                    operator_id: op.id,
+                                  })
+                                }
+                              >
+                                <UserPlus size={14} /> Assign Evaluator
+                              </Btn>
+                            </div>
+                            {table(
+                              ["Evaluator Name", "Email", "Granted At", "Actions"],
+                              (op.evaluators || []).map((ev) => [
+                                ev.display_name || ev.email,
+                                ev.email,
+                                date(ev.granted_at),
+                                <div key="actions" className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    title="Edit Evaluator"
+                                    className="p-1.5 rounded-md border border-border hover:bg-secondary text-muted-foreground hover:text-foreground"
+                                    onClick={() => open({ kind: "operator-evaluator-edit", evaluator: ev })}
+                                  >
+                                    <Pencil size={13} />
+                                  </button>
+                                  <Btn
+                                    key="reassign"
+                                    size="sm"
+                                    variant="outline"
+                                    className="text-xs px-2 py-1 h-7"
+                                    onClick={() =>
+                                      open({
+                                        kind: "superadmin-assign-evaluator",
+                                        evaluator_id: ev.id,
+                                        operator_id: op.id,
+                                      })
+                                    }
+                                  >
+                                    Reassign
+                                  </Btn>
+                                </div>,
+                              ]),
+                              "No evaluators linked to this operator yet.",
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </section>
+                  </div>
+                );
+              })()}
+              {page === "audit" && superadmin && (
+                <section className="surface">
+                  <SectionTitle
+                    title="System Audit Log"
+                    subtitle="Tamper-evident record of administrative grants, role updates, and evaluator delegations."
+                  />
+                  {table(
+                    ["Action", "Resource / Target", "Time"],
+                    data.activity.map((a) => [
+                      <span
+                        key="action"
+                        className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-secondary"
+                      >
+                        {a.action}
+                      </span>,
+                      a.resource,
+                      date(a.created_at),
+                    ]),
+                    "No administrative activity recorded yet.",
+                  )}
                 </section>
               )}
               {page === "alerts" && (
@@ -902,13 +2531,27 @@ export default function Workspace({
                     />
                     <div className="sensor-scope-grid">
                       {[
-                        ["Pests or external contamination", "Record the affected room or tray"],
-                        ["Water contamination", "Identify the batch and water source"],
-                        ["Compliance risk", "State the failed check or missing evidence"],
-                        ["Light leak", "Specify the chamber, door, or seal location"],
+                        [
+                          "Pests or external contamination",
+                          "Record the affected room or tray",
+                        ],
+                        [
+                          "Water contamination",
+                          "Identify the batch and water source",
+                        ],
+                        [
+                          "Compliance risk",
+                          "State the failed check or missing evidence",
+                        ],
+                        [
+                          "Light leak",
+                          "Specify the chamber, door, or seal location",
+                        ],
                       ].map(([name, purpose]) => (
                         <div key={name}>
-                          <span className="summary-icon"><Bell size={18} /></span>
+                          <span className="summary-icon">
+                            <Bell size={18} />
+                          </span>
                           <strong>{name}</strong>
                           <small>{purpose}</small>
                         </div>
@@ -917,178 +2560,12 @@ export default function Workspace({
                   </div>
                 </section>
               )}
-              {page === "production" && (
-                <>
-                  <section className="surface">
-                    <SectionTitle
-                      title="Irrigation schedule"
-                      action={
-                        operator && (
-                          <Btn
-                            disabled={!data.devices.length}
-                            onClick={() => open({ kind: "schedule" })}
-                          >
-                            <Plus size={16} />
-                            Add schedule
-                          </Btn>
-                        )
-                      }
-                    />
-                    {table(
-                      ["Device", "Next run", "Duration", "Status"],
-                      data.schedules.map((s) => [
-                        deviceName(s.device_id),
-                        date(s.next_run_at),
-                        `${s.duration_seconds}s`,
-                        s.enabled ? "Enabled" : "Paused",
-                      ]),
-                      "No irrigation schedules yet.",
-                    )}
-                  </section>
-                  <section className="surface">
-                    <SectionTitle title="Watering history" />
-                    {table(
-                      ["Device", "Batch", "Water", "Duration", "Time"],
-                      data.watering.map((w) => [
-                        deviceName(w.device_id),
-                        batchName(w.batch_id),
-                        `${(w.volume_ml / 1000).toFixed(2)} L`,
-                        `${w.duration_seconds}s`,
-                        date(w.occurred_at),
-                      ]),
-                      "No watering events have been received.",
-                    )}
-                  </section>
-                </>
-              )}
-              {page === "review" && (
-                <>
-                  <section className="review-boundary" aria-labelledby="review-boundary-title">
-                    <ShieldCheck size={22} aria-hidden="true" />
-                    <div>
-                      <h2 id="review-boundary-title">Machine evidence and human judgment stay separate</h2>
-                      <p>
-                        Sensor readings and recorded tests are source evidence. An evaluator adds an independent assessment; a disagreement is recorded for follow-up and does not replace the machine record.
-                      </p>
-                    </div>
-                  </section>
-                  <section className="surface">
-                    <SectionTitle
-                      title="Water use this week"
-                      subtitle="Recorded water use over the last seven days."
-                    />
-                    <WaterUseChart
-                      data={Array.from({ length: 7 }, (_, index) => {
-                        const day = new Date();
-                        day.setHours(0, 0, 0, 0);
-                        day.setDate(day.getDate() - 6 + index);
-                        const end = new Date(day);
-                        end.setDate(end.getDate() + 1);
-                        const litres =
-                          data.watering
-                            .filter(
-                              (record) =>
-                                new Date(record.occurred_at) >= day &&
-                                new Date(record.occurred_at) < end,
-                            )
-                            .reduce(
-                              (sum, record) => sum + record.volume_ml,
-                              0,
-                            ) / 1000;
-                        return {
-                          day: day.toLocaleDateString([], { weekday: "short" }),
-                          L: Number(litres.toFixed(2)),
-                        };
-                      })}
-                    />
-                  </section>
-                  <div className="summary-grid">
-                    <Metric
-                      icon={<Droplets />}
-                      label="Total water"
-                      value={`${totalLitres.toFixed(1)} L`}
-                      detail={`${data.watering.length} recorded events`}
-                    />
-                    <Metric
-                      icon={<Sprout />}
-                      label="Harvested batches"
-                      value={String(
-                        data.batches.filter((b) => b.stage === "harvested")
-                          .length,
-                      )}
-                      detail="Recorded harvest stage"
-                    />
-                    <Metric
-                      icon={<CheckCircle2 />}
-                      label="Passed checks"
-                      value={String(
-                        data.evidence.filter((e) => e.result === "passed")
-                          .length,
-                      )}
-                      detail={`${data.evidence.length} evidence records`}
-                    />
-                  </div>
-                  <section className="surface">
-                    <SectionTitle
-                      title="Water use by batch"
-                      action={
-                        <Btn
-                          variant="outline"
-                          disabled={!data.batches.length}
-                          onClick={() => window.print()}
-                        >
-                          <Printer size={16} />
-                          Print report
-                        </Btn>
-                      }
-                    />
-                    <div className="report-goal">
-                      <strong>Report goal</strong>
-                      <p>
-                        Trace water use back to each production batch so an
-                        operator or evaluator can review exceptions with source
-                        records intact.
-                      </p>
-                      <small>
-                        Use the browser print dialog to create a paginated PDF;
-                        enable its headers and footers when page numbers are required.
-                      </small>
-                    </div>
-                    {table(
-                      ["Batch", "Water used", "Events"],
-                      data.batches.map((b) => {
-                        const events = data.watering.filter(
-                          (w) => w.batch_id === b.id,
-                        );
-                        return [
-                          b.code,
-                          `${(events.reduce((sum, w) => sum + w.volume_ml, 0) / 1000).toFixed(2)} L`,
-                          events.length,
-                        ];
-                      }),
-                      "No batch data to report.",
-                    )}
-                    <p className="mt-4 text-xs text-muted-foreground">
-                      Printable views keep the report readable without creating
-                      an uncontrolled data export.
-                    </p>
-                  </section>
-                </>
-              )}
-              {page === "system" && (
-                <>
+              {page === "system" && operator && (
+                <div className="space-y-6">
                   <section className="surface">
                     <SectionTitle
                       title="Sensors & chamber equipment"
                       subtitle="Identify every chamber by its printed serial number and latest heartbeat."
-                      action={
-                        profile.role === "admin" && (
-                          <Btn onClick={() => open({ kind: "device" })}>
-                            <Plus size={16} />
-                            Register equipment
-                          </Btn>
-                        )
-                      }
                     />
                     {table(
                       ["Equipment", "Serial number", "Connection", "Last seen"],
@@ -1096,11 +2573,13 @@ export default function Workspace({
                         d.name,
                         d.serial_number,
                         <Status
+                          key="conn"
                           value={
                             d.status === "online" &&
-                            !d.is_demo &&
-                            (!d.last_seen_at ||
-                              Date.now() - new Date(d.last_seen_at).getTime() >
+                              !d.is_demo &&
+                              (!d.last_seen_at ||
+                                Date.now() -
+                                new Date(d.last_seen_at).getTime() >
                                 300000)
                               ? "offline"
                               : d.status
@@ -1110,10 +2589,6 @@ export default function Workspace({
                       ]),
                       "No equipment linked yet.",
                     )}
-                    <p className="mt-4 text-sm text-muted-foreground">
-                      Registration is handled by Admin IT. Equipment stays
-                      pending until its controller sends a heartbeat.
-                    </p>
                   </section>
                   <section className="surface">
                     <SectionTitle
@@ -1132,267 +2607,159 @@ export default function Workspace({
                         ["Local display", "On-device status and warning message"],
                       ].map(([name, purpose]) => (
                         <div key={name}>
-                          <span className="summary-icon"><Cpu size={18} /></span>
+                          <span className="summary-icon">
+                            <Cpu size={18} />
+                          </span>
                           <strong>{name}</strong>
                           <small>{purpose}</small>
                         </div>
                       ))}
                     </div>
                   </section>
-                </>
-              )}
-              {page === "review" && (
-                <section className="surface">
-                  <SectionTitle
-                    title="Evaluation evidence"
-                    action={
-                      operator && (
-                        <Btn onClick={() => open({ kind: "evidence" })}>
-                          <Plus size={16} />
-                          Record evidence
-                        </Btn>
-                      )
-                    }
-                  />
-                  {table(
-                    [
-                      "Test",
-                      "Category",
-                      "Batch",
-                      "Result",
-                      "Notes",
-                      "Recorded",
-                    ],
-                    data.evidence.map((e) => [
-                      e.title,
-                      e.category.replaceAll("_", " "),
-                      batchName(e.batch_id),
-                      <Status value={e.result} />,
-                      e.notes,
-                      date(e.recorded_at),
-                    ]),
-                    "No evidence has been recorded yet.",
-                  )}
-                </section>
-              )}
-              {page === "system" && profile.role === "admin" && (
-                <section className="surface">
-                  <SectionTitle
-                    title="Admin IT setup"
-                    subtitle="Admin IT registers equipment and provisions operator access."
-                  />
-                  <div className="unavailable-action">
-                    <span>
-                      <strong>Register an operator</strong>
-                      <small>
-                        Account provisioning is not connected yet. This action
-                        will require an invitation, role assignment, and an
-                        auditable acceptance step.
-                      </small>
-                    </span>
-                    <Btn variant="outline" disabled>
-                      Register operator
-                    </Btn>
-                  </div>
-                </section>
-              )}
-              {page === "review" && (
-                <section className="surface">
-                  <SectionTitle
-                    title={
-                      operator ? "Submitted evaluations" : "Your evaluations"
-                    }
-                    action={
-                      !operator && (
+                  <section className="surface">
+                    <SectionTitle
+                      title="Maintenance records"
+                      action={
                         <Btn
-                          disabled={!data.batches.length}
-                          onClick={() => open({ kind: "evaluation" })}
+                          disabled={!data.devices.length}
+                          onClick={() => open({ kind: "maintenance" })}
                         >
                           <Plus size={16} />
-                          Evaluate a batch
+                          Record maintenance
                         </Btn>
-                      )
-                    }
-                  />
-                  <div className="evaluation-guide">
-                    <div>
-                      <p className="role-kicker">Rating basis</p>
-                      <h3>Use the same five-point rubric for every batch</h3>
-                      <div
-                        className="rating-rubric"
-                        aria-label="Evaluation rating guide"
-                      >
-                        {[
-                          [1, "Poor"],
-                          [2, "Fair"],
-                          [3, "Good"],
-                          [4, "Very good"],
-                          [5, "Excellent"],
-                        ].map(([value, label]) => (
-                          <span key={value}>
-                            <strong>{value}</strong>
-                            {label}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="credential-note">
-                      <ShieldCheck size={20} />
-                      <div>
-                        <strong>Evaluator qualification</strong>
-                        <p>
-                          Credential verification is not recorded yet.
-                          Certification requirements must be approved before
-                          this can be treated as verified.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="table-toolbar">
-                    <label className="search-field">
-                      <Search size={17} />
-                      <input
-                        aria-label="Search evaluations"
-                        placeholder="Search batch or observation…"
-                        value={evaluationQuery}
-                        onChange={(event) =>
-                          setEvaluationQuery(event.target.value)
-                        }
-                      />
-                    </label>
-                    <select
-                      className="filter-select"
-                      aria-label="Evaluation batch filter"
-                      value={evaluationBatch}
-                      onChange={(event) =>
-                        setEvaluationBatch(event.target.value)
                       }
-                    >
-                      <option value="all">All operators & batches</option>
-                      {data.batches.map((batch) => (
-                        <option key={batch.id} value={batch.id}>
-                          Operator #{batch.owner_id} · {batch.code}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  {table(
-                    [
-                      "Owner",
-                      "Batch",
-                      "Rating",
-                      "Comments",
-                      "Submitted",
-                      "Details",
-                    ],
-                    evaluationRows.map((evaluation) => {
-                      const batch = data.batches.find(
-                        (item) => item.id === evaluation.batch_id,
-                      );
-                      return [
-                        batch
-                          ? `Operator #${batch.owner_id}`
-                          : "Unknown operator",
-                        <button
-                          className="table-link"
-                          onClick={() =>
-                            batch && open({ kind: "batch-details", batch })
-                          }
+                    />
+                    {table(
+                      ["Device", "Notes", "Performed"],
+                      data.maintenance.map((m) => [
+                        deviceName(m.device_id),
+                        m.notes,
+                        date(m.performed_at),
+                      ]),
+                      "No maintenance records yet.",
+                    )}
+                  </section>
+                  {/* PENDING REQUESTS SECTION FOR OPERATOR */}
+                  <section className="surface">
+                    <SectionTitle
+                      title="Pending Evaluator Requests"
+                      subtitle="Users who requested evaluator access to inspect your chamber batches."
+                      action={
+                        <Btn
+                          variant="outline"
+                          onClick={() => {
+                            fetchAccessRequests()
+                              .then(setAccessRequests)
+                              .catch(console.error);
+                          }}
                         >
-                          {batchName(evaluation.batch_id)}
-                        </button>,
-                        <Rating value={evaluation.rating} />,
-                        evaluation.comments,
-                        date(evaluation.created_at),
-                        <button
-                          className="table-link"
+                          <RefreshCw size={14} /> Refresh
+                        </Btn>
+                      }
+                    />
+                    {table(
+                      ["Requester", "Email", "Requested At", "Actions"],
+                      accessRequests.map((req) => [
+                        req.evaluator_name || "New Evaluator",
+                        req.evaluator_email || "—",
+                        date(req.created_at),
+                        <div key="actions" className="flex items-center gap-2">
+                          <Btn
+                            size="sm"
+                            disabled={busy}
+                            onClick={async () => {
+                              setBusy(true);
+                              try {
+                                await approveAccessRequest(req.id);
+                                setToast(
+                                  "Access request approved. Evaluator can now inspect your batches.",
+                                );
+                                const updatedReqs = await fetchAccessRequests();
+                                setAccessRequests(updatedReqs);
+                                const updatedEvals =
+                                  await fetchOperatorEvaluators();
+                                setOperatorEvaluators(updatedEvals);
+                              } catch (e) {
+                                setToast(errorMessage(e));
+                              } finally {
+                                setBusy(false);
+                              }
+                            }}
+                          >
+                            <CheckCircle2 size={14} /> Approve
+                          </Btn>
+                          <Btn
+                            variant="outline"
+                            size="sm"
+                            disabled={busy}
+                            onClick={async () => {
+                              setBusy(true);
+                              try {
+                                await declineAccessRequest(req.id);
+                                setToast("Access request declined.");
+                                const updatedReqs = await fetchAccessRequests();
+                                setAccessRequests(updatedReqs);
+                              } catch (e) {
+                                setToast(errorMessage(e));
+                              } finally {
+                                setBusy(false);
+                              }
+                            }}
+                          >
+                            <X size={14} /> Decline
+                          </Btn>
+                        </div>,
+                      ]),
+                      "No pending evaluator access requests.",
+                    )}
+                  </section>
+
+                  {/* MY EVALUATORS SECTION */}
+                  <section className="surface">
+                    <SectionTitle
+                      title="My Evaluators"
+                      subtitle="Independent evaluators authorized to inspect your chamber batches."
+                      action={
+                        <Btn onClick={() => open({ kind: "access" })}>
+                          <Plus size={16} />
+                          Grant by Email
+                        </Btn>
+                      }
+                    />
+                    {table(
+                      [
+                        "Evaluator Name",
+                        "Email",
+                        "Status",
+                        "Granted At",
+                        "Actions",
+                      ],
+                      operatorEvaluators.map((ev) => [
+                        ev.display_name || "Unnamed",
+                        ev.email,
+                        <Status
+                          key="status"
+                          value={ev.is_active ? "active" : "offline"}
+                        />,
+                        date(ev.granted_at),
+                        <Btn
+                          key="edit"
+                          variant="outline"
+                          size="sm"
                           onClick={() =>
                             open({
-                              kind: "evaluation-details",
-                              evaluation,
+                              kind: "operator-evaluator-edit",
+                              evaluator: ev,
                             })
                           }
                         >
-                          View <ChevronRight size={14} />
-                        </button>,
-                      ];
-                    }),
-                    "No evaluations submitted yet.",
-                  )}
-                </section>
-              )}
-              {page === "system" && operator && (
-                <section className="surface">
-                  <SectionTitle
-                    title="Maintenance records"
-                    action={
-                      <Btn
-                        disabled={!data.devices.length}
-                        onClick={() => open({ kind: "maintenance" })}
-                      >
-                        <Plus size={16} />
-                        Record maintenance
-                      </Btn>
-                    }
-                  />
-                  {table(
-                    ["Device", "Notes", "Performed"],
-                    data.maintenance.map((m) => [
-                      deviceName(m.device_id),
-                      m.notes,
-                      date(m.performed_at),
-                    ]),
-                    "No maintenance records yet.",
-                  )}
-                </section>
-              )}
-              {page === "system" && (
-                <section className="surface">
-                  <SectionTitle title="Activity log" />
-                  {table(
-                    ["Action", "Record", "Time"],
-                    data.activity.map((a) => [
-                      a.action,
-                      a.resource,
-                      date(a.created_at),
-                    ]),
-                    "No activity has been recorded yet.",
-                  )}
-                </section>
-              )}
-              {page === "system" && operator && (
-                <section className="surface">
-                  <SectionTitle
-                    title="Evaluator access & invitations"
-                    subtitle="Current grants require an existing account. Pre-account invitation delivery is not connected yet."
-                    action={
-                      <Btn onClick={() => open({ kind: "access" })}>
-                        <Plus size={16} />
-                        Grant existing account
-                      </Btn>
-                    }
-                  />
-                  {table(
-                    ["Evaluator email", "Granted"],
-                    data.access.map((a) => [
-                      a.evaluator_email,
-                      date(a.created_at),
-                    ]),
-                    "No evaluator access has been granted.",
-                  )}
-                  <div className="unavailable-action mt-4">
-                    <span>
-                      <strong>Invite before account creation</strong>
-                      <small>
-                        This will become available after invitation delivery and
-                        acceptance tracking are implemented.
-                      </small>
-                    </span>
-                    <Btn variant="outline" disabled>
-                      Send invitation
-                    </Btn>
-                  </div>
-                </section>
+                          Edit Name/Email
+                        </Btn>,
+                      ]),
+                      "No evaluators linked to your chambers yet.",
+                    )}
+                  </section>
+                </div>
               )}
               {page === "settings" && (
                 <div className="grid gap-5 xl:grid-cols-2">
@@ -1443,7 +2810,7 @@ export default function Workspace({
         </main>
       </div>
       <nav className="mobile-bottom-nav" aria-label="Mobile navigation">
-        {pages.slice(0, 4).map((item) => (
+        {nav.slice(0, 4).map((item) => (
           <button
             key={item.key}
             aria-current={page === item.key ? "page" : undefined}
@@ -1453,10 +2820,12 @@ export default function Workspace({
             <span>{item.title === "Overview" ? "Home" : item.title}</span>
           </button>
         ))}
-        <button aria-expanded={menu} onClick={() => setMenu(true)}>
-          <MoreHorizontal size={21} />
-          <span>More</span>
-        </button>
+        {nav.length > 4 && (
+          <button aria-expanded={menu} onClick={() => setMenu(true)}>
+            <MoreHorizontal size={21} />
+            <span>More</span>
+          </button>
+        )}
       </nav>
       <Modal
         open={menu}
@@ -1493,25 +2862,35 @@ export default function Workspace({
           dialog?.kind === "signout"
             ? "Are you sure you want to sign out?"
             : dialog?.kind === "batch-details"
-              ? dialog.batch!.code
+              ? `Inspect Batch · ${dialog.batch!.code}`
               : dialog?.kind === "evaluation-details"
                 ? `Evaluation · ${batchName(dialog.evaluation!.batch_id)}`
-              : dialog?.kind === "alert"
-                ? dialog.alert!.title
-                : ({
-                    "batch-create": "Create batch",
-                    device: "Add device",
-                    schedule: "Add irrigation schedule",
-                    evidence: "Record evidence",
-                    evaluation: "Evaluate batch",
-                    maintenance: "Record maintenance",
-                    access: "Grant evaluator access",
-                    notifications: "Notifications",
-                    help: "Help & FAQ",
-                    support: "Request support",
-                    "incident-report": "Report current situation",
-                    readings: "Sensor history",
-                  }[dialog?.kind ?? ""] ?? "")
+                : dialog?.kind === "alert"
+                  ? dialog.alert!.title
+                  : dialog?.kind === "superadmin-account-edit"
+                    ? `Edit User Account · ${dialog.account?.display_name || dialog.account?.email}`
+                    : dialog?.kind === "superadmin-account-delete"
+                      ? `Delete User Account · ${dialog.account?.display_name || dialog.account?.email}`
+                      : dialog?.kind === "superadmin-grant-serial"
+                        ? "Grant Hardware Chamber Serial ID to Operator"
+                        : dialog?.kind === "superadmin-assign-evaluator"
+                          ? "Assign Evaluator to Operator"
+                          : dialog?.kind === "operator-evaluator-edit"
+                            ? `Edit Evaluator Details · ${dialog.evaluator?.display_name || dialog.evaluator?.email}`
+                            : ({
+                              "batch-create": "Create batch",
+                              device: "Add device",
+                              schedule: "Add irrigation schedule",
+                              evidence: "Record evidence",
+                              evaluation: "Evaluate batch",
+                              maintenance: "Record maintenance",
+                              access: "Grant evaluator access",
+                              notifications: "Notifications",
+                              help: "Help & FAQ",
+                              support: "Request support",
+                              "incident-report": "Report current situation",
+                              readings: "Sensor history",
+                            }[dialog?.kind ?? ""] ?? "")
         }
       >
         {dialogError && (
@@ -1820,65 +3199,592 @@ export default function Workspace({
           </div>
         )}
         {dialog?.kind === "batch-details" && (
-          <div className="space-y-4">
-            <dl className="detail-grid">
-              {[
-                ["Crop", dialog.batch!.seed_type],
-                ["Stage", dialog.batch!.stage],
-                ["Status", dialog.batch!.status],
-                ["Started", date(dialog.batch!.started_at)],
-                ["Target harvest", date(dialog.batch!.target_harvest_at)],
-                ["Notes", dialog.batch!.notes || "No notes"],
-              ].map(([label, value]) => (
-                <div key={label}>
-                  <dt>{label}</dt>
-                  <dd>{value}</dd>
+          <div className="space-y-6">
+            {/* 1. Header Summary */}
+            <div className="rounded-2xl border border-border/80 bg-secondary/30 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                <div className="flex items-center gap-3">
+                  <span className="text-xl font-bold text-foreground">
+                    {dialog.batch!.code}
+                  </span>
+                  <Status value={dialog.batch!.stage} />
+                  <Status value={dialog.batch!.status} />
                 </div>
-              ))}
-            </dl>
-            {operator && dialog.batch!.status === "active" && (
-              <RecordForm
-                busy={busy}
-                submitLabel="Save batch"
-                fields={[
-                  {
-                    name: "stage",
-                    label: "Growth stage",
-                    options: stages.map((s) => [s, s]),
-                    value: dialog.batch!.stage,
-                  },
-                  {
-                    name: "notes",
-                    label: "Notes",
-                    type: "textarea",
-                    required: false,
-                    value: dialog.batch!.notes ?? "",
-                  },
-                  {
-                    name: "status",
-                    label: "Status",
-                    options: [
-                      ["active", "Active"],
-                      ["archived", "Archived"],
-                    ],
-                    value: dialog.batch!.status,
-                  },
-                ]}
-                onSubmit={(values) =>
-                  mutate(
-                    () =>
-                      supabase
-                        .from("batches")
-                        .update(values)
-                        .eq("id", dialog.batch!.id)
-                        .select()
-                        .single(),
-                    "Batch updated.",
-                  )
+                <div className="text-xs text-muted-foreground">
+                  Owner: <strong>Operator #{dialog.batch!.owner_id}</strong>
+                </div>
+              </div>
+              <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div>
+                  <dt className="text-muted-foreground">Crop / Seed</dt>
+                  <dd className="font-semibold text-foreground">
+                    {dialog.batch!.seed_type}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Started</dt>
+                  <dd className="font-semibold text-foreground">
+                    {date(dialog.batch!.started_at)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Target Harvest</dt>
+                  <dd className="font-semibold text-foreground">
+                    {date(dialog.batch!.target_harvest_at)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Average Rating</dt>
+                  <dd className="font-semibold text-foreground">
+                    {(() => {
+                      const bEvals = data.evaluations.filter(
+                        (e) => e.batch_id === dialog.batch!.id,
+                      );
+                      if (!bEvals.length) return "Unrated";
+                      const avg = Math.round(
+                        bEvals.reduce((s, e) => s + e.rating, 0) / bEvals.length,
+                      );
+                      return `${avg}/5 ★ (${bEvals.length})`;
+                    })()}
+                  </dd>
+                </div>
+              </dl>
+              {dialog.batch!.notes && (
+                <p className="mt-3 text-xs text-muted-foreground bg-card/60 p-2.5 rounded-xl border border-border/40">
+                  <strong>Notes:</strong> {dialog.batch!.notes}
+                </p>
+              )}
+            </div>
+
+            {/* 2. Latest Chamber Telemetry Snapshot */}
+            <div>
+              <h3 className="text-sm font-bold text-foreground mb-2 flex items-center gap-2">
+                <Activity size={16} className="text-primary" />
+                Current Chamber Environment
+              </h3>
+              {currentReading ? (
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center">
+                  <div className="p-2.5 rounded-xl bg-card border border-border/80">
+                    <span className="block text-xs text-muted-foreground">
+                      Air Temp
+                    </span>
+                    <strong className="text-sm text-foreground">
+                      {currentReading.temperature_c ?? "—"} °C
+                    </strong>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-card border border-border/80">
+                    <span className="block text-xs text-muted-foreground">
+                      Humidity
+                    </span>
+                    <strong className="text-sm text-foreground">
+                      {currentReading.humidity_percent ?? "—"} %
+                    </strong>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-card border border-border/80">
+                    <span className="block text-xs text-muted-foreground">
+                      Fresh Water
+                    </span>
+                    <strong className="text-sm text-foreground">
+                      {currentReading.water_level_percent ?? "—"} %
+                    </strong>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-card border border-border/80">
+                    <span className="block text-xs text-muted-foreground">
+                      Water Temp
+                    </span>
+                    <strong className="text-sm text-foreground">
+                      {currentReading.water_temperature_c ?? "—"} °C
+                    </strong>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-card border border-border/80">
+                    <span className="block text-xs text-muted-foreground">
+                      Light Level
+                    </span>
+                    <strong className="text-sm text-foreground">
+                      {currentReading.light_lux ?? "—"} lux
+                    </strong>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-card border border-border/80">
+                    <span className="block text-xs text-muted-foreground">
+                      Wastewater
+                    </span>
+                    <strong className="text-sm text-foreground">
+                      {currentReading.wastewater_level_percent ?? "—"} %
+                    </strong>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  No telemetry recorded for this batch's chamber yet.
+                </p>
+              )}
+            </div>
+
+            {/* 3. Watering History for this Batch */}
+            <div>
+              <h3 className="text-sm font-bold text-foreground mb-2 flex items-center gap-2">
+                <Droplets size={16} className="text-blue-500" />
+                Irrigation Delivered to {dialog.batch!.code}
+              </h3>
+              {(() => {
+                const batchWatering = data.watering.filter(
+                  (w) => w.batch_id === dialog.batch!.id,
+                );
+                if (!batchWatering.length) {
+                  return (
+                    <p className="text-xs text-muted-foreground">
+                      No watering events logged for this batch.
+                    </p>
+                  );
                 }
-              />
+                return (
+                  <div className="rounded-xl border border-border/80 overflow-hidden">
+                    <table className="record-table text-xs">
+                      <thead>
+                        <tr>
+                          <th>Volume</th>
+                          <th>Duration</th>
+                          <th>Time</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {batchWatering.slice(0, 5).map((w) => (
+                          <tr key={w.id}>
+                            <td>{(w.volume_ml / 1000).toFixed(2)} L</td>
+                            <td>{w.duration_seconds}s</td>
+                            <td>{date(w.occurred_at)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* 4. Acceptance Evidence for this Batch */}
+            <div>
+              <h3 className="text-sm font-bold text-foreground mb-2 flex items-center gap-2">
+                <CheckCircle2 size={16} className="text-emerald-500" />
+                Evidence & Verification Checks
+              </h3>
+              {(() => {
+                const batchEvidence = data.evidence.filter(
+                  (e) => e.batch_id === dialog.batch!.id,
+                );
+                if (!batchEvidence.length) {
+                  return (
+                    <p className="text-xs text-muted-foreground">
+                      No evidence records logged for this batch.
+                    </p>
+                  );
+                }
+                return (
+                  <div className="rounded-xl border border-border/80 overflow-hidden">
+                    <table className="record-table text-xs">
+                      <thead>
+                        <tr>
+                          <th>Test</th>
+                          <th>Category</th>
+                          <th>Result</th>
+                          <th>Notes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {batchEvidence.map((e) => (
+                          <tr key={e.id}>
+                            <td>
+                              <strong>{e.title}</strong>
+                            </td>
+                            <td>{e.category.replaceAll("_", " ")}</td>
+                            <td>
+                              <Status value={e.result} />
+                            </td>
+                            <td>{e.notes}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* 5. Evaluations & Quality Ratings */}
+            <div>
+              <h3 className="text-sm font-bold text-foreground mb-2 flex items-center gap-2">
+                <Star size={16} className="text-amber-500" />
+                Human Quality Evaluations
+              </h3>
+              {(() => {
+                const batchEvals = data.evaluations.filter(
+                  (e) => e.batch_id === dialog.batch!.id,
+                );
+                return (
+                  <div className="space-y-3">
+                    {batchEvals.length > 0 ? (
+                      batchEvals.map((ev) => (
+                        <div
+                          key={ev.id}
+                          className="p-3 rounded-xl bg-card border border-border/80 text-xs space-y-1"
+                        >
+                          <div className="flex items-center justify-between">
+                            <Rating value={ev.rating} />
+                            <span className="text-muted-foreground">
+                              {date(ev.created_at)}
+                            </span>
+                          </div>
+                          <p className="text-foreground">{ev.comments}</p>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        No evaluations have been submitted for this batch yet.
+                      </p>
+                    )}
+
+                    {evaluator && (
+                      <div className="pt-3 border-t border-border/60">
+                        <Btn
+                          variant="outline"
+                          className="w-full text-xs"
+                          onClick={() =>
+                            open({
+                              kind: "evaluation",
+                              batch_id: dialog.batch!.id,
+                            })
+                          }
+                        >
+                          <Star size={14} className="text-amber-500" />
+                          Submit New Evaluation for {dialog.batch!.code}
+                        </Btn>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* If Operator: stage / status update form */}
+            {operator && dialog.batch!.status === "active" && (
+              <div className="pt-4 border-t border-border/80">
+                <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">
+                  Update Batch Lifecycle
+                </h4>
+                <RecordForm
+                  busy={busy}
+                  submitLabel="Save batch changes"
+                  fields={[
+                    {
+                      name: "stage",
+                      label: "Growth stage",
+                      options: stages.map((s) => [s, s]),
+                      value: dialog.batch!.stage,
+                    },
+                    {
+                      name: "notes",
+                      label: "Notes",
+                      type: "textarea",
+                      required: false,
+                      value: dialog.batch!.notes ?? "",
+                    },
+                    {
+                      name: "status",
+                      label: "Status",
+                      options: [
+                        ["active", "Active"],
+                        ["archived", "Archived"],
+                      ],
+                      value: dialog.batch!.status,
+                    },
+                  ]}
+                  onSubmit={(values) =>
+                    mutate(
+                      () =>
+                        supabase
+                          .from("batches")
+                          .update(values)
+                          .eq("id", dialog.batch!.id)
+                          .select()
+                          .single(),
+                      "Batch updated.",
+                    )
+                  }
+                />
+              </div>
             )}
           </div>
+        )}
+        {dialog?.kind === "superadmin-account-edit" && dialog.account && (
+          <RecordForm
+            busy={busy}
+            submitLabel="Update Account"
+            fields={[
+              {
+                name: "first_name",
+                label: "First Name",
+                value: dialog.account.first_name || "",
+              },
+              {
+                name: "last_name",
+                label: "Last Name",
+                value: dialog.account.last_name || "",
+              },
+              {
+                name: "email",
+                label: "Email Address",
+                value: dialog.account.email,
+              },
+              {
+                name: "role",
+                label: "User Role",
+                options: [
+                  ["pending", "Pending"],
+                  ["operator", "Operator"],
+                  ["evaluator", "Evaluator"],
+                  ["superadmin", "Superadmin"],
+                ],
+                value: dialog.account.role,
+              },
+              {
+                name: "organization",
+                label: "Organization / Facility",
+                required: false,
+                value: dialog.account.organization || "",
+              },
+              {
+                name: "phone",
+                label: "Phone Number",
+                required: false,
+                value: dialog.account.phone || "",
+              },
+            ]}
+            onSubmit={async (values) => {
+              setBusy(true);
+              try {
+                await updateAccount(dialog.account!.id, {
+                  first_name: values.first_name,
+                  last_name: values.last_name,
+                  email: values.email,
+                  role: values.role,
+                  organization: values.organization,
+                  phone: values.phone,
+                });
+                const updatedAccounts = await fetchAccounts();
+                setAccounts(updatedAccounts);
+                setToast("Account updated successfully.");
+                close();
+              } catch (e) {
+                setDialogError(errorMessage(e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          />
+        )}
+        {dialog?.kind === "superadmin-account-delete" && dialog.account && (() => {
+          const isSelf = dialog.account.id === profile.id;
+          const isLastSuperadmin =
+            (dialog.account.role === "superadmin" || dialog.account.role === "admin") &&
+            accounts.filter((a) => a.role === "superadmin" || a.role === "admin").length <= 1;
+          const cannotDelete = isSelf || isLastSuperadmin;
+
+          return (
+            <div className="space-y-4 pt-2">
+              <div className="p-4 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive flex items-start gap-3">
+                <AlertTriangle size={20} className="shrink-0 mt-0.5" />
+                <div className="text-sm">
+                  <p className="font-semibold">
+                    Are you sure you want to delete {dialog.account.display_name || dialog.account.email}?
+                  </p>
+                  <p className="mt-1 text-xs opacity-90 leading-relaxed">
+                    This will permanently remove account #{dialog.account.id} ({dialog.account.role}),
+                    revoke all associated chamber allocations, unlink evaluator permissions, and purge
+                    pending requests. This action is audited and cannot be undone.
+                  </p>
+                </div>
+              </div>
+
+              {isSelf && (
+                <div className="p-3 rounded-lg bg-secondary text-xs text-muted-foreground flex items-center gap-2">
+                  <span className="font-semibold text-amber-500">Notice:</span> You cannot delete your own active superadmin account.
+                </div>
+              )}
+
+              {!isSelf && isLastSuperadmin && (
+                <div className="p-3 rounded-lg bg-secondary text-xs text-muted-foreground flex items-center gap-2">
+                  <span className="font-semibold text-amber-500">Notice:</span> Cannot delete the sole remaining superadmin account in the system.
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-border/60">
+                <Btn disabled={busy} variant="outline" onClick={close}>
+                  Cancel
+                </Btn>
+                <button
+                  type="button"
+                  disabled={busy || cannotDelete}
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      await deleteAccount(dialog.account!.id);
+                      setAccounts((prev) => prev.filter((a) => a.id !== dialog.account!.id));
+                      setToast("Account deleted successfully.");
+                      close();
+                    } catch (e) {
+                      setDialogError(errorMessage(e));
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold bg-destructive text-destructive-foreground hover:bg-destructive/90 disabled:opacity-40 transition-colors"
+                >
+                  {busy ? "Deleting..." : "Delete Account"}
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+        {dialog?.kind === "superadmin-grant-serial" && (
+          <RecordForm
+            busy={busy}
+            submitLabel="Grant Serial ID"
+            fields={[
+              {
+                name: "operator_id",
+                label: "Assign to Operator",
+                options: accounts
+                  .filter((a) => a.role === "operator")
+                  .map((a) => [
+                    String(a.id),
+                    `${a.display_name || a.email} (ID #${a.id})`,
+                  ]),
+                value: dialog.operator_id ? String(dialog.operator_id) : undefined,
+              },
+              {
+                name: "serial_number",
+                label: "Printed Hardware Serial Number",
+                placeholder: "e.g. SS-CHAMBER-0001",
+              },
+              {
+                name: "name",
+                label: "Chamber Name / Equipment Label",
+                placeholder: "e.g. Primary Production Chamber",
+              },
+            ]}
+            onSubmit={async (values) => {
+              setBusy(true);
+              try {
+                await grantDeviceSerial({
+                  operator_id: Number(values.operator_id),
+                  serial_number: values.serial_number.trim().toUpperCase(),
+                  name: values.name.trim(),
+                });
+                await reload();
+                const updatedAccounts = await fetchAccounts();
+                setAccounts(updatedAccounts);
+                setToast("Chamber serial ID granted to operator.");
+                close();
+              } catch (e) {
+                setDialogError(errorMessage(e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          />
+        )}
+        {dialog?.kind === "superadmin-assign-evaluator" && (
+          <RecordForm
+            busy={busy}
+            submitLabel="Assign Evaluator"
+            fields={[
+              {
+                name: "evaluator_id",
+                label: "Evaluator Account",
+                options: accounts
+                  .filter((a) => a.role === "evaluator" || a.role === "pending")
+                  .map((a) => [
+                    String(a.id),
+                    `${a.display_name || a.email} (ID #${a.id} · ${a.role})`,
+                  ]),
+                value: dialog.evaluator_id ? String(dialog.evaluator_id) : undefined,
+              },
+              {
+                name: "operator_id",
+                label: "Target Operator",
+                options: accounts
+                  .filter((a) => a.role === "operator")
+                  .map((a) => [
+                    String(a.id),
+                    `${a.display_name || a.email} (ID #${a.id})`,
+                  ]),
+                value: dialog.operator_id ? String(dialog.operator_id) : undefined,
+              },
+            ]}
+            onSubmit={async (values) => {
+              setBusy(true);
+              try {
+                await assignEvaluator({
+                  evaluator_id: Number(values.evaluator_id),
+                  operator_id: Number(values.operator_id),
+                });
+                await reload();
+                const updatedAccounts = await fetchAccounts();
+                setAccounts(updatedAccounts);
+                setToast("Evaluator assigned to operator successfully.");
+                close();
+              } catch (e) {
+                setDialogError(errorMessage(e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          />
+        )}
+        {dialog?.kind === "operator-evaluator-edit" && dialog.evaluator && (
+          <RecordForm
+            busy={busy}
+            submitLabel="Update Evaluator"
+            fields={[
+              {
+                name: "first_name",
+                label: "First Name",
+                value: dialog.evaluator.first_name || "",
+              },
+              {
+                name: "last_name",
+                label: "Last Name",
+                value: dialog.evaluator.last_name || "",
+              },
+              {
+                name: "email",
+                label: "Email Address",
+                value: dialog.evaluator.email,
+              },
+            ]}
+            onSubmit={async (values) => {
+              setBusy(true);
+              try {
+                await updateOperatorEvaluator(dialog.evaluator!.id, {
+                  first_name: values.first_name,
+                  last_name: values.last_name,
+                  email: values.email,
+                });
+                const [evals, updatedAccounts] = await Promise.all([
+                  fetchOperatorEvaluators(),
+                  fetchAccounts().catch(() => []),
+                ]);
+                setOperatorEvaluators(evals);
+                if (updatedAccounts.length) setAccounts(updatedAccounts);
+                setToast("Evaluator details updated successfully.");
+                close();
+              } catch (e) {
+                setDialogError(errorMessage(e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          />
         )}
         {dialog &&
           [
@@ -1893,7 +3799,7 @@ export default function Workspace({
             <RecordForm
               key={dialog.kind}
               busy={busy}
-              fields={formFields(dialog.kind, data)}
+              fields={formFields(dialog.kind, data, dialog.batch_id)}
               onSubmit={async (values) => {
                 const payload: Record<string, unknown> = {
                   ...values,
@@ -1922,7 +3828,7 @@ export default function Workspace({
                   if (
                     payload.target_harvest_at &&
                     String(payload.target_harvest_at) <
-                      String(payload.started_at)
+                    String(payload.started_at)
                   ) {
                     setDialogError(
                       "Harvest date must be after the start date.",
@@ -2018,12 +3924,38 @@ function Metric({
   label,
   value,
   detail,
+  onClick,
+  targetLabel,
 }: {
   icon: ReactNode;
   label: string;
   value: string;
   detail: string;
+  onClick?: () => void;
+  targetLabel?: string;
 }) {
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="summary-card summary-card-interactive group relative"
+        aria-label={`${label}: ${value}. ${detail}${targetLabel ? `. Click to open ${targetLabel}` : ""}`}
+      >
+        <div className="flex items-start justify-between">
+          <span className="summary-icon">{icon}</span>
+          <ChevronRight
+            size={16}
+            className="text-muted-foreground opacity-30 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all mt-1"
+            aria-hidden="true"
+          />
+        </div>
+        <p>{label}</p>
+        <strong>{value}</strong>
+        <small>{detail}</small>
+      </button>
+    );
+  }
   return (
     <section className="summary-card">
       <span className="summary-icon">{icon}</span>
@@ -2144,6 +4076,7 @@ type Field = {
   required?: boolean;
   options?: string[][];
   value?: string;
+  placeholder?: string;
   min?: number;
   max?: number;
 };
@@ -2201,38 +4134,39 @@ function RecordForm({
             <label className="field" key={f.name}>
               {f.label}
               {f.options ? (
-              <select
-                name={f.name}
-                required={f.required !== false}
-                defaultValue={f.value ?? ""}
-              >
-                <option value="" disabled={f.required !== false}>
-                  Select…
-                </option>
-                {f.options.map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
+                <select
+                  name={f.name}
+                  required={f.required !== false}
+                  defaultValue={f.value ?? ""}
+                >
+                  <option value="" disabled={f.required !== false}>
+                    Select…
                   </option>
-                ))}
-              </select>
-            ) : f.type === "textarea" ? (
-              <textarea
-                name={f.name}
-                rows={3}
-                maxLength={2000}
-                required={f.required !== false}
-                defaultValue={f.value}
-              />
-            ) : (
-              <input
-                name={f.name}
-                type={f.type ?? "text"}
-                required={f.required !== false}
-                defaultValue={f.value}
-                min={f.min}
-                max={f.max}
-                maxLength={f.name === "code" ? 64 : 120}
-              />
+                  {f.options.map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              ) : f.type === "textarea" ? (
+                <textarea
+                  name={f.name}
+                  rows={3}
+                  maxLength={2000}
+                  required={f.required !== false}
+                  defaultValue={f.value}
+                />
+              ) : (
+                <input
+                  name={f.name}
+                  type={f.type ?? "text"}
+                  required={f.required !== false}
+                  defaultValue={f.value}
+                  placeholder={f.placeholder}
+                  min={f.min}
+                  max={f.max}
+                  maxLength={f.name === "code" ? 64 : 120}
+                />
               )}
             </label>
           ),
@@ -2249,7 +4183,11 @@ function RecordForm({
     </form>
   );
 }
-function formFields(kind: string, data: WorkspaceData): Field[] {
+function formFields(
+  kind: string,
+  data: WorkspaceData,
+  defaultBatchId?: number,
+): Field[] {
   const device: Field = {
     name: "device_id",
     label: "Device",
@@ -2259,6 +4197,7 @@ function formFields(kind: string, data: WorkspaceData): Field[] {
     name: "batch_id",
     label: "Batch",
     options: data.batches.map((b) => [String(b.id), b.code]),
+    value: defaultBatchId ? String(defaultBatchId) : undefined,
   };
   const notes: Field = { name: "notes", label: "Notes", type: "textarea" };
   return (
@@ -2396,24 +4335,24 @@ function Preferences({
       )}
       {values
         ? (["alerts_enabled", "harvest_enabled"] as const).map((key) => (
-            <label
-              key={key}
-              className="flex items-center justify-between gap-3 text-sm"
-            >
-              <span>
-                {key === "alerts_enabled"
-                  ? "In-app alert notifications"
-                  : "Harvest notifications"}
-              </span>
-              <input
-                type="checkbox"
-                checked={values[key]}
-                disabled={busy}
-                onChange={() => void toggle(key)}
-                className="h-5 w-5 accent-emerald-600"
-              />
-            </label>
-          ))
+          <label
+            key={key}
+            className="flex items-center justify-between gap-3 text-sm"
+          >
+            <span>
+              {key === "alerts_enabled"
+                ? "In-app alert notifications"
+                : "Harvest notifications"}
+            </span>
+            <input
+              type="checkbox"
+              checked={values[key]}
+              disabled={busy}
+              onChange={() => void toggle(key)}
+              className="h-5 w-5 accent-emerald-600"
+            />
+          </label>
+        ))
         : !error && <p>Loading preferences…</p>}
       <p className="text-xs text-muted-foreground">
         Preferences are saved to your account. Alert history is always

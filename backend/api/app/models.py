@@ -22,7 +22,7 @@ class User(Base):
     organization: Mapped[str] = mapped_column(String(160), default="", server_default="")
     phone: Mapped[str] = mapped_column(String(40), default="", server_default="")
     avatar_url: Mapped[str | None] = mapped_column(String(1000))
-    role: Mapped[str] = mapped_column(String(32), default="evaluator", server_default="evaluator")
+    role: Mapped[str] = mapped_column(String(32), default="pending", server_default="pending")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     profile_complete: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     registration_provider: Mapped[str] = mapped_column(String(32), default="email", server_default="email")
@@ -98,10 +98,24 @@ class EvaluatorAccess(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    evaluator_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True, nullable=True)
     evaluator_email: Mapped[str] = mapped_column(String(320), index=True)
     granted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AccessRequest(Base):
+    """Request from a pending user to join an operator's workspace."""
+
+    __tablename__ = "access_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    evaluator_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    operator_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending", server_default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ActivityLog(Base):
