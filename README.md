@@ -2,38 +2,20 @@
 
 IoT-based mung bean sprout production, monitoring, and water-use optimization.
 
-## Setup after cloning
+## Quick start
 
-Follow **[SETUP.md](SETUP.md)** for Windows, macOS, and Linux prerequisites,
-Supabase configuration, Docker/native startup, validation, mobile/firmware tools,
-and fixes for the reported container, proxy, migration, and environment errors.
+Follow **[SETUP.md](SETUP.md)** for the three-step first-time setup.
+Once your Python environment and `.env` are configured, start from one
+PowerShell terminal:
 
-The current application requires a matching Supabase Auth/PostgREST/database
-project. Plain PostgreSQL alone cannot run the workspace migrations or browser
-RPCs. Use a dedicated hosted development project or a full local Supabase stack.
-
-After installing Node 22.12+ and Docker with Compose, create the root `.env` from
-[.env.example](.env.example) and fill its five required values. Preserve an
-existing configured `.env`. Then run from the repository root:
-
-```sh
-npm ci
-npm run check:setup -- --docker
-docker compose up --build --wait --wait-timeout 120 api
-npm run dev
+```powershell
+.\start.bat -Backend Native
 ```
 
-On PowerShell use `npm.cmd`. Windows users can run `start.bat` after filling
-`.env`; it installs locked npm dependencies and waits for API startup.
-Open http://localhost:5173 and http://localhost:8000/docs.
-
-For native Python development, create a Python 3.12 virtual environment and run
-`python -m pip install -r requirements.txt` using its interpreter at the repo
-root. This installs the API, pytest, Ruff, and image utility dependency from
-[pyproject.toml](backend/api/pyproject.toml). Follow SETUP.md to check the database,
-apply migrations, and start Uvicorn. Optional ESP32 build dependencies are in
-[requirements-firmware.txt](requirements-firmware.txt). npm and Flutter packages
-use their own manifests; pip does not install system runtimes or those packages.
+Open **http://localhost:5173**. Press **Ctrl+C** to stop.
+This Windows workflow uses hosted Supabase and does not require Docker.
+For Docker, macOS/Linux, optional tools, and troubleshooting, see the
+[advanced setup reference](docs/setup-reference.md).
 
 ## Repository layout
 

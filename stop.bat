@@ -1,13 +1,5 @@
 @echo off
-title SproutSync Shutdown
+setlocal
 cd /d "%~dp0"
-
-echo ===================================================
-echo               SproutSync Shutdown
-echo ===================================================
-echo.
-echo [INFO] Stopping Docker containers...
-docker compose down
-echo.
-echo [SUCCESS] Backend services stopped.
-timeout /t 3 >nul
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\stop-dev.ps1"
+exit /b %errorlevel%

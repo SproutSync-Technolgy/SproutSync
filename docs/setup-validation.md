@@ -50,6 +50,14 @@ The local ignored `.env` was supplemented with missing documented optional keys
 and the frontend origin. Existing database and Supabase credentials were preserved.
 See **[SETUP.md](../SETUP.md)** for current instructions.
 
+Subsequent Windows launcher repair: `start.bat -Check` selects the native Python
+API when Docker is absent and passes environment plus read-only database checks.
+`scripts/test-native-launcher.ps1` verified real API health, auth HTTP 401, and
+cleanup after both dashboard completion and failure on a separate free port,
+using an in-memory test database. No hosted migrations were applied. The launcher
+now supports `-Backend Native` and `-Backend Docker`; native mode runs API and
+dashboard from one terminal and cleans up its API process on exit.
+
 ---
 
 The following is historical evidence from the initial scaffold, not current
