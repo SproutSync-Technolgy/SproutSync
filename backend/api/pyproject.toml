@@ -18,7 +18,7 @@ dependencies = [
   "zeroconf>=0.148,<1"
 ]
 [project.optional-dependencies]
-dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
+dev = ["pytest>=9.1.1,<10", "ruff>=0.11,<1"]
 tools = ["Pillow>=11,<13"]
 [tool.setuptools.packages.find]
 include = ["app*"]
