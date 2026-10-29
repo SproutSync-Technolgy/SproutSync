@@ -12,10 +12,27 @@ type BluetoothDevice = {
 type BluetoothNavigator = Navigator & { bluetooth?: { requestDevice: (options: { filters: { services: string[] }[] }) => Promise<BluetoothDevice> } };
 
 async function checkedJson<T>(response: Response): Promise<T> {
+  const contentType = response.headers.get("content-type") || "";
+  const isJson = contentType.includes("application/json");
+
   if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    throw new Error(typeof body?.detail === "string" ? body.detail : "Device discovery is unavailable. Check the API and try again.");
+    if (isJson) {
+      const body = await response.json().catch(() => null);
+      throw new Error(typeof body?.detail === "string" ? body.detail : "Device discovery is unavailable. Check the API and try again.");
+    }
+    throw new Error(
+      response.status === 404
+        ? "Wi-Fi discovery requires the local SproutSync backend. On cloud deployments (like Vercel), use Search Bluetooth instead."
+        : `Device discovery service returned HTTP ${response.status}.`
+    );
   }
+
+  if (!isJson) {
+    throw new Error(
+      "Wi-Fi discovery requires the local SproutSync backend. On cloud deployments (like Vercel), use Search Bluetooth instead."
+    );
+  }
+
   return response.json() as Promise<T>;
 }
 

@@ -1,6 +1,7 @@
 /** Browser-safe configuration only. Never import server secrets here. */
 export const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL ?? '').trim();
 export const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY ?? '').trim();
+export const apiUrl = (import.meta.env.VITE_API_URL ?? '').trim().replace(/\/$/, '');
 
 export function configurationError(): string | null {
   if (!supabaseUrl || !supabaseAnonKey) {

@@ -614,6 +614,19 @@ export async function deleteAccount(
   }
 }
 
+async function parseJsonResponse<T>(res: Response, fallbackMessage = "Request failed"): Promise<T> {
+  const contentType = res.headers.get("content-type") || "";
+  const isJson = contentType.includes("application/json");
+  if (!res.ok) {
+    const body = isJson ? await res.json().catch(() => null) : null;
+    throw new Error(typeof body?.detail === "string" ? body.detail : fallbackMessage);
+  }
+  if (!isJson) {
+    throw new Error("Backend API unreachable (received HTML instead of JSON).");
+  }
+  return res.json() as Promise<T>;
+}
+
 export async function grantDeviceSerial(payload: {
   operator_id: number;
   serial_number: string;
@@ -624,11 +637,7 @@ export async function grantDeviceSerial(payload: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    throw new Error(typeof body?.detail === "string" ? body.detail : "The device serial could not be granted. Please try again.");
-  }
-  return res.json();
+  return parseJsonResponse(res, "The device serial could not be granted. Please try again.");
 }
 
 export async function assignEvaluator(
@@ -817,11 +826,5 @@ export async function requestOperatorAccess(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ operator_email }),
   });
-  if (!res.ok) {
-    const err = await res
-      .json()
-      .catch(() => ({ detail: "Failed to request operator access" }));
-    throw new Error(err.detail || "Failed to request operator access");
-  }
-  return res.json();
+  return parseJsonResponse<AccessRequest>(res, "Failed to request operator access");
 }

@@ -46,7 +46,7 @@ export function DeviceConnectionForm({ devices, mqtt, liveError, onSaved, onDone
     Date.parse(latest.last_seen_at) >= Date.parse(waiting.connection_requested_at) &&
     ["online", "fault"].includes(latest.status) && !liveError && mqtt?.connected);
 
-  async function searchWifi() {
+  async function searchWifi(manual = false) {
     wifiRequest.current?.abort();
     const controller = new AbortController();
     wifiRequest.current = controller;
@@ -58,14 +58,16 @@ export function DeviceConnectionForm({ devices, mqtt, liveError, onSaved, onDone
       if (controller.signal.aborted) return;
       setNearby((current) => [...new Map([...current.filter((d) => d.transport === "bluetooth"), ...found].map((d) => [d.serial_number, d])).values()]);
     } catch (err) {
-      if (wifiRequest.current === controller) setWifiError(controller.signal.aborted ? "Wi-Fi search timed out. Check the API and local network, then search again." : errorMessage(err));
+      if (wifiRequest.current === controller && manual) {
+        setWifiError(controller.signal.aborted ? "Wi-Fi search timed out. Check the API and local network, then search again." : errorMessage(err));
+      }
     } finally {
       clearTimeout(timer);
       if (wifiRequest.current === controller) setWifiBusy(false);
     }
   }
   useEffect(() => {
-    void searchWifi();
+    void searchWifi(false);
     return () => {
       const wifi = wifiRequest.current;
       wifiRequest.current = null;
@@ -108,7 +110,7 @@ export function DeviceConnectionForm({ devices, mqtt, liveError, onSaved, onDone
     <div>
       <p className="mb-3 text-sm text-muted-foreground">Power on your ESP32. Search Wi-Fi for devices on the same network as this local server, or choose a nearby device through Bluetooth.</p>
       <div className="flex flex-wrap gap-2">
-        <Btn type="button" variant="outline" onClick={() => void searchWifi()} disabled={wifiBusy || busy}>{wifiBusy ? "Searching Wi-Fi…" : "Search Wi-Fi"}</Btn>
+        <Btn type="button" variant="outline" onClick={() => void searchWifi(true)} disabled={wifiBusy || busy}>{wifiBusy ? "Searching Wi-Fi…" : "Search Wi-Fi"}</Btn>
         <Btn type="button" variant="outline" onClick={() => void searchBluetooth()} disabled={!bluetoothSupported() || bluetoothBusy || busy}>{bluetoothBusy ? "Reading Bluetooth device…" : "Search Bluetooth"}</Btn>
       </div>
       {!bluetoothSupported() && <p className="mt-2 text-xs text-muted-foreground">Bluetooth search needs a supported Chrome/Edge browser on localhost or HTTPS.</p>}

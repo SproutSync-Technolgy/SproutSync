@@ -11,10 +11,25 @@ export type MQTTStatus = {
 type LiveSnapshot = { devices: Device[]; readings: Reading[]; mqtt: MQTTStatus };
 
 async function checkedJson<T>(response: Response): Promise<T> {
+  const contentType = response.headers.get("content-type") || "";
+  const isJson = contentType.includes("application/json");
+
   if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    throw new Error(typeof body?.detail === "string" ? body.detail : "Live device service is unavailable. Check that the API is running.");
+    if (isJson) {
+      const body = await response.json().catch(() => null);
+      throw new Error(typeof body?.detail === "string" ? body.detail : "Live device service is unavailable. Check that the API is running.");
+    }
+    throw new Error(
+      response.status === 404
+        ? "Live telemetry requires the SproutSync backend API."
+        : `Live device service returned HTTP ${response.status}.`
+    );
   }
+
+  if (!isJson) {
+    throw new Error("Live device service is unavailable. Check that the API server is running and configured.");
+  }
+
   return response.json() as Promise<T>;
 }
 

@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 
-import { supabaseUrl, supabaseAnonKey } from './config';
+import { supabaseUrl, supabaseAnonKey, apiUrl } from './config';
 
 /** Shared Supabase Auth client for browser sessions and OAuth callbacks. */
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
@@ -20,5 +20,9 @@ export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {})
   if (data.session?.access_token) {
     headers.set('Authorization', `Bearer ${data.session.access_token}`);
   }
-  return fetch(input, { ...init, headers });
+  let target = input;
+  if (apiUrl && typeof input === 'string' && input.startsWith('/')) {
+    target = `${apiUrl}${input}`;
+  }
+  return fetch(target, { ...init, headers });
 }
