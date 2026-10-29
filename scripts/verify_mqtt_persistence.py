@@ -15,7 +15,7 @@ with engine.connect() as connection:
     try:
         assert (
             connection.scalar(text("select version_num from alembic_version"))
-            == "0013_mqtt_telemetry"
+            == "0014_wireless_discovery"
         )
         actors = []
         for role in ("operator", "operator", "evaluator"):
@@ -115,6 +115,7 @@ with engine.connect() as connection:
         as_user(owner)
         for statement in (
             "update public.devices set mqtt_topic_prefix='forged' where id=:id",
+            "update public.devices set requires_serial_number=false where id=:id",
             "insert into public.telemetry_readings(owner_id,device_id,temperature_c) values (:owner,:id,99)",
         ):
             savepoint = connection.begin_nested()
@@ -140,8 +141,34 @@ with engine.connect() as connection:
             .all()
         )
         assert set(publication) == {"devices", "telemetry_readings"}
+        # Verify the new flag on PostgreSQL, in addition to the SQLite API tests.
+        assert (
+            connection.scalar(
+                text("select requires_serial_number from public.devices where id=:id"),
+                {"id": device_id},
+            )
+            is False
+        )
+        serial = connection.scalar(
+            text("select serial_number from public.devices where id=:id"),
+            {"id": device_id},
+        )
+        connection.execute(
+            text("update public.devices set requires_serial_number=true where id=:id"),
+            {"id": device_id},
+        )
+        with Session(bind=connection, join_transaction_mode="create_savepoint") as db:
+            assert not ingest_message(db, prefix + "/telemetry", b'{"airTemp":25}')
+            assert not ingest_message(
+                db, prefix + "/telemetry", b'{"airTemp":25,"serialNumber":"WRONG"}'
+            )
+            assert ingest_message(
+                db,
+                prefix + "/telemetry",
+                json.dumps({"airTemp": 25, "serialNumber": serial}).encode(),
+            )
         print(
-            "PostgreSQL persistence, duplicate rejection, grant detection guard, owner/evaluator RLS, browser write restrictions, and Realtime publication passed."
+            "PostgreSQL persistence, wireless serial validation, duplicate rejection, grant detection guard, owner/evaluator RLS, browser write restrictions, and Realtime publication passed."
         )
     finally:
         transaction.rollback()

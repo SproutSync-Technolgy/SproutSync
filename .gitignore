@@ -12,6 +12,7 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 .pio/
+iot/esp32/include/discovery_secrets.h
 mobile/.dart_tool/
 mobile/.packages
 mobile/.flutter-plugins

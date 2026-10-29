@@ -57,3 +57,15 @@ recent readings. Existing history backfills receipt time from recorded time.
 Missing or faulty measurements remain null. Existing RLS read policies apply;
 authenticated browser roles cannot write ingestion or connection state.
 Both tables are published to `supabase_realtime` when that publication exists.
+
+## Wireless registration slice (0014)
+
+`devices.requires_serial_number` is non-null and defaults to false for existing
+devices. Server-authorized wireless registration sets it to true, requiring a
+matching `serialNumber` in every MQTT sensor packet. Reconnecting through the
+legacy serial form cannot disable this requirement. The API can register a new
+serial for an active operator; existing serial ownership and globally unique
+topic prefixes remain enforced. Discovery results/tokens expire in server memory
+and are not stored as devices until the operator selects **Connect device**.
+Browser roles retain their existing write restrictions. Downgrading 0014 removes
+the serial requirement flag without deleting devices or sensor history.

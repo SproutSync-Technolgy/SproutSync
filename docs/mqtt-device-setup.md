@@ -5,13 +5,16 @@ The operator workspace accepts the test page's MQTT contract and defaults to
 telemetry; the browser receives authorized Supabase Realtime inserts and checks
 the API every two seconds to recover missed updates and refresh connection state.
 
-1. Have an administrator grant the printed hardware serial to the operator.
-   A grant gives access; it does not mark hardware online. Sample devices cannot
+1. Find and register an ESP32 using **Add device → Search Wi-Fi / Search Bluetooth**.
+   See [wireless discovery and firmware integration](device-discovery.md).
+   Alternatively, have an administrator grant an existing printed hardware serial.
+   Neither registration nor a grant marks hardware online. Sample devices cannot
    be connected to a live MQTT stream.
 2. Power on the ESP32 and connect it to Wi-Fi. It must publish to
    `sproutsync/telemetry`, or another concrete prefix followed by `/telemetry`.
-3. In **Chamber & Access → Add device**, choose the granted serial, name it,
-   and enter the prefix configured in the firmware. Use `sproutsync` for the
+3. In **Add device**, choose a discovered board or granted serial and name it.
+   A discovered board supplies its prefix; for a granted serial, enter the
+   prefix configured in the firmware. Use `sproutsync` for the
    supplied test page. Every controller needs a different prefix; a prefix
    cannot be assigned to two device records, including across operators.
 4. Select **Connect device**. The dialog waits for a fresh, valid packet before
@@ -31,6 +34,7 @@ Publish a JSON object, normally every two seconds:
 
 ```json
 {
+  "serialNumber": "ESP32-A1B2C3",
   "airTemp": 26.2,
   "airHum": 87,
   "waterTemp": 20.4,
@@ -48,7 +52,10 @@ Disconnected sensor sentinels such as `waterTemp: -127` and `lux: -1` are saved
 as unavailable values and cause a fault state. Existing UI reference ranges are
 informational; no physical safety limits or calibration are configured here.
 
-Optional `serialNumber` must match the granted serial when present. Firmware can
+Replace the example `serialNumber` with the board's actual discovery/printed
+serial. `serialNumber` is required for devices registered through Wi-Fi/Bluetooth and
+must match the registered serial. It remains optional for legacy granted
+devices, but must match whenever present. Firmware can
 also provide `messageId` (unique across boots, e.g. `bootUUID:sequence`) and
 `recordedAt` (an ISO 8601 timestamp with timezone). Message IDs, or recorded
 timestamps when IDs are absent, suppress duplicate replay. Legacy packets without
@@ -71,7 +78,7 @@ Restart the launcher; it installs missing or outdated requirements automatically
 .\start.bat
 ```
 
-The launcher applies migration `0013_mqtt_telemetry` before starting the API.
+The launcher applies migrations through `0014_wireless_discovery` before starting the API.
 The server defaults already match HiveMQ. Optional server-only `.env` settings:
 
 | Setting | Default |

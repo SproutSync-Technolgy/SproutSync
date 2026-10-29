@@ -90,3 +90,5 @@ For **Docker, macOS/Linux, Google sign-in, tests, mobile, ESP32, or detailed
 troubleshooting**, use the [advanced setup reference](docs/setup-reference.md).
 
 For live ESP32 detection and sensor readings, see [MQTT device setup](docs/mqtt-device-setup.md).
+For adding an ESP32 over the local Wi-Fi network or Bluetooth, see
+[device discovery and firmware integration](docs/device-discovery.md).

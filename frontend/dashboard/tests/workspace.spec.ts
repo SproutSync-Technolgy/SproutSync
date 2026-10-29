@@ -107,7 +107,119 @@ async function mock(
       body: JSON.stringify(body),
     });
   });
+  await page.route("**/api/v1/devices/discover", (route) => route.fulfill({ json: { devices: [] } }));
 }
+
+const nearbyIdentity = {
+  protocol: "sproutsync-discovery-v1", model: "ESP32", serial_number: "ESP32-A1B2C3",
+  name: "SproutSync bench ESP32", topic_prefix: "sproutsync/ESP32-A1B2C3",
+};
+
+async function mockFirstDevice(page: Page) {
+  await mock(page);
+  const devices: Record<string, unknown>[] = [];
+  await page.route(`https://${authHost}/rest/v1/devices*`, (route) => route.fulfill({ json: devices }));
+  await page.route("**/api/v1/devices/live*", (route) => route.fulfill({ json: {
+    devices, readings: [], mqtt: { state: "connected", connected: true, broker_url: "wss://broker.hivemq.com:8884/mqtt", stale_seconds: 30 },
+  } }));
+  return devices;
+}
+
+test("first device is discovered over Wi-Fi and registered without an administrator grant", async ({ page }) => {
+  const devices = await mockFirstDevice(page);
+  await page.route("**/api/v1/devices/discover", (route) => route.fulfill({ json: { devices: [{
+    ...nearbyIdentity, transport: "wifi", discovery_id: "local-scan-token", addresses: ["192.168.1.42"], available: true,
+  }] } }));
+  await page.route("**/api/v1/devices/nearby", async (route) => {
+    expect(route.request().postDataJSON()).toMatchObject({ transport: "wifi", discovery_id: "local-scan-token", name: "My ESP32" });
+    const device = { id: 3, owner_id: 1, serial_number: nearbyIdentity.serial_number, name: "My ESP32", is_demo: false,
+      mqtt_topic_prefix: nearbyIdentity.topic_prefix, connection_requested_at: new Date().toISOString(), last_seen_at: null, status: "pending" };
+    devices.push(device);
+    await route.fulfill({ status: 202, json: device });
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/operator");
+  await page.getByRole("button", { name: "Add device", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Add device", exact: true });
+  await expect(dialog.getByText("192.168.1.42", { exact: false })).toBeVisible();
+  await dialog.getByRole("button", { name: "Use device: SproutSync bench ESP32", exact: true }).click();
+  await expect(dialog.getByLabel("Device serial number")).toHaveValue(nearbyIdentity.serial_number);
+  await expect(dialog.getByLabel("MQTT topic prefix")).not.toBeEditable();
+  await dialog.getByLabel("Device name").fill("My ESP32");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: "test-results/discovery-mobile.png", fullPage: true });
+  await dialog.getByRole("button", { name: "Connect device", exact: true }).click();
+  await expect(dialog.getByRole("status")).toContainText("Waiting for a fresh sensor packet");
+  await expect(dialog.getByRole("status")).not.toContainText("Device detected");
+  await dialog.getByRole("button", { name: "Keep listening in background" }).click();
+  await expect(page.getByLabel("Select device")).toContainText("My ESP32");
+  await page.getByRole("button", { name: "Open navigation", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Explore SproutSync" }).getByRole("button", { name: "Chamber & Access", exact: true })).toBeVisible();
+});
+
+test("Bluetooth reads the SproutSync identity before allowing registration", async ({ page }) => {
+  await mockFirstDevice(page);
+  await page.addInitScript((identity) => {
+    Object.defineProperty(navigator, "bluetooth", { configurable: true, value: {
+      requestDevice: async (options: { filters: { services: string[] }[] }) => {
+        if (options.filters[0].services[0] !== "f7b20001-11f9-4c7c-9f23-74c367499f20") throw new Error("Wrong service filter");
+        return { gatt: { disconnect() {}, connect: async () => ({ getPrimaryService: async () => ({ getCharacteristic: async () => ({
+          readValue: async () => new DataView(new TextEncoder().encode(JSON.stringify(identity)).buffer),
+        }) }) }) } };
+      },
+    } });
+  }, nearbyIdentity);
+  await page.route("**/api/v1/devices/nearby", (route) => {
+    expect(route.request().postDataJSON()).toMatchObject({ transport: "bluetooth", identity: nearbyIdentity });
+    return route.fulfill({ status: 409, json: { detail: "This device is already registered to another workspace." } });
+  });
+  await page.goto("/operator");
+  await page.getByRole("button", { name: "Add device", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Add device", exact: true });
+  await dialog.getByRole("button", { name: "Search Bluetooth", exact: true }).click();
+  await expect(dialog.getByLabel("Device serial number")).toHaveValue(nearbyIdentity.serial_number);
+  await dialog.getByRole("button", { name: "Connect device", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("another workspace");
+  await expect(dialog.getByRole("status")).toHaveCount(0);
+});
+
+test("empty Wi-Fi results, Bluetooth cancellation, and invalid identities offer recovery", async ({ page }) => {
+  await mockFirstDevice(page);
+  await page.addInitScript(() => {
+    let calls = 0;
+    Object.defineProperty(navigator, "bluetooth", { configurable: true, value: {
+      requestDevice: async () => {
+        if (++calls === 1) throw new DOMException("Cancelled", "NotFoundError");
+        return { gatt: { disconnect() {}, connect: async () => ({ getPrimaryService: async () => ({ getCharacteristic: async () => ({
+          readValue: async () => new DataView(new TextEncoder().encode('{"protocol":"unrelated"}').buffer),
+        }) }) }) } };
+      },
+    } });
+  });
+  await page.goto("/operator");
+  await page.getByRole("button", { name: "Add device", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Add device", exact: true });
+  await expect(dialog.getByText("No nearby ESP32 found yet.", { exact: false })).toBeVisible();
+  await dialog.getByRole("button", { name: "Search Bluetooth", exact: true }).click();
+  await expect(dialog.getByText("No Bluetooth device was selected.", { exact: false })).toBeVisible();
+  await dialog.getByRole("button", { name: "Search Bluetooth", exact: true }).click();
+  await expect(dialog.getByText("The selected device has an invalid SproutSync identity.", { exact: false })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Connect device", exact: true })).toHaveCount(0);
+  await page.route("**/api/v1/devices/discover", (route) => route.fulfill({ status: 503, json: { detail: "Allow local network/multicast access for the API, then search again." } }));
+  await dialog.getByRole("button", { name: "Search Wi-Fi", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("multicast");
+});
+
+test("unsupported Bluetooth gives guidance while keeping Wi-Fi search available", async ({ page }) => {
+  await mockFirstDevice(page);
+  await page.addInitScript(() => Object.defineProperty(navigator, "bluetooth", { configurable: true, value: undefined }));
+  await page.goto("/operator");
+  await page.getByRole("button", { name: "Add device", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Add device", exact: true });
+  await expect(dialog.getByRole("button", { name: "Search Bluetooth", exact: true })).toBeDisabled();
+  await expect(dialog.getByText("Bluetooth search needs a supported Chrome/Edge browser", { exact: false })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Search Wi-Fi", exact: true })).toBeEnabled();
+});
 test("signup collects profile details and opens dashboard", async ({
   page,
 }) => {

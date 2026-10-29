@@ -113,6 +113,8 @@ def ingest_message(
         and packet.serialNumber.strip().upper() != device.serial_number.upper()
     ):
         return False
+    if device.requires_serial_number and not packet.serialNumber:
+        return False
     if device.connection_requested_at and received < utc(
         device.connection_requested_at
     ):

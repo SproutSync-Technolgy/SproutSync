@@ -88,7 +88,7 @@ import { DeviceConnectionForm, LiveConnectionStatus } from "./DeviceConnection";
 
 export function getRolePages(profile: Profile, hasGrant: boolean) {
   if (profile.role === "pending" || (!hasGrant && !isSuperAdmin(profile))) {
-    return [{ key: "home", title: "Access Pending", icon: ShieldCheck }];
+    return [{ key: "home", title: profile.role === "operator" ? "Connect a device" : "Access Pending", icon: ShieldCheck }];
   }
   if (isSuperAdmin(profile)) {
     return [
@@ -832,7 +832,7 @@ export default function Workspace({
                     <h2 className="text-xl font-bold text-foreground">
                       {evaluator
                         ? "Waiting for Operator Access Grant"
-                        : "No Chamber Serial ID Assigned"}
+                        : "Connect your ESP32"}
                     </h2>
                     <p className="text-sm text-muted-foreground leading-relaxed">
                       {evaluator ? (
@@ -848,9 +848,8 @@ export default function Workspace({
                         <>
                           You are registered as an <strong>Operator</strong> (
                           <span className="text-foreground">{profile.email}</span>
-                          ). A SproutSync Superadmin must provision and assign at
-                          least one hardware chamber serial ID to your account
-                          before you can control production batches or irrigation.
+                          ). Add a nearby SproutSync ESP32 using Wi-Fi or Bluetooth
+                          to connect your first chamber.
                         </>
                       )}
                     </p>
@@ -875,22 +874,21 @@ export default function Workspace({
                       ) : (
                         <>
                           <p>
-                            1. Provide your SproutSync chamber printed hardware
-                            serial number (e.g. <code>SS-CHAMBER-0001</code>) to
-                            your Superadmin.
+                            1. Power on the ESP32 with SproutSync discovery firmware.
                           </p>
                           <p>
-                            2. The Superadmin assigns the serial ID to your Operator
-                            ID (#{profile.id}) in <em>Accounts</em>.
+                            2. Connect it to the same Wi-Fi network as this local server,
+                            or enable Bluetooth on this computer.
                           </p>
                           <p>
-                            3. Click <strong>Check Equipment Status</strong> once
-                            assigned.
+                            3. Select <strong>Add device</strong>, choose the detected board,
+                            and wait for live sensor data.
                           </p>
                         </>
                       )}
                     </div>
                     <div className="flex items-center justify-center gap-3">
+                      {!evaluator && <Btn onClick={() => open({ kind: "device" })}><Plus size={16} /> Add device</Btn>}
                       <Btn
                         variant="outline"
                         disabled={refreshing}
@@ -2920,7 +2918,7 @@ export default function Workspace({
         )}
         {dialog?.kind === "device" && operator && <DeviceConnectionForm
           devices={data.devices} mqtt={live.mqtt} liveError={live.error}
-          onSaved={(device) => setData((current) => ({ ...current, devices: current.devices.map((d) => d.id === device.id ? { ...d, ...device } : d) }))}
+          onSaved={(device) => setData((current) => ({ ...current, devices: current.devices.some((d) => d.id === device.id) ? current.devices.map((d) => d.id === device.id ? { ...d, ...device } : d) : [device, ...current.devices] }))}
           onDone={(deviceId) => { close(); if (deviceId !== undefined) { setSelectedDevice(String(deviceId)); navigate("readings"); } }}
         />}
         {dialog?.kind === "signout" && (

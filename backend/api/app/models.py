@@ -85,6 +85,7 @@ class Device(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     mqtt_topic_prefix: Mapped[str | None] = mapped_column(String(160), unique=True, nullable=True)
     connection_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    requires_serial_number: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     firmware_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     granted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

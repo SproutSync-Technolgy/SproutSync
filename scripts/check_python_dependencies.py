@@ -108,6 +108,7 @@ def inspect_dependencies(root: Path) -> dict:
         "pytest": "pytest",
         "ruff": "ruff",
         "pillow": "PIL",
+        "zeroconf": "zeroconf",
     }
     for name, module in modules.items():
         if packages.get(name, {}).get("status") != "OK":

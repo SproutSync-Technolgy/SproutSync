@@ -1,6 +1,7 @@
 """Device detection must come from fresh, valid telemetry on an owned binding."""
 
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -16,6 +17,7 @@ from app.config import settings
 from app.db import Base, get_db
 from app.main import app
 from app.models import Device, EvaluatorAccess, TelemetryReading, User
+from app.discovery import Advertisement, DeviceIdentity, discovery
 from app.mqtt import MQTTBridge, bridge, ingest_message, utc
 
 
@@ -369,3 +371,167 @@ def test_invalid_broker_configuration_never_opens_a_socket_or_leaks_credentials(
     worker.start()
     assert worker.client is None and worker.state == "configuration_error"
     assert worker.snapshot()["broker_url"] == "Invalid broker configuration"
+
+
+def nearby_entry(serial="ESP32-NEARBY", prefix="sproutsync/nearby"):
+    return Advertisement(
+        DeviceIdentity(
+            protocol="sproutsync-discovery-v1",
+            model="ESP32",
+            serial_number=serial,
+            name="Nearby ESP32",
+            topic_prefix=prefix,
+        ),
+        ["192.168.1.80"],
+        "nearby-token",
+        time.monotonic() + 120,
+    )
+
+
+def test_wifi_discovery_and_registration_need_no_prior_serial_grant(
+    workspace, monkeypatch
+):
+    w = workspace
+    w.db.delete(w.device)
+    w.db.commit()
+    entry = nearby_entry()
+    monkeypatch.setattr(discovery, "scan", lambda: [entry])
+    monkeypatch.setattr(
+        discovery, "lookup", lambda token: entry if token == "nearby-token" else None
+    )
+    found = w.client.get("/api/v1/devices/discover")
+    assert found.status_code == 200 and found.json()["devices"][0]["available"] is True
+    assert found.json()["devices"][0]["addresses"] == ["192.168.1.80"]
+    response = w.client.post(
+        "/api/v1/devices/nearby",
+        json={
+            "transport": "wifi",
+            "discovery_id": "nearby-token",
+            "name": "My first chamber",
+        },
+    )
+    assert response.status_code == 202
+    added = response.json()
+    assert (
+        added["serial_number"] == "ESP32-NEARBY"
+        and added["owner_id"] == w.owner.id
+        and added["status"] == "pending"
+    )
+    assert added["last_seen_at"] is None
+    # Unrelated public-broker packets cannot turn this wireless board online.
+    assert not ingest_message(w.db, "sproutsync/nearby/telemetry", b'{"airTemp":25}')
+    assert not ingest_message(
+        w.db, "sproutsync/nearby/telemetry", b'{"airTemp":25,"serialNumber":"OTHER"}'
+    )
+    assert ingest_message(
+        w.db,
+        "sproutsync/nearby/telemetry",
+        b'{"airTemp":25,"serialNumber":"ESP32-NEARBY"}',
+    )
+    assert (
+        w.client.get("/api/v1/devices/live").json()["readings"][0]["temperature_c"]
+        == 25
+    )
+
+
+def test_nearby_registration_never_takes_over_another_workspace(workspace, monkeypatch):
+    w = workspace
+    entry = nearby_entry(w.other.serial_number, "private/esp")
+    monkeypatch.setattr(discovery, "scan", lambda: [entry])
+    monkeypatch.setattr(discovery, "lookup", lambda _token: entry)
+    found = w.client.get("/api/v1/devices/discover").json()["devices"][0]
+    assert found["available"] is False and "owner_id" not in found
+    for payload in (
+        {"transport": "wifi", "discovery_id": "nearby-token", "name": "Attempt"},
+        {
+            "transport": "bluetooth",
+            "identity": entry.identity.model_dump(),
+            "name": "Attempt",
+        },
+    ):
+        assert w.client.post("/api/v1/devices/nearby", json=payload).status_code == 409
+    assert w.db.get(Device, w.other.id).owner_id == w.admin.id
+
+
+def test_bluetooth_identity_registers_new_board_and_rejects_invalid_protocol(workspace):
+    w = workspace
+    identity = nearby_entry().identity.model_dump()
+    payload = {"transport": "bluetooth", "identity": identity, "name": "BLE chamber"}
+    assert (
+        w.client.post(
+            "/api/v1/devices/nearby",
+            json={**payload, "identity": {**identity, "protocol": "unrelated-device"}},
+        ).status_code
+        == 422
+    )
+    response = w.client.post("/api/v1/devices/nearby", json=payload)
+    assert response.status_code == 202 and response.json()["status"] == "pending"
+    assert response.json()["owner_id"] == w.owner.id
+    # A second serial cannot reuse an existing device's MQTT prefix.
+    assert (
+        w.client.post(
+            "/api/v1/devices/nearby",
+            json={
+                **payload,
+                "identity": {**identity, "serial_number": "ANOTHER-ESP32"},
+            },
+        ).status_code
+        == 409
+    )
+    # The assigned-serial form must not weaken wireless telemetry validation.
+    assert (
+        w.client.post(
+            "/api/v1/devices/connect",
+            json={
+                "serial_number": identity["serial_number"],
+                "name": "Reconnected",
+                "topic_prefix": identity["topic_prefix"],
+            },
+        ).status_code
+        == 202
+    )
+    assert not ingest_message(
+        w.db, identity["topic_prefix"] + "/telemetry", b'{"airTemp":25}'
+    )
+
+
+def test_discovery_rejects_expired_results_and_nonoperators(workspace, monkeypatch):
+    w = workspace
+    monkeypatch.setattr(discovery, "lookup", lambda _token: None)
+    assert (
+        w.client.post(
+            "/api/v1/devices/nearby",
+            json={
+                "transport": "wifi",
+                "discovery_id": "expired",
+                "name": "Expired board",
+            },
+        ).status_code
+        == 410
+    )
+    for user in (w.evaluator, w.pending):
+        app.dependency_overrides[get_current_user] = lambda: user
+        assert w.client.get("/api/v1/devices/discover").status_code == 403
+        assert (
+            w.client.post(
+                "/api/v1/devices/nearby",
+                json={
+                    "transport": "bluetooth",
+                    "identity": nearby_entry().identity.model_dump(),
+                    "name": "Forbidden",
+                },
+            ).status_code
+            == 403
+        )
+
+
+def test_network_discovery_failure_has_actionable_feedback(workspace, monkeypatch):
+    def fail():
+        raise OSError("Blocked multicast")
+
+    monkeypatch.setattr(discovery, "scan", fail)
+    result = workspace.client.get("/api/v1/devices/discover")
+    assert (
+        result.status_code == 503
+        and "local network/multicast" in result.json()["detail"]
+    )
