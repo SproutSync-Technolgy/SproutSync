@@ -122,13 +122,32 @@ class EvaluatorAccess(Base):
     """Explicit access grant from an operator workspace to an evaluator."""
 
     __tablename__ = "evaluator_access"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "evaluator_email", name="evaluator_access_owner_email_unique"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    evaluator_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True, nullable=True)
+    evaluator_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True)
     evaluator_email: Mapped[str] = mapped_column(String(320), index=True)
     granted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Evaluation(Base):
+    """An evaluator's 1-5 star rating and optional observation for a batch."""
+
+    __tablename__ = "evaluations"
+    __table_args__ = (
+        UniqueConstraint("evaluator_id", "batch_id", name="evaluations_evaluator_batch_unique"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    evaluator_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id", ondelete="CASCADE"), index=True)
+    rating: Mapped[int] = mapped_column(Integer)
+    comments: Mapped[str] = mapped_column(String(4000), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

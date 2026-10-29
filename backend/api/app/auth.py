@@ -4,12 +4,12 @@ from typing import Annotated
 import httpx
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import get_db
-from app.models import User
+from app.models import EvaluatorAccess, User
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -104,6 +104,18 @@ async def get_current_user(
 
         if (metadata.get("avatar_url") or metadata.get("picture")) and not user.avatar_url:
             user.avatar_url = metadata.get("avatar_url") or metadata.get("picture")
+
+    grants = db.scalars(
+        select(EvaluatorAccess).where(
+            func.lower(EvaluatorAccess.evaluator_email) == user.email.lower()
+        )
+    ).all()
+    for grant in grants:
+        if grant.evaluator_id != user.id:
+            grant.evaluator_id = user.id
+        if user.role == "pending":
+            user.role = "evaluator"
+
     db.commit()
     db.refresh(user)
     if not user.is_active:

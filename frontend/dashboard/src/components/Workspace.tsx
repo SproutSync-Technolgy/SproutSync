@@ -60,6 +60,7 @@ import {
   deleteAccount,
   grantDeviceSerial,
   assignEvaluator,
+  grantOperatorEvaluator,
   fetchOperatorEvaluators,
   updateOperatorEvaluator,
   fetchAccessRequests,
@@ -2939,38 +2940,62 @@ export default function Workspace({
                         </Btn>
                       }
                     />
-                    {table(
-                      [
-                        "Evaluator Name",
-                        "Email",
-                        "Status",
-                        "Granted At",
-                        "Actions",
-                      ],
-                      operatorEvaluators.map((ev) => [
-                        ev.display_name || "Unnamed",
-                        ev.email,
-                        <Status
-                          key="status"
-                          value={ev.is_active ? "active" : "offline"}
-                        />,
-                        date(ev.granted_at),
-                        <Btn
-                          key="edit"
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            open({
-                              kind: "operator-evaluator-edit",
-                              evaluator: ev,
-                            })
-                          }
-                        >
-                          Edit Name/Email
-                        </Btn>,
-                      ]),
-                      "No evaluators linked to your chambers yet.",
-                    )}
+                    {(() => {
+                      const mergedMap = new Map<string, EvaluatorSummary>();
+                      for (const ev of operatorEvaluators) {
+                        if (ev && ev.email) mergedMap.set(ev.email.toLowerCase(), ev);
+                      }
+                      for (const acc of data.access.filter(
+                        (a) => !a.owner_id || a.owner_id === profile.id,
+                      )) {
+                        if (!acc.evaluator_email) continue;
+                        const em = acc.evaluator_email.toLowerCase();
+                        if (!mergedMap.has(em)) {
+                          mergedMap.set(em, {
+                            id: acc.evaluator_id || -acc.id,
+                            display_name: acc.evaluator_email,
+                            first_name: "",
+                            last_name: "",
+                            email: acc.evaluator_email,
+                            is_active: true,
+                            granted_at: acc.granted_at || acc.created_at,
+                          });
+                        }
+                      }
+                      const displayList = Array.from(mergedMap.values());
+                      return table(
+                        [
+                          "Evaluator Name",
+                          "Email",
+                          "Status",
+                          "Granted At",
+                          "Actions",
+                        ],
+                        displayList.map((ev) => [
+                          ev.display_name || "Unnamed",
+                          ev.email,
+                          <Status
+                            key="status"
+                            value={ev.is_active ? "active" : "offline"}
+                          />,
+                          date(ev.granted_at),
+                          <Btn
+                            key="edit"
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              open({
+                                kind: "operator-evaluator-edit",
+                                evaluator: ev,
+                              })
+                            }
+                          >
+                            Edit Name/Email
+                          </Btn>,
+                        ]),
+                        "No evaluators linked to your chambers yet.",
+                      );
+                    })()}
                   </section>
                 </div>
               )}
@@ -4137,10 +4162,24 @@ export default function Workspace({
                   }
                 }
                 if (dialog.kind === "access") {
-                  table = "evaluator_access";
-                  payload.evaluator_email = values.evaluator_email
-                    .trim()
-                    .toLowerCase();
+                  const cleanEmail = values.evaluator_email.trim().toLowerCase();
+                  try {
+                    const newEv = await grantOperatorEvaluator({ email: cleanEmail });
+                    setOperatorEvaluators((prev) => {
+                      const filtered = prev.filter(
+                        (e) => e.email.toLowerCase() !== cleanEmail,
+                      );
+                      return [newEv, ...filtered];
+                    });
+                    setToast("Evaluator access granted.");
+                    close();
+                    await reload();
+                    return;
+                  } catch (err) {
+                    console.error("Failed to grant evaluator access:", err);
+                    setToast("Failed to grant evaluator access.");
+                    return;
+                  }
                 }
                 if (dialog.kind === "maintenance") {
                   table = "maintenance_records";

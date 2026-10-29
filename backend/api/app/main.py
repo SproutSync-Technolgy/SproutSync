@@ -11,13 +11,13 @@ from email.message import EmailMessage
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user, sync_supabase_user_email
 from app.config import settings
 from app.db import get_db
-from app.models import AccessRequest, ActivityLog, Batch, Device, EvaluatorAccess, TelemetryReading, User
+from app.models import AccessRequest, ActivityLog, Batch, Device, Evaluation, EvaluatorAccess, TelemetryReading, User
 from app.devices import router as device_router
 from app.mqtt import bridge
 
@@ -194,6 +194,26 @@ class BatchResponse(BaseModel):
     notes: str | None
 
 
+class BatchRateRequest(BaseModel):
+    """Payload to rate a batch with 1-5 stars and optional comments."""
+
+    rating: int = Field(ge=1, le=5)
+    comments: str = Field(default="", max_length=4000)
+
+
+class EvaluationResponse(BaseModel):
+    """API representation of a batch quality evaluation."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    evaluator_id: int
+    batch_id: int
+    rating: int
+    comments: str
+    created_at: datetime
+
+
 @app.get("/api/v1/health", response_model=HealthResponse, tags=["health"])
 def health() -> HealthResponse:
     """Report process liveness without masking database readiness failures."""
@@ -210,12 +230,12 @@ def list_batches(
     if user.role in ("superadmin", "admin"):
         # Superadmin audits all batches across the entire fleet
         return [BatchResponse.model_validate(batch) for batch in db.scalars(query).all()]
-    elif user.role == "evaluator":
+    elif user.role in ("evaluator", "pending"):
         owners = db.scalars(
             text(
-                "SELECT owner_id FROM evaluator_access WHERE evaluator_id = :uid OR evaluator_email = :email"
+                "SELECT owner_id FROM evaluator_access WHERE evaluator_id = :uid OR lower(trim(evaluator_email)) = :email"
             ),
-            {"uid": user.id, "email": user.email.lower()},
+            {"uid": user.id, "email": user.email.lower().strip()},
         ).all()
         # Strictly visible owners from grants only - zero grants means zero batches returned
         if not owners:
@@ -225,7 +245,7 @@ def list_batches(
         # Operator sees own batches
         query = query.where(Batch.owner_id == user.id)
     else:
-        # Pending users or unknown roles see zero batches
+        # Unknown roles see zero batches
         return []
     return [BatchResponse.model_validate(batch) for batch in db.scalars(query).all()]
 
@@ -292,6 +312,81 @@ def archive_batch(
     db.commit()
     db.refresh(batch)
     return BatchResponse.model_validate(batch)
+
+
+@app.post(
+    "/api/v1/batches/{batch_id}/rate",
+    response_model=EvaluationResponse,
+    tags=["batches"],
+)
+def rate_batch(
+    batch_id: int,
+    payload: BatchRateRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> EvaluationResponse:
+    """1-click inline star rating upsert for a batch."""
+    batch = db.scalar(select(Batch).where(Batch.id == batch_id))
+    if batch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found"
+        )
+
+    can_rate = False
+    if user.role in ("superadmin", "admin"):
+        can_rate = True
+    elif batch.owner_id == user.id:
+        can_rate = True
+    else:
+        grant = db.scalar(
+            select(EvaluatorAccess).where(
+                EvaluatorAccess.owner_id == batch.owner_id,
+                or_(
+                    EvaluatorAccess.evaluator_id == user.id,
+                    func.lower(EvaluatorAccess.evaluator_email) == user.email.lower().strip(),
+                ),
+            )
+        )
+        if grant is not None and user.role in ("evaluator", "pending"):
+            can_rate = True
+
+    if not can_rate:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to rate this batch"
+        )
+
+    now = datetime.now(timezone.utc)
+    evaluation = db.scalar(
+        select(Evaluation).where(
+            Evaluation.batch_id == batch_id,
+            Evaluation.evaluator_id == user.id,
+        )
+    )
+    if evaluation is None:
+        evaluation = Evaluation(
+            evaluator_id=user.id,
+            batch_id=batch_id,
+            rating=payload.rating,
+            comments=payload.comments or "",
+            created_at=now,
+        )
+        db.add(evaluation)
+    else:
+        evaluation.rating = payload.rating
+        if payload.comments:
+            evaluation.comments = payload.comments
+        evaluation.created_at = now
+
+    audit = ActivityLog(
+        owner_id=batch.owner_id,
+        actor_id=user.id,
+        action="rate_batch",
+        resource=f"batches:{batch_id}:stars:{payload.rating}",
+    )
+    db.add(audit)
+    db.commit()
+    db.refresh(evaluation)
+    return EvaluationResponse.model_validate(evaluation)
 
 
 @app.get("/api/v1/auth/me", response_model=UserResponse, tags=["auth"])
@@ -480,6 +575,59 @@ class EvaluatorSummary(BaseModel):
     granted_at: datetime | None = None
 
 
+def _build_operator_evaluators(db: Session, owner_id: int) -> list[EvaluatorSummary]:
+    """Build a complete list of linked EvaluatorSummary objects without omitting email grants."""
+    grants = db.scalars(
+        select(EvaluatorAccess)
+        .where(EvaluatorAccess.owner_id == owner_id)
+        .order_by(EvaluatorAccess.id.desc())
+    ).all()
+    evaluators: list[EvaluatorSummary] = []
+    seen_ids: set[int] = set()
+    for g in grants:
+        eval_user = None
+        if g.evaluator_id:
+            eval_user = db.scalar(select(User).where(User.id == g.evaluator_id))
+        if eval_user is None and g.evaluator_email:
+            eval_user = db.scalar(
+                select(User).where(func.lower(User.email) == g.evaluator_email.lower().strip())
+            )
+        if eval_user:
+            if eval_user.id in seen_ids:
+                continue
+            seen_ids.add(eval_user.id)
+            evaluators.append(
+                EvaluatorSummary(
+                    id=eval_user.id,
+                    display_name=eval_user.display_name
+                    or f"{eval_user.first_name} {eval_user.last_name}".strip()
+                    or eval_user.email,
+                    first_name=eval_user.first_name,
+                    last_name=eval_user.last_name,
+                    email=eval_user.email,
+                    is_active=eval_user.is_active,
+                    granted_at=g.granted_at or g.created_at,
+                )
+            )
+        else:
+            fake_id = -g.id
+            if fake_id in seen_ids:
+                continue
+            seen_ids.add(fake_id)
+            evaluators.append(
+                EvaluatorSummary(
+                    id=fake_id,
+                    display_name=g.evaluator_email,
+                    first_name="",
+                    last_name="",
+                    email=g.evaluator_email,
+                    is_active=True,
+                    granted_at=g.granted_at or g.created_at,
+                )
+            )
+    return evaluators
+
+
 class AccountResponse(BaseModel):
     """Representation of an account for Superadmin management."""
 
@@ -543,6 +691,14 @@ class AssignEvaluatorRequest(BaseModel):
     operator_id: int
 
 
+class GrantEvaluatorByEmailRequest(BaseModel):
+    """Payload for an operator to grant access to an evaluator by email."""
+
+    email: str = Field(min_length=3, max_length=320)
+    first_name: str = Field(default="", max_length=80)
+    last_name: str = Field(default="", max_length=80)
+
+
 class UpdateEvaluatorRequest(BaseModel):
     """Payload for an operator to update their linked evaluator's details."""
 
@@ -592,27 +748,7 @@ def list_accounts(
     for u in users:
         devices = db.scalars(select(Device).where(Device.owner_id == u.id)).all()
         serial_numbers = [d.serial_number for d in devices]
-
-        linked_evaluators: list[EvaluatorSummary] = []
-        grants = db.scalars(select(EvaluatorAccess).where(EvaluatorAccess.owner_id == u.id)).all()
-        for g in grants:
-            eval_user = None
-            if g.evaluator_id:
-                eval_user = db.scalar(select(User).where(User.id == g.evaluator_id))
-            if eval_user is None and g.evaluator_email:
-                eval_user = db.scalar(select(User).where(func.lower(User.email) == g.evaluator_email.lower().strip()))
-            if eval_user:
-                linked_evaluators.append(
-                    EvaluatorSummary(
-                        id=eval_user.id,
-                        display_name=eval_user.display_name or f"{eval_user.first_name} {eval_user.last_name}".strip() or eval_user.email,
-                        first_name=eval_user.first_name,
-                        last_name=eval_user.last_name,
-                        email=eval_user.email,
-                        is_active=eval_user.is_active,
-                        granted_at=g.granted_at or g.created_at,
-                    )
-                )
+        linked_evaluators = _build_operator_evaluators(db, u.id)
 
         accounts.append(
             AccountResponse(
@@ -706,7 +842,7 @@ async def update_account(
 
     devices = db.scalars(select(Device).where(Device.owner_id == target.id)).all()
     serial_numbers = [d.serial_number for d in devices]
-    grants = db.scalars(select(EvaluatorAccess).where(EvaluatorAccess.owner_id == target.id)).all()
+    linked_evaluators = _build_operator_evaluators(db, target.id)
 
     return AccountResponse(
         id=target.id,
@@ -720,9 +856,9 @@ async def update_account(
         role=target.role,
         is_active=target.is_active,
         granted_serial_count=len(serial_numbers),
-        evaluator_grant_count=len(grants),
+        evaluator_grant_count=len(linked_evaluators),
         serial_numbers=serial_numbers,
-        evaluators=[],
+        evaluators=linked_evaluators,
         created_at=target.created_at,
     )
 
@@ -904,19 +1040,27 @@ def assign_evaluator(
     evaluator.role = "evaluator"
     now = datetime.now(timezone.utc)
 
-    grant = db.scalar(select(EvaluatorAccess).where(EvaluatorAccess.evaluator_id == evaluator.id))
+    grant = db.scalar(
+        select(EvaluatorAccess).where(
+            EvaluatorAccess.owner_id == operator.id,
+            or_(
+                EvaluatorAccess.evaluator_id == evaluator.id,
+                func.lower(EvaluatorAccess.evaluator_email) == evaluator.email.lower().strip(),
+            ),
+        )
+    )
     if grant is None:
         grant = EvaluatorAccess(
             owner_id=operator.id,
             evaluator_id=evaluator.id,
-            evaluator_email=evaluator.email,
+            evaluator_email=evaluator.email.lower().strip(),
             granted_by=admin.id,
             granted_at=now,
         )
         db.add(grant)
     else:
-        grant.owner_id = operator.id
-        grant.evaluator_email = evaluator.email
+        grant.evaluator_id = evaluator.id
+        grant.evaluator_email = evaluator.email.lower().strip()
         grant.granted_by = admin.id
         grant.granted_at = now
 
@@ -946,27 +1090,90 @@ def list_operator_evaluators(
     db: Session = Depends(get_db),
 ) -> list[EvaluatorSummary]:
     """List all Evaluators linked directly to this Operator's chambers."""
-    grants = db.scalars(select(EvaluatorAccess).where(EvaluatorAccess.owner_id == operator.id)).all()
-    evaluators: list[EvaluatorSummary] = []
-    for g in grants:
-        eval_user = None
-        if g.evaluator_id:
-            eval_user = db.scalar(select(User).where(User.id == g.evaluator_id))
-        if eval_user is None and g.evaluator_email:
-            eval_user = db.scalar(select(User).where(func.lower(User.email) == g.evaluator_email.lower().strip()))
-        if eval_user:
-            evaluators.append(
-                EvaluatorSummary(
-                    id=eval_user.id,
-                    display_name=eval_user.display_name or f"{eval_user.first_name} {eval_user.last_name}".strip() or eval_user.email,
-                    first_name=eval_user.first_name,
-                    last_name=eval_user.last_name,
-                    email=eval_user.email,
-                    is_active=eval_user.is_active,
-                    granted_at=g.granted_at or g.created_at,
-                )
-            )
-    return evaluators
+    return _build_operator_evaluators(db, operator.id)
+
+
+@app.post(
+    "/api/v1/operator/evaluators",
+    response_model=EvaluatorSummary,
+    status_code=status.HTTP_201_CREATED,
+    tags=["operator"],
+)
+@app.post(
+    "/operator/evaluators",
+    response_model=EvaluatorSummary,
+    status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
+)
+def grant_operator_evaluator(
+    payload: GrantEvaluatorByEmailRequest,
+    operator: User = Depends(require_operator),
+    db: Session = Depends(get_db),
+) -> EvaluatorSummary:
+    """Operator grants access to an evaluator by email."""
+    clean_email = payload.email.lower().strip()
+    if not clean_email or "@" not in clean_email:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid email address"
+        )
+
+    matched_user = db.scalar(
+        select(User).where(func.lower(User.email) == clean_email)
+    )
+    if matched_user and matched_user.role == "pending":
+        matched_user.role = "evaluator"
+
+    now = datetime.now(timezone.utc)
+    grant = db.scalar(
+        select(EvaluatorAccess).where(
+            EvaluatorAccess.owner_id == operator.id,
+            func.lower(EvaluatorAccess.evaluator_email) == clean_email,
+        )
+    )
+    if grant is None:
+        grant = EvaluatorAccess(
+            owner_id=operator.id,
+            evaluator_id=matched_user.id if matched_user else None,
+            evaluator_email=clean_email,
+            granted_by=operator.id,
+            granted_at=now,
+        )
+        db.add(grant)
+    else:
+        if matched_user and grant.evaluator_id != matched_user.id:
+            grant.evaluator_id = matched_user.id
+        grant.granted_by = operator.id
+        grant.granted_at = now
+
+    audit = ActivityLog(
+        owner_id=operator.id,
+        actor_id=operator.id,
+        action="operator_grant_evaluator",
+        resource=f"operator:{operator.id}->email:{clean_email}",
+    )
+    db.add(audit)
+    db.commit()
+    db.refresh(grant)
+
+    if matched_user:
+        return EvaluatorSummary(
+            id=matched_user.id,
+            display_name=matched_user.display_name or f"{matched_user.first_name} {matched_user.last_name}".strip() or matched_user.email,
+            first_name=matched_user.first_name,
+            last_name=matched_user.last_name,
+            email=matched_user.email,
+            is_active=matched_user.is_active,
+            granted_at=grant.granted_at or grant.created_at,
+        )
+    return EvaluatorSummary(
+        id=-grant.id,
+        display_name=clean_email,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        email=clean_email,
+        is_active=True,
+        granted_at=grant.granted_at or grant.created_at,
+    )
 
 
 @app.patch(

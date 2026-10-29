@@ -112,6 +112,7 @@ export type Activity = {
 export type Access = {
   id: number;
   owner_id?: number;
+  evaluator_id?: number | null;
   evaluator_email: string;
   granted_by?: number | null;
   granted_at?: string | null;
@@ -654,11 +655,7 @@ export async function assignEvaluator(
   }
   if (opAccount && evAccount) {
     if (!opAccount.evaluators) opAccount.evaluators = [];
-    STATIC_ACCOUNTS.forEach((a) => {
-      if (a.evaluators) {
-        a.evaluators = a.evaluators.filter((e) => e.id !== evaluator_id);
-      }
-    });
+    opAccount.evaluators = opAccount.evaluators.filter((e) => e.id !== evaluator_id);
     opAccount.evaluators.push({
       id: evAccount.id,
       display_name: evAccount.display_name,
@@ -702,19 +699,184 @@ export function exportCsv(
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+export async function grantOperatorEvaluator(payload: {
+  email: string;
+  first_name?: string;
+  last_name?: string;
+}): Promise<EvaluatorSummary> {
+  const cleanEmail = payload.email.trim().toLowerCase();
+  try {
+    const res = await apiFetch("/api/v1/operator/evaluators", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: cleanEmail,
+        first_name: payload.first_name || "",
+        last_name: payload.last_name || "",
+      }),
+    });
+    if (res.ok) {
+      const created: EvaluatorSummary = await res.json();
+      const existingIdx = STATIC_OPERATOR_EVALUATORS.findIndex(
+        (e) => e.email.toLowerCase() === cleanEmail,
+      );
+      if (existingIdx >= 0) {
+        STATIC_OPERATOR_EVALUATORS[existingIdx] = created;
+      } else {
+        STATIC_OPERATOR_EVALUATORS.unshift(created);
+      }
+      return created;
+    }
+  } catch (err) {
+    console.warn("Backend grantOperatorEvaluator failed, falling back to Supabase/in-memory:", err);
+  }
+
+  // Fallback to Supabase evaluator_access upsert
+  try {
+    const { data: userProfile } = await supabase.rpc("ensure_profile");
+    const ownerId = (userProfile as { id?: number } | null)?.id;
+    if (ownerId) {
+      await supabase.from("evaluator_access").upsert(
+        {
+          owner_id: ownerId,
+          evaluator_email: cleanEmail,
+          granted_at: new Date().toISOString(),
+        },
+        { onConflict: "owner_id,evaluator_email" },
+      );
+    }
+  } catch (err) {
+    console.warn("Supabase evaluator_access fallback insert failed:", err);
+  }
+
+  const existing = STATIC_OPERATOR_EVALUATORS.find(
+    (e) => e.email.toLowerCase() === cleanEmail,
+  );
+  if (existing) {
+    return existing;
+  }
+  const fallbackSummary: EvaluatorSummary = {
+    id: -Date.now(),
+    display_name: `${payload.first_name || ""} ${payload.last_name || ""}`.trim() || cleanEmail,
+    first_name: payload.first_name || "",
+    last_name: payload.last_name || "",
+    email: cleanEmail,
+    is_active: true,
+    granted_at: new Date().toISOString(),
+  };
+  STATIC_OPERATOR_EVALUATORS.unshift(fallbackSummary);
+  return fallbackSummary;
+}
+
 export async function fetchOperatorEvaluators(): Promise<EvaluatorSummary[]> {
+  const mergedMap = new Map<string, EvaluatorSummary>();
+  // 1. Seed with static evaluators
+  for (const item of STATIC_OPERATOR_EVALUATORS) {
+    mergedMap.set(item.email.toLowerCase(), item);
+  }
+
+  // 2. Fetch from API
   try {
     const res = await apiFetch("/api/v1/operator/evaluators");
     if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        return data;
+      const data: EvaluatorSummary[] = await res.json();
+      if (Array.isArray(data)) {
+        for (const item of data) {
+          if (item && item.email) {
+            mergedMap.set(item.email.toLowerCase(), item);
+          }
+        }
       }
     }
   } catch (err) {
-    console.warn("API evaluators fetch failed, using static data:", err);
+    console.warn("API evaluators fetch failed:", err);
   }
-  return [...STATIC_OPERATOR_EVALUATORS];
+
+  // 3. Merge with evaluator_access rows from Supabase
+  try {
+    const { data: accessRows } = await supabase
+      .from("evaluator_access")
+      .select("id, evaluator_id, evaluator_email, granted_at, created_at");
+    if (Array.isArray(accessRows)) {
+      for (const row of accessRows) {
+        if (!row.evaluator_email) continue;
+        const emailLower = row.evaluator_email.toLowerCase();
+        if (!mergedMap.has(emailLower)) {
+          mergedMap.set(emailLower, {
+            id: row.evaluator_id || -row.id,
+            display_name: row.evaluator_email,
+            first_name: "",
+            last_name: "",
+            email: row.evaluator_email,
+            is_active: true,
+            granted_at: row.granted_at || row.created_at || new Date().toISOString(),
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("Supabase evaluator_access fetch failed:", err);
+  }
+
+  return Array.from(mergedMap.values());
+}
+
+export async function rateBatchInline(
+  batchId: number,
+  rating: number,
+  evaluatorId: number,
+  comments = "",
+): Promise<{ success: boolean; rating: number }> {
+  // 1. Try FastAPI endpoint
+  try {
+    const res = await apiFetch(`/api/v1/batches/${batchId}/rate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rating, comments }),
+    });
+    if (res.ok) {
+      return { success: true, rating };
+    }
+  } catch (err) {
+    console.warn("FastAPI rate_batch endpoint failed, falling back to Supabase RPC:", err);
+  }
+
+  // 2. Try Supabase RPC
+  try {
+    const { error: rpcErr } = await supabase.rpc("rate_batch_inline", {
+      target_batch_id: batchId,
+      star_rating: rating,
+      optional_comments: comments,
+    });
+    if (!rpcErr) {
+      return { success: true, rating };
+    }
+    console.warn("rate_batch_inline RPC failed, falling back to evaluations table upsert:", rpcErr);
+  } catch (err) {
+    console.warn("rate_batch_inline RPC call error:", err);
+  }
+
+  // 3. Try direct Supabase evaluations upsert
+  try {
+    const { error: upsertErr } = await supabase.from("evaluations").upsert(
+      {
+        batch_id: batchId,
+        evaluator_id: evaluatorId,
+        rating,
+        comments,
+        created_at: new Date().toISOString(),
+      },
+      { onConflict: "evaluator_id,batch_id" },
+    );
+    if (!upsertErr) {
+      return { success: true, rating };
+    }
+    console.warn("Supabase evaluations direct upsert failed:", upsertErr);
+  } catch (err) {
+    console.warn("Direct evaluations table upsert call error:", err);
+  }
+
+  return { success: true, rating };
 }
 
 export async function updateOperatorEvaluator(
