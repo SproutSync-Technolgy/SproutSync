@@ -1,5 +1,6 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { apiFetch, supabase } from "../supabase";
+import { apiUrl } from "../config";
 import { errorMessage, type Device, type Reading, type WorkspaceData } from "./workspace";
 
 export type MQTTStatus = {
@@ -48,14 +49,21 @@ export function mergeReadings(current: Reading[], incoming: Reading[]): Reading[
 
 export function useLiveTelemetry(profileId: number, setData: Dispatch<SetStateAction<WorkspaceData>>) {
   const [mqtt, setMqtt] = useState<MQTTStatus | null>(null);
+  const [realtime, setRealtime] = useState(false);
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
+  const realtimeRef = useRef(false);
+
   useEffect(() => {
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
     let controller: AbortController | null = null;
     let cursor: number | undefined;
     let deviceIds: string | undefined;
+
+    const isLocal = typeof window !== "undefined" && ["localhost", "127.0.0.1"].includes(window.location.hostname);
+    const hasBackendApi = Boolean(apiUrl) || isLocal;
+
     const refresh = async () => {
       if (!active) return;
       if (document.visibilityState === "visible") {
@@ -74,13 +82,20 @@ export function useLiveTelemetry(profileId: number, setData: Dispatch<SetStateAc
             readings: mergeReadings(current.readings, next.readings).filter((r) => next.devices.some((d) => d.id === r.device_id)),
           }));
         } catch (err) {
-          if (active) setError(errorMessage(err));
+          if (!active) return;
+          // If Supabase Realtime is actively connected, don't scream with a breaking error banner
+          if (realtimeRef.current) {
+            console.warn("Backend live snapshot poll skipped, relying on Supabase Realtime:", err);
+          } else {
+            setError(errorMessage(err));
+          }
         } finally {
           clearTimeout(timeout);
         }
       }
-      if (active) timer = setTimeout(refresh, 2000);
+      if (active) timer = setTimeout(refresh, realtimeRef.current ? 10000 : 2000);
     };
+
     // Database push updates provide immediate readings; snapshots recover missed packets
     // and keep live monitoring usable when Realtime is unavailable.
     const channel = supabase.channel(`live-telemetry-${profileId}`)
@@ -90,14 +105,31 @@ export function useLiveTelemetry(profileId: number, setData: Dispatch<SetStateAc
         setData((current) => current.devices.some((d) => d.id === reading.device_id)
           ? { ...current, readings: mergeReadings(current.readings, [reading]) } : current);
       })
-      .subscribe();
-    void refresh();
+      .subscribe((status) => {
+        if (!active) return;
+        if (status === "SUBSCRIBED") {
+          realtimeRef.current = true;
+          setRealtime(true);
+          setError("");
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          realtimeRef.current = false;
+          setRealtime(false);
+        }
+      });
+
+    // Only start HTTP polling if an API URL is configured or running on localhost
+    if (hasBackendApi) {
+      void refresh();
+    }
+
     return () => {
       active = false;
+      realtimeRef.current = false;
       clearTimeout(timer);
       controller?.abort();
       void supabase.removeChannel(channel);
     };
   }, [profileId, retry, setData]);
-  return { mqtt, error, retry: () => setRetry((value) => value + 1) };
+
+  return { mqtt, realtime, error, liveError: error, retry: () => setRetry((value) => value + 1) };
 }

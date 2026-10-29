@@ -566,8 +566,10 @@ export default function Workspace({
   const currentReading = deviceReadings[0];
   const readingDevice = data.devices.find((d) => d.id === currentReading?.device_id);
   const readingStale = Boolean(currentReading && (
-    live.error || (readingDevice?.mqtt_topic_prefix && (!live.mqtt?.connected || !["online", "fault"].includes(readingDevice.status))) ||
-    Date.now() - Date.parse(currentReading.received_at ?? currentReading.recorded_at) > (live.mqtt?.stale_seconds ?? 30) * 1000
+    live.error ||
+    (readingDevice && !["online", "fault"].includes(readingDevice.status)) ||
+    (live.mqtt && !live.mqtt.connected) ||
+    Date.now() - Date.parse(currentReading.received_at ?? currentReading.recorded_at) > (live.mqtt?.stale_seconds ?? 120) * 1000
   ));
   const initials = (profile.first_name || profile.display_name || profile.email)
     .trim()

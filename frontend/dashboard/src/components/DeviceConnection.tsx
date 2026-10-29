@@ -4,7 +4,17 @@ import { bluetoothSupported, registerNearby, scanBluetooth, scanWifi, type Nearb
 import { errorMessage, type Device } from "../data/workspace";
 import { Btn } from "./ProtoPrimitives";
 
-export function LiveConnectionStatus({ mqtt, error, retry }: { mqtt: MQTTStatus | null; error: string; retry: () => void }) {
+export function LiveConnectionStatus({
+  mqtt,
+  realtime,
+  error,
+  retry,
+}: {
+  mqtt: MQTTStatus | null;
+  realtime?: boolean;
+  error: string;
+  retry: () => void;
+}) {
   const states: Record<string, string> = {
     disabled: "Live MQTT is disabled on the server.",
     configuration_error: "The server MQTT configuration needs attention.",
@@ -14,10 +24,37 @@ export function LiveConnectionStatus({ mqtt, error, retry }: { mqtt: MQTTStatus 
     subscription_error: "The MQTT broker rejected a topic subscription. Check topic permissions.",
     connected: "MQTT connected. Sensor packets update this view automatically; recovery checks run every 2 seconds.",
   };
-  return <div className="mb-4 rounded-xl border border-border p-3 text-sm">
-    <p role="status">{error ? "Live updates unavailable: " + error : mqtt ? states[mqtt.state] ?? "Checking MQTT connection…" : "Checking live device service…"}</p>
-    {(error || (mqtt && !mqtt.connected)) && <Btn variant="ghost" onClick={retry}>Retry live connection</Btn>}
-  </div>;
+
+  if (mqtt?.connected) {
+    return (
+      <div className="mb-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-800 dark:text-emerald-300">
+        <p role="status">{states[mqtt.state] ?? "MQTT connected."}</p>
+      </div>
+    );
+  }
+
+  if (realtime) {
+    return (
+      <div className="mb-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-800 dark:text-emerald-300">
+        <p role="status">Live telemetry connected via Supabase Realtime. Sensor readings update automatically.</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="mb-4 rounded-xl border border-border p-3 text-sm">
+        <p role="status">Live updates unavailable: {error}</p>
+        <Btn variant="ghost" onClick={retry}>Retry live connection</Btn>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-4 rounded-xl border border-border p-3 text-sm">
+      <p role="status">Connecting to live telemetry…</p>
+    </div>
+  );
 }
 
 export function DeviceConnectionForm({ devices, mqtt, liveError, onSaved, onDone }: {
@@ -44,7 +81,7 @@ export function DeviceConnectionForm({ devices, mqtt, liveError, onSaved, onDone
   const detected = Boolean(waiting?.connection_requested_at && latest?.last_seen_at &&
     latest.connection_requested_at === waiting.connection_requested_at &&
     Date.parse(latest.last_seen_at) >= Date.parse(waiting.connection_requested_at) &&
-    ["online", "fault"].includes(latest.status) && !liveError && mqtt?.connected);
+    ["online", "fault"].includes(latest.status) && !liveError && (mqtt ? mqtt.connected : true));
 
   async function searchWifi(manual = false) {
     wifiRequest.current?.abort();

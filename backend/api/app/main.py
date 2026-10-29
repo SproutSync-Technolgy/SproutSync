@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 
 from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.orm import Session
@@ -33,6 +34,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="SproutSync API", version="0.2.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"https://.*\.vercel\.app|http://localhost:\d+|http://127\.0\.0\.1:\d+",
+    allow_origins=[settings.frontend_url] if settings.frontend_url else ["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(device_router)
 
 
@@ -194,6 +203,8 @@ class BatchResponse(BaseModel):
     notes: str | None
 
 
+@app.get("/", tags=["health"])
+@app.get("/health", response_model=HealthResponse, tags=["health"])
 @app.get("/api/v1/health", response_model=HealthResponse, tags=["health"])
 def health() -> HealthResponse:
     """Report process liveness without masking database readiness failures."""
