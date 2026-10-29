@@ -148,11 +148,13 @@ export function Modal({
   onClose,
   title,
   children,
+  className = "",
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   children: React.ReactNode;
+  className?: string;
 }) {
   const dialogRef = useDialog(open, onClose);
   const titleId = React.useId();
@@ -171,7 +173,7 @@ export function Modal({
           <motion.div
             ref={dialogRef}
             tabIndex={-1}
-            className="max-h-[90vh] w-full overflow-y-auto overscroll-contain rounded-t-3xl border border-border bg-card p-6 sm:max-w-lg sm:rounded-2xl"
+            className={`max-h-[90vh] w-full overflow-y-auto overscroll-contain rounded-t-3xl border border-border bg-card p-6 sm:max-w-lg sm:rounded-2xl ${className}`}
             initial={{ y: 40, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 40, opacity: 0 }}
@@ -181,12 +183,17 @@ export function Modal({
             aria-modal="true"
             aria-labelledby={titleId}
           >
-            <div className="mb-4 flex items-center justify-between">
-              <h3 id={titleId} className="text-lg font-bold text-foreground">{title}</h3>
+            <div className="mb-4 flex items-start gap-3">
+              <h3
+                id={titleId}
+                className="min-w-0 flex-1 break-words py-1 text-lg font-bold leading-snug text-foreground"
+              >
+                {title}
+              </h3>
               <button
                 onClick={onClose}
                 aria-label="Close dialog"
-                className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary"
+                className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-secondary"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -712,4 +719,3 @@ export function NotebookInspectIcon({
     </svg>
   );
 }
-

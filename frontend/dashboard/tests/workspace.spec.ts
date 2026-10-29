@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { loadEnv } from "vite";
+import { readFile } from "node:fs/promises";
 const env = loadEnv("test", "../..", "VITE_");
 const authHost = new URL(env.VITE_SUPABASE_URL).hostname;
 const key = `sb-${authHost.split(".")[0]}-auth-token`;
@@ -556,4 +557,124 @@ test("landing download opens an APK download instead of the mobile simulator", a
   await expect(
     page.getByRole("link", { name: "Download Android APK", exact: true }),
   ).toHaveAttribute("href", "/downloads/sproutsync-preview.apk");
+});
+
+test("Amaro telemetry exports respect Josh's chamber filter and preserve zero readings", async ({ page }) => {
+  await mock(page);
+  const now = new Date().toISOString();
+  const name = '=1+2, 🌱 <script>window.reportInjected=true</script>';
+  const devices = [
+    { id: 1, owner_id: 1, name, serial_number: "TEST-001", status: "online", is_demo: false, last_seen_at: now },
+    { id: 2, owner_id: 1, name: "Other chamber", serial_number: "TEST-002", status: "online", is_demo: false, last_seen_at: now },
+    { id: 3, owner_id: 1, name: "Empty chamber", serial_number: "TEST-003", status: "pending", is_demo: false, last_seen_at: null },
+  ];
+  const readings = [1, 2].map((device_id) => ({
+    id: device_id, device_id, temperature_c: device_id === 1 ? 26.2 : 29,
+    humidity_percent: 87, water_temperature_c: null, light_lux: 0,
+    water_level_percent: null, wastewater_level_percent: null,
+    sensor_status: "NONE", recorded_at: now, received_at: now,
+  }));
+  await page.route(`https://${authHost}/rest/v1/devices*`, (route) => route.fulfill({ json: devices }));
+  await page.route(`https://${authHost}/rest/v1/telemetry_readings*`, (route) => route.fulfill({ json: readings }));
+  await page.route("**/api/v1/devices/live*", (route) => route.fulfill({ json: {
+    devices, readings, mqtt: { state: "connected", connected: true, stale_seconds: 30 },
+  } }));
+  await page.context().addInitScript(() => { window.print = () => {}; });
+  await page.goto("/operator");
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "Readings", exact: true }).click();
+  await page.getByLabel("Filter readings by chamber").selectOption("1");
+  const downloadReady = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download CSV", exact: true }).click();
+  const download = await downloadReady;
+  expect(download.suggestedFilename()).toBe("sproutsync-sensor-readings.csv");
+  const bytes = await readFile((await download.path())!);
+  expect(bytes.subarray(0, 3).toString("hex")).toBe("efbbbf");
+  const csv = bytes.toString("utf8");
+  expect(csv).toContain("Air Temperature (°C)");
+  expect(csv).toContain(`"'${name}"`);
+  expect(csv).toContain('"26.2","87","","","0"');
+  expect(csv).not.toContain("Other chamber");
+  const reportReady = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Branded report", exact: true }).click();
+  const report = await reportReady;
+  await expect(report.getByRole("heading", { name: "Historical Sensor Telemetry", exact: true })).toBeVisible();
+  await expect(report.getByRole("row")).toHaveCount(2);
+  await expect(report.getByRole("cell", { name, exact: true })).toBeVisible();
+  await expect(report.getByRole("cell", { name: "0", exact: true })).toBeVisible();
+  await expect(report.locator("script")).toHaveCount(0);
+  expect(await report.evaluate(() => "reportInjected" in window)).toBe(false);
+  await report.close();
+  await page.getByLabel("Filter readings by chamber").selectOption("3");
+  await expect(page.getByRole("button", { name: "Download CSV", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Branded report", exact: true })).toBeDisabled();
+  await expect(page.getByText("No sensor readings available for this chamber selection.")).toBeVisible();
+});
+
+test("Amaro notification details and Help FAQ work on a narrow screen", async ({ page }) => {
+  await mock(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route(`https://${authHost}/rest/v1/alerts*`, (route) => route.fulfill({ json: [{
+    id: 1, severity: "critical", title: "Check the water tank", message: "Operator noted a blocked outlet.",
+    acknowledged_at: null, resolved_at: null, created_at: new Date().toISOString(),
+  }] }));
+  await page.goto("/operator");
+  await page.getByRole("button", { name: "Notifications, 1 active alerts", exact: true }).click();
+  const notifications = page.getByRole("dialog");
+  await expect(notifications.getByText("Operator noted a blocked outlet.")).toBeVisible();
+  await expect(notifications.getByText("Critical", { exact: true })).toBeVisible();
+  await notifications.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await page.getByRole("button", { name: "Account menu", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Help & FAQ", exact: true }).click();
+  const help = page.getByRole("dialog");
+  await expect(help.getByRole("heading", { name: "Grow with confidence.", exact: true })).toBeVisible();
+  await expect(help.locator(".help-area-card")).toHaveCount(5);
+  await help.locator("summary").filter({ hasText: "Where do chamber readings come from?" }).click();
+  await expect(help.getByText("Readings are shown when a connected chamber reports them.", { exact: false })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: "test-results/amaro-help-mobile.png", fullPage: true });
+  await page.keyboard.press("Escape");
+  await expect(help).toBeHidden();
+});
+
+test("Amaro account and audit layouts keep search, event order, and mobile reflow", async ({ page }) => {
+  await mock(page, "superadmin");
+  await page.route("**/api/v1/superadmin/accounts", (route) => route.fulfill({ json: [] }));
+  await page.route(`https://${authHost}/rest/v1/activity_logs*`, (route) => route.fulfill({ json: [
+    { id: 2, action: "register_nearby_device", resource: "devices:ESP32-1:wifi", created_at: "2026-10-29T02:00:00Z" },
+    { id: 1, action: "update_account", resource: "users:5", created_at: "2026-10-28T02:00:00Z" },
+  ] }));
+  await page.goto("/superadmin");
+  const nav = page.getByRole("navigation", { name: "Main navigation" });
+  await nav.getByRole("button", { name: "Accounts", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Accounts Directory & Governance", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: "test-results/amaro-accounts-desktop.png", fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const accountRow = page.locator(".accounts-directory-table tbody tr").first();
+  const accountCard = await accountRow.boundingBox();
+  const accountCell = await accountRow.getByRole("cell").first().boundingBox();
+  expect(accountCell!.width / accountCard!.width).toBeGreaterThan(0.8);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: "test-results/amaro-accounts-mobile.png", fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await nav.getByRole("button", { name: "Audit Log", exact: true }).click();
+  await expect(page.getByText("2 events recorded", { exact: true })).toBeVisible();
+  await expect(page.getByRole("row").nth(1)).toContainText("devices:ESP32-1:wifi");
+  const search = page.getByRole("searchbox", { name: "Search audit events", exact: true });
+  await search.fill("esp32-1");
+  await expect(page.getByRole("searchbox")).toHaveAccessibleName("Search audit events");
+  await expect(page.getByText("1 event found", { exact: true })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "users:5", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Clear audit search", exact: true }).click();
+  await expect(page.getByText("2 events recorded", { exact: true })).toBeVisible();
+  await search.fill("unknown");
+  await expect(page.getByText("No audit events match your search. Try another action, target, or date.")).toBeVisible();
+  await search.fill("");
+  await page.setViewportSize({ width: 390, height: 844 });
+  const auditRow = page.locator(".audit-log tbody tr").first();
+  const auditCard = await auditRow.boundingBox();
+  const auditCell = await auditRow.getByRole("cell").first().boundingBox();
+  expect(auditCell!.width / auditCard!.width).toBeGreaterThan(0.8);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: "test-results/amaro-audit-mobile.png", fullPage: true });
 });

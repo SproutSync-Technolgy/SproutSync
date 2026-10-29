@@ -109,7 +109,10 @@ export function PersonalDetails({
           {profile.email}
         </p>
       )}
-      <form onSubmit={submit}>
+      <form
+        onSubmit={submit}
+        className={editing && identityLocked ? "mt-6" : undefined}
+      >
         <fieldset disabled={busy} className="space-y-4">
           {editDetails ? (
             <>
