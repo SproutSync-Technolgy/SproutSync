@@ -265,32 +265,6 @@ button:disabled {
   font-size: 10px;
   text-align: center;
 }
-.sidebar-account {
-  flex-shrink: 0;
-  margin-top: auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 10px;
-  border: 1px solid var(--neutral-200);
-  border-radius: 14px;
-  background: #eef6f0;
-}
-.sidebar-account > div {
-  min-width: 0;
-  flex: 1;
-}
-.sidebar-account strong {
-  display: block;
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.sidebar-account small {
-  color: var(--neutral-700);
-  font-size: 11px;
-}
 .avatar {
   display: inline-grid;
   place-items: center;

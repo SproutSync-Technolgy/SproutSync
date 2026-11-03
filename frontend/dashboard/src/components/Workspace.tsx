@@ -713,24 +713,6 @@ export default function Workspace({
           {roleLabel} workspace
         </p>
         <WorkspaceNavigation items={nav} page={page} alertCount={activeAlerts.length} onNavigate={navigate} surface="sidebar" />
-        <div className="sidebar-account">
-          <span className="avatar">
-            {profile.avatar_url ? (
-              <img
-                src={profile.avatar_url}
-                alt=""
-                referrerPolicy="no-referrer"
-                className="h-full w-full rounded-full object-cover"
-              />
-            ) : (
-              initials
-            )}
-          </span>
-          <div>
-            <strong>{profile.display_name || profile.email}</strong>
-            <small>{roleLabel}</small>
-          </div>
-        </div>
       </aside>
       <div className="app-body">
         <header className="app-topbar">

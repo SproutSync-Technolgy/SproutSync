@@ -109,7 +109,8 @@ metrics stack, and dialogs remain usable without horizontal scrolling.
 
 The supplied dashboard-animation and sidebar-upgrade clips guide workspace
 interactions: a light sidebar, green moving selection highlight, restrained
-hover feedback, grouped expandable pages, and an inset account card. Groups
+hover feedback and grouped expandable pages. Account controls live in the
+top bar. Groups
 contain only pages allowed for the current role. A shortcut into a collapsed
 group reveals the selected page. The mobile navigation dialog exposes the full
 permitted page list alongside the compact bottom navigation.
