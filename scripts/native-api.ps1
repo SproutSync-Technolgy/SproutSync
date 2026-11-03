@@ -31,6 +31,19 @@ function Get-RecordedProcess($Record) {
     if ($process -and $process.StartTime.ToUniversalTime().Ticks.ToString() -eq [string]$Record.started_at) { return $process }
     return $null
 }
+function Test-ReadyDevelopmentSession([string]$RepoRoot, [string]$Backend) {
+    try {
+        $state = Get-DevelopmentState (Get-DevelopmentStatePath $RepoRoot)
+        if (-not $state -or $state.backend -ne $Backend) { return $false }
+        if ([IO.Path]::GetFullPath($state.repo_root) -ne [IO.Path]::GetFullPath($RepoRoot)) { return $false }
+        if (-not (Get-RecordedProcess $state.dashboard)) { return $false }
+        if ($Backend -eq 'Native' -and -not (Get-RecordedProcess $state.api)) { return $false }
+        $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/v1/health' -TimeoutSec 3
+        if ($health.status -ne 'ok' -or $health.service -ne 'sproutsync-api') { return $false }
+        $dashboard = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:5173' -TimeoutSec 3
+        return $dashboard.StatusCode -eq 200
+    } catch { return $false }
+}
 function Stop-RecordedProcess($Record) {
     $process = Get-RecordedProcess $Record
     if ($process) {

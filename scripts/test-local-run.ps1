@@ -25,6 +25,11 @@ try {
     if (-not $ready) { throw 'Local services did not become ready. Read .tools/local-run-test.*.log.' }
     $output = Get-Content -LiteralPath '.tools/local-run-test.stdout.log' -Raw
     if ($output -match '\[INSTALL\]') { throw 'Complete dependencies unexpectedly triggered installation during normal startup.' }
+    $originalState = Get-DevelopmentState (Get-DevelopmentStatePath $repoRoot)
+    $repeatOutput = (& .\start.bat 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0 -or $repeatOutput -notmatch 'Existing healthy session reused') { throw 'Repeated start.bat did not reuse the healthy session.' }
+    $reusedState = Get-DevelopmentState (Get-DevelopmentStatePath $repoRoot)
+    if ($originalState.session_id -ne $reusedState.session_id -or $originalState.api.process_id -ne $reusedState.api.process_id -or $originalState.dashboard.process_id -ne $reusedState.dashboard.process_id) { throw 'Repeated start replaced the existing session or processes.' }
     & .\stop.bat
     if ($LASTEXITCODE -ne 0) { throw 'stop.bat failed.' }
     if (-not $launcher.WaitForExit(10000)) { throw 'The launch terminal did not exit after stop.bat.' }
@@ -33,7 +38,14 @@ try {
     if ($launcher.ExitCode -ne 0) { throw "start.bat exited with $($launcher.ExitCode) after shutdown." }
     & .\stop.bat
     if ($LASTEXITCODE -ne 0) { throw 'Repeated stop.bat should succeed.' }
-    Write-Host 'Local-run smoke passed: start.bat reused dependencies, API/dashboard returned HTTP 200, stop.bat stopped both, and repeated stop was safe.'
+    $conflictListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 8000)
+    $conflictListener.Start()
+    try {
+        $conflictOutput = (& .\start.bat 2>&1 | Out-String)
+        if ($LASTEXITCODE -eq 0 -or $conflictOutput -notmatch 'could not be verified') { throw 'An unmanaged occupied port was incorrectly treated as a ready session.' }
+        if (-not $conflictListener.Server.IsBound) { throw 'The unrelated listener was stopped.' }
+    } finally { $conflictListener.Stop() }
+    Write-Host 'Local-run smoke passed: dependencies reused, API/dashboard HTTP 200, repeated start reused the same processes, stop/repeated stop worked, and unrelated port conflicts were preserved.'
 } finally {
     if (Test-Path -LiteralPath (Get-DevelopmentStatePath $repoRoot)) { Stop-DevelopmentSession -RepoRoot $repoRoot }
     if ($launcher -and -not $launcher.HasExited) { Stop-Process -InputObject $launcher -ErrorAction SilentlyContinue }

@@ -10,6 +10,10 @@ Run commands in the repository folder using **PowerShell**.
 
 Open **http://localhost:5173**. Run **`.\stop.bat`** in another terminal to stop
 the local API and dashboard, or press **Ctrl+C** in the launch terminal.
+Running **`.\start.bat`** again recognizes a healthy session from this checkout,
+prints the local URL, and exits successfully without installing or restarting
+anything. After editing backend `.env` settings, run **`.\stop.bat`** and then
+**`.\start.bat`** to load them.
 
 Run **`.\verify.bat`** to list required libraries, installed versions, missing
 packages, and configuration problems. Verification installs nothing and starts
@@ -78,8 +82,11 @@ For packages only, without checking the database or starting services, run
 
 ## If something fails
 
-- **Port already in use:** run `.\stop.bat`; stop sessions from older launcher
-  versions with Ctrl+C in their original terminal.
+- **Port already in use:** a healthy session from this checkout is reused. For
+  an incomplete session, run `.\stop.bat` and retry. If another app or checkout
+  owns the port, stop it in its own terminal; this checkout's stop command does
+  not stop unrelated processes. Stop older launcher versions with Ctrl+C in
+  their original terminal.
 - **Missing configuration:** fill the five `.env` values above and restart.
 - **API error:** read `.tools/dev-api.stderr.log`.
 - **Dashboard error:** read `.tools/dev-dashboard.stderr.log`.

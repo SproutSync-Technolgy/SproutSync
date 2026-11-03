@@ -24,7 +24,16 @@ try {
     & node -e 'const [major, minor] = process.versions.node.split(String.fromCharCode(46)).map(Number); process.exit(major > 22 || (major === 22 && minor >= 12) ? 0 : 1)'
     if ($LASTEXITCODE -ne 0) { throw 'Node.js 22.12+ is required. Upgrade Node.js and reopen the terminal.' }
     if ($Backend -eq 'Docker' -and -not (Get-Command docker -ErrorAction SilentlyContinue)) { throw 'Docker is missing. Install/start Docker Desktop, or use start.bat (native mode).' }
-    if (-not $InstallOnly -and ((Test-LocalPort 5173) -or (Test-LocalPort 8000))) { throw 'A local service is already using port 5173 or 8000. Run stop.bat, or stop the older session with Ctrl+C.' }
+    if (-not $InstallOnly -and ((Test-LocalPort 5173) -or (Test-LocalPort 8000))) {
+        if (Test-ReadyDevelopmentSession -RepoRoot $repoRoot -Backend $Backend) {
+            Write-Host '[OK] Existing healthy session reused. No packages installed or services restarted.'
+            Write-Host 'SproutSync is already running at http://localhost:5173'
+            Write-Host 'API ready at http://localhost:8000/docs.'
+            Write-Host 'To stop or reload backend settings, run stop.bat, then start.bat to start again.'
+            exit 0
+        }
+        throw 'Port 5173 or 8000 is in use, but a healthy session for this checkout and backend could not be verified. Run stop.bat for this checkout; if another app or checkout owns the port, stop it in its own terminal and retry.'
+    }
     Write-Host "Backend mode: $Backend"
     New-Item -ItemType Directory -Force -Path (Join-Path $repoRoot '.tools') | Out-Null
     try { $startupLock = [IO.File]::Open((Join-Path $repoRoot '.tools/development-start.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::Write, [IO.FileShare]::None) }
