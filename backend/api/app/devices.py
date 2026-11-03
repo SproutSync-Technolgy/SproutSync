@@ -49,6 +49,9 @@ class ReadingResponse(BaseModel):
     sensor_status: str
     recorded_at: datetime
     received_at: datetime
+    aggregation: str
+    sample_count: int
+    fault_count: int
 
 
 class ConnectRequest(BaseModel):
@@ -257,7 +260,10 @@ def live_devices(
         query = query.where(Device.id == -1)
     devices = db.scalars(query).all()
     readings_query = select(TelemetryReading).where(
-        TelemetryReading.device_id.in_([d.id for d in devices])
+        TelemetryReading.device_id.in_([d.id for d in devices]),
+        # Historical rollups are loaded separately by the workspace; they must
+        # never replace fresh raw readings in the live recovery stream.
+        TelemetryReading.aggregation == "raw",
     )
     if after_id is None:
         readings_query = readings_query.order_by(TelemetryReading.id.desc())

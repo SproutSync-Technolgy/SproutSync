@@ -678,3 +678,28 @@ test("Amaro account and audit layouts keep search, event order, and mobile reflo
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: "test-results/amaro-audit-mobile.png", fullPage: true });
 });
+
+test("IoT fault status and aggregated history stay distinct from live sensor values", async ({ page }) => {
+  await mock(page);
+  const now = new Date().toISOString();
+  const device = { id: 1, owner_id: 1, name: "Live ESP32", serial_number: "ESP32-SPROUT-01", status: "fault", is_demo: false, mqtt_topic_prefix: "sproutsync", last_seen_at: now };
+  const raw = { id: 10, device_id: 1, temperature_c: 26.2, humidity_percent: 87, water_temperature_c: null, light_lux: 0,
+    water_level_percent: null, wastewater_level_percent: null, sensor_status: "SENSOR_FAULT",
+    aggregation: "raw", sample_count: 1, fault_count: 1, recorded_at: now, received_at: now };
+  const average = { ...raw, id: 11, temperature_c: 99, aggregation: "hourly", sample_count: 60,
+    recorded_at: new Date(Date.now() + 1000).toISOString() };
+  await page.route(`https://${authHost}/rest/v1/devices*`, (route) => route.fulfill({ json: [device] }));
+  await page.route(`https://${authHost}/rest/v1/telemetry_readings*`, (route) => route.fulfill({ json: [average, raw] }));
+  await page.route("**/api/v1/devices/live*", (route) => route.fulfill({ json: {
+    devices: [device], readings: [raw], mqtt: { state: "connected", connected: true, stale_seconds: 30 },
+  } }));
+  await page.goto("/operator");
+  await expect(page.getByText("1 linked device · 1 reporting a sensor fault", { exact: true })).toBeVisible();
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "Readings", exact: true }).click();
+  await expect(page.getByRole("row").filter({ hasText: "Hourly average" })).toContainText("60");
+  const temperature = page.locator("div.rounded-2xl").filter({ has: page.getByText("Air Temperature", { exact: true }) }).first();
+  await expect(temperature.getByText("26.2 °C", { exact: true })).toBeVisible();
+  await expect(temperature.getByText("99 °C", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Device reported: SENSOR_FAULT. Faulty sensor values are unavailable.")).toBeVisible();
+  await page.screenshot({ path: "test-results/iot-archive-live-history.png", fullPage: true });
+});

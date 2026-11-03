@@ -535,3 +535,89 @@ def test_network_discovery_failure_has_actionable_feedback(workspace, monkeypatc
         result.status_code == 503
         and "local network/multicast" in result.json()["detail"]
     )
+
+
+def test_authenticated_backend_client_never_reuses_the_firmware_client_id(monkeypatch):
+    import app.mqtt as mqtt_module
+
+    factory = Mock()
+    monkeypatch.setattr(mqtt_module.mqtt, "Client", factory)
+    monkeypatch.setattr(mqtt_module.threading, "Thread", Mock())
+    monkeypatch.setattr(settings, "mqtt_enabled", True)
+    monkeypatch.setattr(
+        settings, "mqtt_broker_url", "wss://broker.example.invalid:8084/mqtt"
+    )
+    monkeypatch.setattr(settings, "mqtt_username", "test-user")
+    monkeypatch.setattr(settings, "mqtt_password", "test-password")
+    monkeypatch.setattr(settings, "device_id", "ESP32_TEST_01")
+    for _ in range(2):
+        worker = MQTTBridge()
+        worker.start()
+        worker.stop()
+    ids = [call.kwargs["client_id"] for call in factory.call_args_list]
+    assert len(set(ids)) == 2
+    assert all(value.startswith("sproutsync-api-ESP32_TEST_01-") for value in ids)
+    assert "ESP32_TEST_01" not in ids
+    factory.return_value.username_pw_set.assert_called_with(
+        "test-user", "test-password"
+    )
+    factory.return_value.ws_set_options.assert_called_with(path="/mqtt")
+    factory.return_value.tls_set.assert_called()
+    factory.return_value.connect_async.assert_called_with(
+        "broker.example.invalid", 8084, keepalive=30
+    )
+
+
+def test_raw_packets_keep_their_cadence_and_correct_rollup_metadata(workspace):
+    w = workspace
+    connect(w)
+    now = datetime.now(timezone.utc)
+    assert ingest_message(
+        w.db,
+        "sproutsync/telemetry",
+        b'{"airTemp":26,"waterTemp":-127,"lux":0}',
+        received_at=now,
+    )
+    fault = w.db.scalar(select(TelemetryReading))
+    assert (
+        fault.aggregation == "raw"
+        and fault.sample_count == 1
+        and fault.fault_count == 1
+    )
+    assert fault.metric_counts["water_temperature_c"] == 0
+    assert fault.metric_counts["light_lux"] == 1 and fault.light_lux == 0
+    assert ingest_message(
+        w.db,
+        "sproutsync/telemetry",
+        b'{"airTemp":27,"waterTemp":22,"lux":0}',
+        received_at=now + timedelta(seconds=2),
+    )
+    assert count(w.db) == 2
+    healthy = w.db.scalar(select(TelemetryReading).order_by(TelemetryReading.id.desc()))
+    assert (
+        healthy.fault_count == 0 and healthy.metric_counts["water_temperature_c"] == 1
+    )
+
+
+def test_rollups_never_replace_raw_readings_in_live_recovery(workspace):
+    w = workspace
+    connect(w)
+    assert ingest_message(w.db, "sproutsync/telemetry", b'{"airTemp":26}')
+    raw = w.db.scalar(select(TelemetryReading))
+    w.db.add(
+        TelemetryReading(
+            owner_id=w.owner.id,
+            device_id=w.device.id,
+            temperature_c=99,
+            aggregation="hourly",
+            sample_count=60,
+            recorded_at=datetime.now(timezone.utc),
+        )
+    )
+    w.db.commit()
+    readings = w.client.get("/api/v1/devices/live").json()["readings"]
+    assert len(readings) == 1 and readings[0]["id"] == raw.id
+    assert readings[0]["aggregation"] == "raw" and readings[0]["sample_count"] == 1
+    assert (
+        w.client.get(f"/api/v1/devices/live?after_id={raw.id}").json()["readings"] == []
+    )

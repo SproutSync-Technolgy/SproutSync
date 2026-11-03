@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -95,10 +95,32 @@ class Device(Base):
 
 
 class TelemetryReading(Base):
-    """One validated MQTT packet; absent or faulty sensors remain null."""
+    """A raw telemetry packet or its hourly/daily summary."""
 
     __tablename__ = "telemetry_readings"
-    __table_args__ = (UniqueConstraint("device_id", "message_id", name="telemetry_device_message_unique"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "device_id", "message_id", name="telemetry_device_message_unique"
+        ),
+        CheckConstraint(
+            "aggregation in ('raw', 'hourly', 'daily')",
+            name="telemetry_aggregation_check",
+        ),
+        CheckConstraint("sample_count > 0", name="telemetry_sample_count_check"),
+        CheckConstraint(
+            "fault_count >= 0 and fault_count <= sample_count",
+            name="telemetry_fault_count_check",
+        ),
+        Index(
+            "telemetry_rollup_bucket_unique",
+            "device_id",
+            "aggregation",
+            "recorded_at",
+            unique=True,
+            postgresql_where=text("aggregation in ('hourly', 'daily')"),
+            sqlite_where=text("aggregation in ('hourly', 'daily')"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
@@ -116,6 +138,14 @@ class TelemetryReading(Base):
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    aggregation: Mapped[str] = mapped_column(
+        String(8), default="raw", server_default="raw"
+    )
+    sample_count: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    fault_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    metric_counts: Mapped[dict[str, int]] = mapped_column(
+        JSON, default=dict, server_default="{}"
+    )
 
 
 class EvaluatorAccess(Base):

@@ -37,6 +37,7 @@ services:
       MQTT_BROKER_URL: ${MQTT_BROKER_URL:-wss://broker.hivemq.com:8884/mqtt}
       MQTT_USERNAME: ${MQTT_USERNAME:-}
       MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+      DEVICE_ID: ${DEVICE_ID:-}
       MQTT_STALE_SECONDS: ${MQTT_STALE_SECONDS:-30}
     ports: ["127.0.0.1:8000:8000"]
     extra_hosts:

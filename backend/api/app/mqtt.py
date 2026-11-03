@@ -6,6 +6,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 import paho.mqtt.client as mqtt
 from pydantic import (
@@ -160,6 +161,14 @@ def ingest_message(
             message_id=message_id,
             recorded_at=recorded,
             received_at=received,
+            aggregation="raw",
+            sample_count=1,
+            fault_count=int(device.status == "fault"),
+            metric_counts={
+                column: int(values[column] is not None)
+                for column, _, _ in SENSORS.values()
+            }
+            | {"voltage": int(packet.voltage is not None)},
         )
     )
     try:
@@ -197,7 +206,13 @@ class MQTTBridge:
         self._stop.clear()
         self.state = "connecting"
         self.client = mqtt.Client(
-            mqtt.CallbackAPIVersion.VERSION2, transport="websockets"
+            mqtt.CallbackAPIVersion.VERSION2,
+            transport="websockets",
+            client_id=(
+                f"sproutsync-api-{settings.device_id}-{uuid4().hex[:12]}"
+                if settings.device_id
+                else ""
+            ),
         )
         self.client.ws_set_options(path=url.path or "/mqtt")
         self.client.tls_set()

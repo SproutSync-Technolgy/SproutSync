@@ -65,6 +65,9 @@ export type Reading = {
   sd_ok?: boolean | null;
   sensor_status?: string;
   received_at?: string;
+  aggregation?: "raw" | "hourly" | "daily";
+  sample_count?: number;
+  fault_count?: number;
 };
 export type Watering = {
   id: number;

@@ -5,6 +5,28 @@ The operator workspace accepts the test page's MQTT contract and defaults to
 telemetry; the browser receives authorized Supabase Realtime inserts and checks
 the API every two seconds to recover missed updates and refresh connection state.
 
+## Authenticated EMQX connection
+
+The working ZIP uses an EMQX TLS WebSocket endpoint on port 8084. Configure
+`MQTT_BROKER_URL=wss://<cluster-host>:8084/mqtt`, `MQTT_USERNAME`, and
+`MQTT_PASSWORD` in the backend's local `.env` or hosting environment. Never put
+MQTT credentials in `VITE_` variables or browser code. Keep the existing
+Supabase/database settings when changing only the broker connection.
+
+`DEVICE_ID` is an optional firmware client label. When supplied, the API uses
+`sproutsync-api-<DEVICE_ID>-<random suffix>` as its own MQTT client ID so it cannot
+disconnect the ESP32 by reusing the board's client ID. This label does not rename
+a registered hardware serial, assign an owner, change subscriptions, or replace
+the packet's `serialNumber`. The configured database device/topic binding remains
+authoritative. Existing controllers publishing on `sproutsync/telemetry` use
+`sproutsync` as their prefix.
+
+Restart the backend after updating `.env`. For a hosted backend, also set these
+server environment variables on that host; local `.env` is deliberately untracked.
+The broker check below only subscribes, and never publishes device commands.
+
+## Add the controller
+
 1. Find and register an ESP32 using **Add device → Search Wi-Fi / Search Bluetooth**.
    See [wireless discovery and firmware integration](device-discovery.md).
    Alternatively, have an administrator grant an existing printed hardware serial.
@@ -78,14 +100,18 @@ Restart the launcher; it installs missing or outdated requirements automatically
 .\start.bat
 ```
 
-The launcher applies migrations through `0014_wireless_discovery` before starting the API.
-The server defaults already match HiveMQ. Optional server-only `.env` settings:
+The launcher applies pending migrations before starting the API. The shared
+development database already has the ZIP's migrations through
+`0018_telemetry_rollups`; their original history is included so Alembic can
+recognize it. See [schema compatibility](database-schema.md).
+Optional server-only `.env` settings:
 
 | Setting | Default |
 | --- | --- |
 | `MQTT_ENABLED` | `true` |
 | `MQTT_BROKER_URL` | `wss://broker.hivemq.com:8884/mqtt` |
 | `MQTT_USERNAME`, `MQTT_PASSWORD` | Empty for the shared test broker |
+| `DEVICE_ID` | Empty; optional firmware label for a distinct backend client ID |
 | `MQTT_STALE_SECONDS` | `30` |
 
 With no fresh packet for 30 seconds, or when the server loses the broker
@@ -95,6 +121,12 @@ new telemetry restores online/fault status. The browser also retries automatical
 An API failure shows an error with a retry action. For a pending device, check
 its Wi-Fi and topic prefix, then retry detection; changing a prefix preserves
 stored history.
+
+Existing hourly/daily history is labelled with its aggregation and number of
+source samples in tables and exports. Live recovery and current sensor cards use
+raw packets. Each valid incoming raw packet is still stored; this integration
+does not start an automatic compaction/retention worker. A connected controller
+reporting a sensor fault is identified separately from a healthy online device.
 
 Devices with recorded telemetry cannot be reassigned through the API because
 their readings retain the original ownership. This avoids exposing history to a

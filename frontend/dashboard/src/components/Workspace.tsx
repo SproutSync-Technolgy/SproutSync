@@ -493,6 +493,14 @@ export default function Workspace({
     }
   }
   const activeAlerts = data.alerts.filter((a) => a.status !== "resolved");
+  const recentStatusDevices = data.devices.filter((device) => {
+    const lastSeenAt = device.last_seen_at ? Date.parse(device.last_seen_at) : Number.NaN;
+    return ["online", "fault"].includes(device.status) &&
+      (device.is_demo || (Number.isFinite(lastSeenAt) && Date.now() - lastSeenAt < (live.mqtt?.stale_seconds ?? 30) * 1000));
+  });
+  const onlineDevices = recentStatusDevices.filter((device) => device.status === "online");
+  const faultingDevices = recentStatusDevices.filter((device) => device.status === "fault");
+  const deviceStatusDetail = `${data.devices.length} linked ${data.devices.length === 1 ? "device" : "devices"}${faultingDevices.length ? ` · ${faultingDevices.length} reporting ${faultingDevices.length === 1 ? "a sensor fault" : "sensor faults"}` : ""}`;
   const notificationAlerts = activeAlerts.filter((a) =>
     a.category === "harvest"
       ? preferences.harvest_enabled
@@ -543,8 +551,11 @@ export default function Workspace({
   const deviceReadings = data.readings.filter(
     (r) => selectedDevice === "all" || r.device_id === Number(selectedDevice),
   );
+  const liveDeviceReadings = deviceReadings.filter((reading) => !reading.aggregation || reading.aggregation === "raw");
   const telemetryExportHeaders = [
     "Chamber",
+    "Aggregation",
+    "Samples represented",
     "Air Temperature (°C)",
     "Humidity (%)",
     "Fresh Water (%)",
@@ -555,6 +566,8 @@ export default function Workspace({
   ];
   const telemetryExportRows = deviceReadings.map((reading) => [
     deviceName(reading.device_id),
+    reading.aggregation === "hourly" ? "Hourly average" : reading.aggregation === "daily" ? "Daily average" : "Raw sample",
+    reading.sample_count ?? 1,
     reading.temperature_c ?? "",
     reading.humidity_percent ?? "",
     reading.water_level_percent ?? "",
@@ -563,7 +576,7 @@ export default function Workspace({
     reading.wastewater_level_percent ?? "",
     reading.recorded_at,
   ]);
-  const currentReading = deviceReadings[0];
+  const currentReading = liveDeviceReadings[0];
   const readingDevice = data.devices.find((d) => d.id === currentReading?.device_id);
   const readingStale = Boolean(currentReading && (
     live.error ||
@@ -1192,7 +1205,7 @@ export default function Workspace({
                           label="Granted chambers online"
                           value={
                             data.devices.length
-                              ? `${data.devices.filter((d) => d.status === "online").length} / ${data.devices.length} online`
+                              ? `${onlineDevices.length} / ${data.devices.length} online`
                               : "No chambers"
                           }
                           detail="Monitored growth chambers"
@@ -1241,10 +1254,10 @@ export default function Workspace({
                         label="Fleet machine status"
                         value={
                           data.devices.length
-                            ? `${data.devices.filter((d) => d.status === "online").length} / ${data.devices.length} online`
+                            ? `${onlineDevices.length} / ${data.devices.length} online`
                             : "No devices"
                         }
-                        detail="Telemetry connection status"
+                        detail={deviceStatusDetail}
                         onClick={() => navigate("readings")}
                         targetLabel="Readings"
                       />
@@ -1266,10 +1279,10 @@ export default function Workspace({
                         label="Machine status"
                         value={
                           data.devices.length
-                            ? `${data.devices.filter((d) => d.status === "online" && (d.is_demo || (d.last_seen_at && Date.now() - new Date(d.last_seen_at).getTime() < 300000))).length} online`
+                            ? `${onlineDevices.length} online`
                             : "No devices"
                         }
-                        detail={`${data.devices.length} linked devices`}
+                        detail={deviceStatusDetail}
                         onClick={() => navigate("readings")}
                         targetLabel="Readings"
                       />
@@ -1603,7 +1616,7 @@ export default function Workspace({
                         </div>
                         <div className="mt-2 pt-2 border-t border-border/40">
                           <Spark
-                            data={deviceReadings
+                            data={liveDeviceReadings
                               .slice(0, 10).reverse()
                               .flatMap((r) => r.temperature_c == null ? [] : [r.temperature_c])}
                             color="#10b981"
@@ -1646,7 +1659,7 @@ export default function Workspace({
                         </div>
                         <div className="mt-2 pt-2 border-t border-border/40">
                           <Spark
-                            data={deviceReadings
+                            data={liveDeviceReadings
                               .slice(0, 10).reverse()
                               .flatMap((r) => r.humidity_percent == null ? [] : [r.humidity_percent])}
                             color="#3b82f6"
@@ -1687,7 +1700,7 @@ export default function Workspace({
                         </div>
                         <div className="mt-2 pt-2 border-t border-border/40">
                           <Spark
-                            data={deviceReadings
+                            data={liveDeviceReadings
                               .slice(0, 10).reverse()
                               .flatMap((r) => r.water_level_percent == null ? [] : [r.water_level_percent])}
                             color="#f59e0b"
@@ -1730,7 +1743,7 @@ export default function Workspace({
                         </div>
                         <div className="mt-2 pt-2 border-t border-border/40">
                           <Spark
-                            data={deviceReadings
+                            data={liveDeviceReadings
                               .slice(0, 10).reverse()
                               .flatMap((r) => r.water_temperature_c == null ? [] : [r.water_temperature_c])}
                             color="#8b5cf6"
@@ -1772,7 +1785,7 @@ export default function Workspace({
                         </div>
                         <div className="mt-2 pt-2 border-t border-border/40">
                           <Spark
-                            data={deviceReadings
+                            data={liveDeviceReadings
                               .slice(0, 10).reverse()
                               .flatMap((r) => r.light_lux == null ? [] : [r.light_lux])}
                             color="#6366f1"
@@ -1814,7 +1827,7 @@ export default function Workspace({
                         </div>
                         <div className="mt-2 pt-2 border-t border-border/40">
                           <Spark
-                            data={deviceReadings
+                            data={liveDeviceReadings
                               .slice(0, 10).reverse()
                               .flatMap((r) => r.wastewater_level_percent == null ? [] : [r.wastewater_level_percent])}
                             color="#06b6d4"
@@ -1885,6 +1898,8 @@ export default function Workspace({
                     {table(
                       [
                         "Chamber",
+                        "Aggregation",
+                        "Samples",
                         "Air °C",
                         "Humidity %",
                         "Fresh water %",
@@ -1895,6 +1910,8 @@ export default function Workspace({
                       ],
                       deviceReadings.map((r) => [
                         deviceName(r.device_id),
+                        r.aggregation === "hourly" ? "Hourly average" : r.aggregation === "daily" ? "Daily average" : "Raw sample",
+                        r.sample_count ?? 1,
                         r.temperature_c !== null ? `${r.temperature_c} °C` : "—",
                         r.humidity_percent !== null ? `${r.humidity_percent} %` : "—",
                         r.water_level_percent !== null ? `${r.water_level_percent} %` : "—",

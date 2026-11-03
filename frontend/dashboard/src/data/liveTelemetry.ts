@@ -105,6 +105,12 @@ export function useLiveTelemetry(profileId: number, setData: Dispatch<SetStateAc
         setData((current) => current.devices.some((d) => d.id === reading.device_id)
           ? { ...current, readings: mergeReadings(current.readings, [reading]) } : current);
       })
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "telemetry_readings" }, ({ old: row }) => {
+        if (!active) return;
+        const id = Number(row.id);
+        if (!Number.isFinite(id)) return;
+        setData((current) => ({ ...current, readings: current.readings.filter((reading) => reading.id !== id) }));
+      })
       .subscribe((status) => {
         if (!active) return;
         if (status === "SUBSCRIBED") {

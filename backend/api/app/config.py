@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     mqtt_broker_url: str = "wss://broker.hivemq.com:8884/mqtt"
     mqtt_username: str = ""
     mqtt_password: str = ""
+    # Firmware label; the backend uses a distinct, suffixed MQTT client ID.
+    device_id: str = Field(default="", max_length=64, pattern=r"^[A-Za-z0-9:_-]*$")
     mqtt_stale_seconds: int = Field(default=30, ge=5, le=3600)
 
     model_config = SettingsConfigDict(

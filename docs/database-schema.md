@@ -69,3 +69,20 @@ topic prefixes remain enforced. Discovery results/tokens expire in server memory
 and are not stored as devices until the operator selects **Connect device**.
 Browser roles retain their existing write restrictions. Downgrading 0014 removes
 the serial requirement flag without deleting devices or sensor history.
+
+## Working IoT archive compatibility (0015–0018)
+
+The configured shared database was already at `0018_telemetry_rollups` when the
+working IoT archive was integrated. Its missing migration files are restored
+unchanged: BLE transport metadata, demo cleanup, device-alert categories, and
+telemetry rollup metadata. No migration was reapplied or downgraded as part of
+this integration. Revision `0016_remove_demo_workspace_data` irreversibly removes
+labelled demo records and disables automatic sample seeding; review that original
+migration before upgrading a different database that is still behind it.
+
+`telemetry_readings.aggregation` distinguishes `raw`, `hourly`, and `daily` rows.
+`sample_count`, `fault_count`, and per-metric counts describe what each row
+represents. New packets remain raw samples, with faulty/missing sensor counts
+recorded accurately. The live API returns raw rows; the workspace's authorized
+history queries retain the stored rollups and label them explicitly. No automatic
+retention or compaction worker is enabled by this integration.

@@ -15,7 +15,7 @@ with engine.connect() as connection:
     try:
         assert (
             connection.scalar(text("select version_num from alembic_version"))
-            == "0014_wireless_discovery"
+            == "0018_telemetry_rollups"
         )
         actors = []
         for role in ("operator", "operator", "evaluator"):
