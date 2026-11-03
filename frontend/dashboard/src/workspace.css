@@ -118,8 +118,10 @@ button:disabled {
   position: fixed;
   inset: 0 auto 0 0;
   width: 254px;
-  background: var(--brand-950);
-  color: #effbf3;
+  background: linear-gradient(180deg, #ffffff, #f8fbf8);
+  color: var(--brand-950);
+  border-right: 1px solid var(--neutral-200);
+  box-shadow: 4px 0 24px #123f2b04;
   display: flex;
   flex-direction: column;
   z-index: 35;
@@ -136,18 +138,26 @@ button:disabled {
 }
 .sidebar-caption {
   margin: 22px 14px 12px;
-  color: #a5c3b3;
+  color: var(--neutral-700);
   text-transform: uppercase;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 1.5px;
 }
-.app-sidebar nav {
+.workspace-navigation {
   display: grid;
-  gap: 4px;
+  gap: 10px;
+  align-content: start;
+  padding: 4px;
   overflow-y: auto;
 }
-.app-sidebar nav button {
+.app-sidebar > .workspace-navigation {
+  min-height: 0;
+  margin-bottom: 20px;
+}
+.workspace-nav-item {
+  position: relative;
+  isolation: isolate;
   display: flex;
   align-items: center;
   gap: 11px;
@@ -157,15 +167,93 @@ button:disabled {
   border-radius: 11px;
   text-align: left;
   font-size: 13px;
-  color: #c8ded0;
+  color: var(--neutral-700);
+  transition: color 160ms ease, background-color 160ms ease;
 }
-.app-sidebar nav button:hover {
-  background: #ffffff0c;
+.workspace-nav-item + .workspace-nav-item {
+  margin-top: 4px;
 }
-.app-sidebar nav button.selected {
-  background: var(--brand-100);
+.workspace-nav-item:hover {
+  background: var(--brand-50);
   color: var(--brand-900);
+}
+.workspace-nav-item.selected {
+  color: white;
   font-weight: 700;
+}
+.workspace-nav-highlight {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(115deg, var(--brand-700), var(--brand-600));
+  box-shadow: 0 4px 12px #247d4e26;
+  pointer-events: none;
+  z-index: -1;
+}
+.workspace-nav-highlight::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 13px;
+  bottom: 13px;
+  width: 3px;
+  background: #c5f0d3;
+  border-radius: 0 3px 3px 0;
+}
+.workspace-nav-label {
+  flex: 1;
+}
+.workspace-nav-item > svg {
+  flex-shrink: 0;
+  transition: transform 160ms ease;
+}
+.workspace-nav-item:hover > svg {
+  transform: translateX(2px);
+}
+.workspace-nav-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  color: var(--neutral-700);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  text-align: left;
+}
+.workspace-nav-section-toggle:hover {
+  background: var(--brand-50);
+}
+.workspace-nav-section-toggle > svg {
+  margin-left: auto;
+  transition: transform 180ms ease;
+}
+.workspace-nav-section-toggle > svg.expanded {
+  transform: rotate(180deg);
+}
+.workspace-nav-current-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--brand-600);
+}
+.workspace-nav-section-content:not([hidden]) {
+  animation: workspace-section-enter 180ms ease-out;
+}
+@keyframes workspace-section-enter {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.workspace-page-heading:focus {
+  outline: none;
+}
+.mobile-workspace-navigation .more-nav-item {
+  width: 100%;
+  margin-top: 12px;
 }
 .nav-count {
   margin-left: auto;
@@ -178,11 +266,15 @@ button:disabled {
   text-align: center;
 }
 .sidebar-account {
+  flex-shrink: 0;
   margin-top: auto;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 20px 6px 4px;
+  padding: 14px 10px;
+  border: 1px solid var(--neutral-200);
+  border-radius: 14px;
+  background: #eef6f0;
 }
 .sidebar-account > div {
   min-width: 0;
@@ -196,7 +288,7 @@ button:disabled {
   white-space: nowrap;
 }
 .sidebar-account small {
-  color: #adcbbb;
+  color: var(--neutral-700);
   font-size: 11px;
 }
 .avatar {
@@ -1557,6 +1649,8 @@ button:disabled {
     z-index: 40;
   }
   .mobile-bottom-nav button {
+    position: relative;
+    isolation: isolate;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1568,9 +1662,16 @@ button:disabled {
   }
   .mobile-bottom-nav button[aria-current] {
     color: #267b46;
-    background: #edf7ef;
     border-radius: 12px;
     font-weight: 700;
+  }
+  .mobile-nav-highlight {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: 12px;
+    background: #edf7ef;
+    pointer-events: none;
   }
   .app-toast {
     bottom: 98px;

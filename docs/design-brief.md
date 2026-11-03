@@ -104,3 +104,18 @@ Use semantic headings and landmarks, visible `:focus-visible` styles, minimum
 44 px touch targets, text alternatives for status icons, and color plus text
 for severity. At narrow widths, navigation becomes horizontally scrollable,
 metrics stack, and dialogs remain usable without horizontal scrolling.
+
+## Workspace navigation and motion
+
+The supplied dashboard-animation and sidebar-upgrade clips guide workspace
+interactions: a light sidebar, green moving selection highlight, restrained
+hover feedback, grouped expandable pages, and an inset account card. Groups
+contain only pages allowed for the current role. A shortcut into a collapsed
+group reveals the selected page. The mobile navigation dialog exposes the full
+permitted page list alongside the compact bottom navigation.
+
+Page changes use a brief fade, lift, and blur while the navigation shell stays
+stable. Incoming sensor updates do not replay page transitions. Selecting a new
+page moves keyboard focus to its heading and returns to the top of the page.
+Section controls expose their expanded state and support native keyboard
+activation. Reduced-motion preferences remove page and selection movement.

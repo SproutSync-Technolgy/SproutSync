@@ -6,7 +6,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   Bell,
   Sprout,
@@ -86,6 +86,7 @@ import { WaterUseChart, Spark, QualityGradeChart } from "./ProtoCharts";
 import { CalendarDatePicker } from "./CalendarDatePicker";
 import { mergeReadings, useLiveTelemetry } from "../data/liveTelemetry";
 import { DeviceConnectionForm, LiveConnectionStatus } from "./DeviceConnection";
+import { WorkspaceNavigation } from "./WorkspaceNavigation";
 import logoUrl from "../assets/logo.png";
 
 export function getRolePages(profile: Profile, hasGrant: boolean) {
@@ -250,6 +251,18 @@ export default function Workspace({
       ? "Operator"
       : "Evaluator";
   const [page, setPage] = useState("home");
+  const reduceMotion = useReducedMotion();
+  const pageHeading = useRef<HTMLHeadingElement>(null);
+  const focusPageHeading = useRef(false);
+  useEffect(() => {
+    if (!focusPageHeading.current) return;
+    focusPageHeading.current = false;
+    const frame = requestAnimationFrame(() => {
+      pageHeading.current?.focus({ preventScroll: true });
+      window.scrollTo({ top: 0, behavior: "instant" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [page]);
   const [menu, setMenu] = useState(false);
   const [accountMenu, setAccountMenu] = useState(false);
   const [data, setData] = useState<WorkspaceData>(emptyWorkspace);
@@ -460,6 +473,7 @@ export default function Workspace({
     return () => clearTimeout(timer);
   }, [toast]);
   function navigate(key: string) {
+    focusPageHeading.current = key !== page;
     setPage(key);
     setMenu(false);
     setQuery("");
@@ -698,22 +712,7 @@ export default function Workspace({
         <p className="sidebar-caption">
           {roleLabel} workspace
         </p>
-        <nav aria-label="Main navigation">
-          {nav.map((item) => (
-            <button
-              key={item.key}
-              onClick={() => navigate(item.key)}
-              aria-current={page === item.key ? "page" : undefined}
-              className={page === item.key ? "selected" : ""}
-            >
-              <item.icon size={18} />
-              {item.title}
-              {item.key === "alerts" && activeAlerts.length > 0 && (
-                <span className="nav-count">{activeAlerts.length}</span>
-              )}
-            </button>
-          ))}
-        </nav>
+        <WorkspaceNavigation items={nav} page={page} alertCount={activeAlerts.length} onNavigate={navigate} surface="sidebar" />
         <div className="sidebar-account">
           <span className="avatar">
             {profile.avatar_url ? (
@@ -739,12 +738,14 @@ export default function Workspace({
             className="icon-button lg:hidden"
             onClick={() => setMenu(true)}
             aria-label="Open navigation"
+            aria-expanded={menu}
+            aria-haspopup="dialog"
           >
             <Menu size={22} />
           </button>
           <div>
             <p className="text-xs text-muted-foreground">Workspace / {title}</p>
-            <h1 className="text-lg font-bold">{title}</h1>
+            <h1 ref={pageHeading} tabIndex={-1} className="workspace-page-heading text-lg font-bold">{title}</h1>
           </div>
           <div className="ml-auto flex items-center gap-2">
             <button
@@ -885,10 +886,10 @@ export default function Workspace({
           ) : (
             <motion.div
               key={page}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.18 }}
-              className="space-y-6"
+              initial={reduceMotion ? false : { opacity: 0, y: 10, filter: "blur(3px)" }}
+              animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+              transition={{ duration: reduceMotion ? 0 : 0.24, ease: [0.22, 1, 0.36, 1] }}
+              className="workspace-page space-y-6"
             >
               {page === "home" && (profile.role === "pending" || (!hasGrant && !superadmin)) ? (
                 profile.role === "pending" ? (
@@ -3048,6 +3049,7 @@ export default function Workspace({
             aria-current={page === item.key ? "page" : undefined}
             onClick={() => navigate(item.key)}
           >
+            {page === item.key && <motion.span className="mobile-nav-highlight" aria-hidden="true" layoutId="workspace-mobile-active" transition={{ duration: reduceMotion ? 0 : 0.2 }} />}
             <item.icon size={20} />
             <span>{item.title === "Overview" ? "Home" : item.title}</span>
           </button>
@@ -3064,17 +3066,8 @@ export default function Workspace({
         onClose={() => setMenu(false)}
         title="Explore SproutSync"
       >
-        <div className="grid grid-cols-2 gap-2">
-          {nav.slice(4).map((item) => (
-            <button
-              key={item.key}
-              className="more-nav-item"
-              onClick={() => navigate(item.key)}
-            >
-              <item.icon size={19} />
-              {item.title}
-            </button>
-          ))}
+        <div className="mobile-workspace-navigation">
+          <WorkspaceNavigation items={nav} page={page} alertCount={activeAlerts.length} onNavigate={navigate} surface="mobile" />
           <button
             className="more-nav-item"
             onClick={() => {

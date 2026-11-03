@@ -317,10 +317,11 @@ test("evaluator cannot enter operator route or see operational controls", async 
     page.getByText("Review evidence independently; never rewrite machine data"),
   ).toBeVisible();
   await expect(
-    page
-      .getByRole("navigation", { name: "Main navigation" })
-      .getByRole("button"),
-  ).toHaveCount(5);
+    page.getByRole("navigation", { name: "Main navigation" }).locator(".workspace-nav-label"),
+  ).toHaveText(["Overview", "Batch Evaluations", "Evidence & Checks", "Readings", "Alerts"]);
+  await expect(
+    page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "Chamber & Access", exact: true }),
+  ).toHaveCount(0);
   await page
     .getByRole("navigation", { name: "Main navigation" })
     .getByRole("button", { name: "Batch Evaluations", exact: true })
@@ -702,4 +703,54 @@ test("IoT fault status and aggregated history stay distinct from live sensor val
   await expect(temperature.getByText("99 °C", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Device reported: SENSOR_FAULT. Faulty sensor values are unavailable.")).toBeVisible();
   await page.screenshot({ path: "test-results/iot-archive-live-history.png", fullPage: true });
+});
+
+test("reference sidebar supports keyboard sections and keeps shortcut navigation visible", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await mock(page);
+  await page.goto("/operator");
+  const nav = page.getByRole("navigation", { name: "Main navigation" });
+  const production = nav.getByRole("button", { name: "Production", exact: true });
+  await expect(production).toHaveAttribute("aria-expanded", "true");
+  await production.click();
+  await expect(nav.getByRole("button", { name: "Batch Production", exact: true })).toBeHidden();
+  await production.press("Enter");
+  await nav.getByRole("button", { name: "Batch Production", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Batch Production" })).toBeFocused();
+  await expect(nav.getByRole("button", { name: "Batch Production", exact: true })).toHaveAttribute("aria-current", "page");
+  await production.click();
+  await expect(nav.getByLabel("Contains current page")).toBeVisible();
+  await nav.getByRole("button", { name: "Overview", exact: true }).click();
+  await page.getByRole("button", { name: /^Step 1: Batch / }).click();
+  await expect(production).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByText("MB-001", { exact: true })).toBeVisible();
+  await nav.getByRole("button", { name: "Readings", exact: true }).click();
+  await nav.getByRole("button", { name: "Overview", exact: true }).click();
+  await expect(nav.locator('[aria-current="page"]')).toHaveCount(1);
+  await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeFocused();
+  await page.screenshot({ path: "test-results/reference-sidebar-desktop.png", fullPage: true });
+});
+
+test("reference navigation exposes every page on mobile and respects reduced motion", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mock(page);
+  await page.goto("/operator");
+  await page.getByRole("button", { name: "Open navigation", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Explore SproutSync" });
+  const nav = dialog.getByRole("navigation", { name: "All workspace pages" });
+  await expect(nav.getByRole("button", { name: "Overview", exact: true })).toBeVisible();
+  await page.screenshot({ path: "test-results/reference-sidebar-mobile.png", fullPage: true });
+  await nav.getByRole("button", { name: "Readings", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("heading", { level: 1, name: "Readings" })).toBeFocused();
+  await expect(page.locator(".workspace-page")).toHaveCSS("opacity", "1");
+  await expect(page.locator(".workspace-page")).toHaveCSS("filter", "blur(0px)");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const more = page.getByRole("navigation", { name: "Mobile navigation" }).getByRole("button", { name: "More", exact: true });
+  await more.click();
+  await expect(nav.getByRole("button", { name: "Chamber & Access", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(more).toBeFocused();
 });
