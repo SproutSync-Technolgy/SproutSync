@@ -1,6 +1,7 @@
 # SproutSync setup
 
-Run commands in the repository folder using **PowerShell**.
+Run commands in the repository folder. Windows commands use **PowerShell**;
+Linux commands use **Bash**.
 
 ## Already set up? Just run
 
@@ -18,6 +19,38 @@ anything. After editing backend `.env` settings, run **`.\stop.bat`** and then
 Run **`.\verify.bat`** to list required libraries, installed versions, missing
 packages, and configuration problems. Verification installs nothing and starts
 no services. Use **`.\verify.bat -Online`** to also check database connectivity.
+
+## Linux quick start
+
+Install Node.js 22.12+ with npm, Python 3.12+ with its venv/pip support, and
+`flock` from util-linux. Use a fresh Linux checkout and configure the same five
+Supabase/database values described below. Keep your existing `.env`.
+
+```bash
+chmod +x start.sh stop.sh verify.sh  # Needed if the extracted ZIP lost permissions
+./start.sh
+```
+
+Open **http://localhost:5173**. First startup creates `backend/api/.venv` and
+installs missing packages. Later starts reuse complete installations, repair
+damaged Python packages, and recognize a healthy running session. Startup checks
+the database and applies pending migrations, just like the Windows launcher.
+
+```bash
+./stop.sh                 # Stop this checkout's tracked local services
+./verify.sh               # Read-only installed/missing library inventory
+./verify.sh --online      # Also check database connectivity
+./start.sh --check        # Same read-only check as verify.sh
+./start.sh --install-only # Prepare packages without database changes or services
+```
+
+The `.sh` launchers use the native Python backend and require Linux Bash and
+`/proc`. They can be invoked as `bash start.sh`, `bash stop.sh`, and
+`bash verify.sh` if executable permissions are unavailable. Their session record
+is `.tools/dev-session.pid`; Windows uses `.tools/dev-session.json`. Avoid copying
+Windows `node_modules`, `.venv`, or `.tools` into Linux. Restart with `./stop.sh`
+and `./start.sh` after changing backend settings. For macOS or Docker use the
+[advanced setup reference](docs/setup-reference.md).
 
 ## First time on a Windows computer
 

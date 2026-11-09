@@ -1,5 +1,15 @@
 # Validation strategy
 
+Linux launcher checks: `python3 scripts/test_linux_launchers.py -v` runs on Linux
+with Bash, flock, Node.js 22.12+, and Python 3.12+. Isolated fixtures simulate
+package installation and database checks while serving real loopback HTTP. They
+verify repeated start/stop, dependency reuse and damaged-package repair, read-only
+verification, stale process identities, unrelated ports, and cleanup after a
+dashboard failure. They never contact the configured Supabase or MQTT services.
+The `linux-launchers` CI job checks shell syntax, executable permissions, and
+these scenarios on Ubuntu. They are skipped on Windows rather than claiming a
+Linux runtime check there.
+
 Windows launcher checks: `npm run test:dependencies` tests missing/changed npm
 packages and lockfiles. `scripts/test-native-launcher.ps1` checks API lifecycle,
 explicit shutdown, and stale PID protection without using the database or broker.

@@ -17,6 +17,10 @@ Or run **`.\stop.bat`** in another terminal. **`.\verify.bat`** reports installe
 and missing dependencies without installing anything. First startup installs
 project packages; later starts reuse complete installations.
 This Windows workflow uses hosted Supabase and does not require Docker.
+On Linux, use `./start.sh`, `./stop.sh`, and `./verify.sh`; the shell launchers
+provide the same native development workflow and reuse installed dependencies.
+See [Linux quick start](SETUP.md#linux-quick-start) for prerequisites and archive
+permissions.
 For Docker, macOS/Linux, optional tools, and troubleshooting, see the
 [advanced setup reference](docs/setup-reference.md).
 

@@ -3,6 +3,24 @@ on: [push, pull_request]
 permissions:
   contents: read
 jobs:
+  linux-launchers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check Bash syntax and executable entry points
+        run: |
+          for file in start.sh stop.sh verify.sh scripts/linux-session.sh; do
+            bash -n "$file"
+          done
+          test -x start.sh && test -x stop.sh && test -x verify.sh
+      - name: Exercise isolated Linux launcher lifecycle
+        run: python scripts/test_linux_launchers.py -v
   dashboard:
     runs-on: ubuntu-latest
     steps:

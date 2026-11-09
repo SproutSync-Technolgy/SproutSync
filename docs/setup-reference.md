@@ -267,6 +267,13 @@ Do not run the API container and native API on port 8000 simultaneously.
 
 For a single Windows terminal, run `.\start.bat`. It prepares missing packages, checks the database,
 applies migrations, waits for API health, and starts Vite in the same terminal.
+For a single Linux terminal, run `./start.sh`; use `./stop.sh` in another terminal
+or Ctrl+C to stop it. The Linux launcher requires Bash, `/proc`, and `flock`
+(util-linux), plus Node.js 22.12+ and Python 3.12+ with venv/pip. `./verify.sh`
+inspects installed/missing libraries without installing or starting services;
+`--online` adds a database check. `./start.sh --install-only` prepares packages,
+and `./start.sh --check` delegates to verification. See the
+[Linux quick start](../SETUP.md#linux-quick-start).
 The manual commands below are useful when you want independent API reload/debug
 and frontend terminals.
 
@@ -352,6 +359,13 @@ and JSON 503 responses without changing `.env` or starting real backend services
 
 For the Windows native launcher lifecycle, run
 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-native-launcher.ps1`.
+For the Linux launchers, run `python3 scripts/test_linux_launchers.py -v` on Linux
+with Node.js 22.12+, Python 3.12+, Bash, and flock. These tests use temporary
+checkouts with spaces in their paths, simulated dependency commands, and actual
+loopback HTTP services. They cover dependency reuse/repair, read-only verification,
+repeated start/stop, stale PID protection, unrelated port conflicts, and startup
+failure cleanup without the real database, broker, or hardware. CI runs them on
+Ubuntu; on Windows they are explicitly skipped.
 It starts the real API on a separate free port with an in-memory test database,
 checks health/auth and cleanup after dashboard success/failure, and applies no
 database migrations. It leaves existing development servers untouched.
