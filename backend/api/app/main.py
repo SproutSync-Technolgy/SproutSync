@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.auth import get_current_user, sync_supabase_user_email
 from app.config import settings
@@ -776,6 +777,11 @@ def delete_account(
                 detail="Cannot delete the last active superadmin",
             )
 
+    if db.scalar(select(Device.id).where(Device.owner_id == target.id).limit(1)) or db.scalar(
+        select(Batch.id).where(Batch.owner_id == target.id).limit(1)
+    ):
+        raise HTTPException(status_code=409, detail="This account owns chamber or batch records and cannot be deleted. Preserve its production history.")
+
     # Clear associated evaluator_access
     db.execute(
         delete(EvaluatorAccess).where(
@@ -792,11 +798,6 @@ def delete_account(
         )
     )
 
-    # Unbind devices
-    devices = db.scalars(select(Device).where(Device.owner_id == target.id)).all()
-    for d in devices:
-        d.owner_id = None
-
     # Audit log
     audit = ActivityLog(
         owner_id=admin.id,
@@ -808,7 +809,11 @@ def delete_account(
 
     # Delete target user
     db.delete(target)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="This account has linked records and cannot be deleted. Preserve its history and access records.") from error
 
     return {"success": True, "deleted_id": user_id}
 

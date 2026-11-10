@@ -3,23 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'main.dart';
+import 'field_data.dart';
+import 'field_widgets.dart';
 
 /// A row returned by the Supabase REST API.
 typedef Record = Map<String, dynamic>;
 
 /// Persistent record sources shared with the web workspace.
-const tables = [
-  'batches',
-  'devices',
-  'trays',
-  'alerts',
-  'telemetry_readings',
-  'watering_events',
-  'irrigation_schedules',
-  'evidence_records',
-  'evaluations',
-  'maintenance_records'
-];
+const tables = fieldTables;
 
 /// Formats a persisted timestamp in the device's local time.
 String displayDate(dynamic value) {
@@ -33,10 +24,16 @@ String displayDate(dynamic value) {
 class MobileWorkspace extends StatefulWidget {
   /// Creates the MobileWorkspace widget or field definition.
   const MobileWorkspace(
-      {super.key, required this.profile, required this.onProfile});
+      {super.key,
+      required this.profile,
+      required this.onProfile,
+      this.dataSource});
 
   /// The current database profile.
   final Record profile;
+
+  /// Optional source for isolated UI testing; production uses authenticated REST.
+  final FieldDataSource? dataSource;
 
   /// Updates the root account state after profile edits.
   final ValueChanged<Record> onProfile;
@@ -46,7 +43,14 @@ class MobileWorkspace extends StatefulWidget {
 
 class _MobileWorkspaceState extends State<MobileWorkspace>
     with WidgetsBindingObserver {
-  final client = Supabase.instance.client;
+  SupabaseClient get client => Supabase.instance.client;
+  late final FieldDataSource source;
+  StreamSubscription<void>? changes;
+  Timer? debounce;
+  DateTime? lastSync;
+  List<String> unavailable = [];
+  bool refreshing = false;
+  String batchSearch = "", batchFilter = "Active", alertFilter = "Open";
   Map<String, List<Record>> data = {for (final table in tables) table: []};
   int tab = 0, generation = 0;
   bool loading = true, busy = false;
@@ -64,10 +68,15 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
               : notificationPreferences['alerts_enabled'] == true))
       .length;
   bool get operator => ['operator', 'admin'].contains(widget.profile['role']);
-  bool get admin => widget.profile['role'] == 'admin';
-  String get roleLabel => admin ? 'Admin IT' : operator ? 'Operator' : 'Evaluator';
+  bool get admin => ['admin', 'superadmin'].contains(widget.profile['role']);
+  bool get evaluator => widget.profile['role'] == 'evaluator';
+  String get roleLabel => admin
+      ? 'Administrator'
+      : operator
+          ? 'Operator'
+          : 'Evaluator';
   String get rolePurpose => admin
-      ? 'Register equipment and provision access without replacing operator production decisions or evaluator judgment.'
+      ? 'Check chamber health and shared records here. Register equipment and manage account access in the web workspace.'
       : operator
           ? 'Run production and record human actions. Live sensing and safety interlocks remain with the chamber controller.'
           : 'Review shared evidence independently. Your assessment never replaces a machine reading; document a mismatch for follow-up.';
@@ -77,6 +86,15 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    source = widget.dataSource ?? SupabaseFieldDataSource(client);
+    changes = source.changes.listen((_) {
+      if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+        debounce ??= Timer(const Duration(seconds: 5), () {
+          debounce = null;
+          unawaited(refresh());
+        });
+      }
+    });
     unawaited(refresh());
     timer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
@@ -93,45 +111,30 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
   @override
   void dispose() {
     timer?.cancel();
+    debounce?.cancel();
+    unawaited(changes?.cancel());
+    unawaited(source.dispose());
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
   Future<void> refresh() async {
+    if (refreshing) return;
     final request = ++generation;
+    if (mounted) setState(() => refreshing = true);
     try {
-      final result = await Future.wait(tables.map((table) async {
-        final records = <Record>[];
-        for (var offset = 0;; offset += 1000) {
-          const columns = {
-            'batches': 'started_at',
-            'telemetry_readings': 'recorded_at',
-            'watering_events': 'occurred_at',
-            'irrigation_schedules': 'next_run_at',
-            'evidence_records': 'recorded_at',
-            'maintenance_records': 'performed_at',
-            'trays': 'id'
-          };
-          final rows = await client
-              .from(table)
-              .select()
-              .order(columns[table] ?? 'created_at', ascending: false)
-              .range(offset, offset + 999);
-          records.addAll(rows);
-          if (rows.length < 1000) break;
-        }
-        return MapEntry(table, records);
-      }));
-      final preferences = await client
-          .from('notification_preferences')
-          .select()
-          .eq('user_id', widget.profile['id'])
-          .maybeSingle();
+      final result = await source.load(widget.profile['id'] as int);
       if (mounted && request == generation) {
         setState(() {
-          data = Map.fromEntries(result);
-          if (preferences != null) notificationPreferences = preferences;
-          error = null;
+          data = {...data, ...result.records};
+          if (result.preferences != null) {
+            notificationPreferences = result.preferences!;
+          }
+          unavailable = result.unavailable;
+          error = unavailable.isEmpty
+              ? null
+              : 'Could not refresh: ${unavailable.join(', ')}.';
+          if (unavailable.isEmpty) lastSync = DateTime.now();
           loading = false;
         });
       }
@@ -139,9 +142,12 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
       if (mounted && request == generation) {
         setState(() {
           error = readableError(e);
+          unavailable = ['workspace'];
           loading = false;
         });
       }
+    } finally {
+      if (mounted && request == generation) setState(() => refreshing = false);
     }
   }
 
@@ -172,10 +178,10 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
                 actions: [
                   TextButton(
                       onPressed: () => Navigator.pop(context, false),
-                      child: const Text('No')),
+                      child: const Text('Cancel')),
                   FilledButton(
                       onPressed: () => Navigator.pop(context, true),
-                      child: const Text('Yes'))
+                      child: const Text('Sign out'))
                 ]));
     if (yes != true || !mounted) return;
     try {
@@ -214,19 +220,24 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
                 payload['started_at'] =
                     DateTime.now().toUtc().toIso8601String();
               }
-              await client.from(table).insert(payload).select().single();
+              final related = table == 'evaluations'
+                  ? batches
+                      .where((b) => b['id'] == payload['batch_id'])
+                      .firstOrNull
+                  : data['devices']!
+                      .where((d) => d['id'] == payload['device_id'])
+                      .firstOrNull;
+              if (table == 'maintenance_records' &&
+                  related?['is_demo'] == true) {
+                payload['is_demo'] = true;
+              }
+              await source.insert(table, payload);
             })));
     if (saved == true) {
       await refresh();
       toast('Record saved.');
     }
   }
-
-  InputField get deviceField => InputField('device_id', 'Device', options: {
-        for (final d in data['devices']!) '${d['id']}': '${d['name']}'
-      });
-  InputField get batchField => InputField('batch_id', 'Batch',
-      options: {for (final b in batches) '${b['id']}': '${b['code']}'});
 
   Future<void> showAlert(Record alert) async {
     await showModalBottomSheet<void>(
@@ -245,9 +256,10 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
                           style: const TextStyle(
                               fontSize: 23, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 8),
-                      Text(alert['batch_id'] == null
-                          ? 'No batch linked'
-                          : 'Batch ${batchName(alert['batch_id'])}',
+                      Text(
+                          alert['batch_id'] == null
+                              ? 'No batch linked'
+                              : 'Batch ${batchName(alert['batch_id'])}',
                           style: const TextStyle(
                               fontWeight: FontWeight.w600,
                               color: Color(0xFF52665A))),
@@ -274,13 +286,10 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
                                                   setSheetState(
                                                       () => busy = true);
                                                   try {
-                                                    await client
-                                                        .from('alerts')
-                                                        .update(
-                                                            {'status': status})
-                                                        .eq('id', alert['id'])
-                                                        .select()
-                                                        .single();
+                                                    await source.update(
+                                                        'alerts',
+                                                        alert['id'] as int,
+                                                        {'status': status});
                                                     if (sheetContext.mounted) {
                                                       Navigator.pop(
                                                           sheetContext);
@@ -311,6 +320,94 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
   }
 
   Future<void> showBatch(Record batch) async {
+    final evidence = data['evidence_records']!
+        .where((e) => e['batch_id'] == batch['id'])
+        .toList();
+    final reviews = data['evaluations']!
+        .where((e) => e['batch_id'] == batch['id'])
+        .toList();
+    await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        showDragHandle: true,
+        builder: (sheetContext) => SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 4, 24, 28),
+            child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('${batch['code']}',
+                      style: Theme.of(context).textTheme.headlineMedium),
+                  Text('${batch['seed_type']} · Operator #${batch['owner_id']}',
+                      style: const TextStyle(color: FieldColors.muted)),
+                  const SizedBox(height: 14),
+                  Wrap(spacing: 8, children: [
+                    FieldTag('${batch['stage']}'),
+                    FieldTag('${batch['status']}'),
+                    if (batch['is_demo'] == true) const FieldTag('Sample')
+                  ]),
+                  const SizedBox(height: 16),
+                  Text(
+                      'Started: ${displayDate(batch['started_at'])}\nTarget harvest: ${displayDate(batch['target_harvest_at'])}'),
+                  if ('${batch['notes'] ?? ''}'.trim().isNotEmpty)
+                    section('Operator notes', [Text('${batch['notes']}')]),
+                  section('Recent shared evidence', [
+                    const Text(
+                        'Matching items from the latest 50 visible evidence records.',
+                        style:
+                            TextStyle(fontSize: 12, color: FieldColors.muted)),
+                    if (evidence.isEmpty)
+                      const Text(
+                          'No recent evidence available for this batch.'),
+                    for (final item in evidence.take(5))
+                      ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.fact_check_outlined),
+                          title: Text('${item['title']}'),
+                          subtitle: Text(
+                              '${item['result']} · ${displayDate(item['recorded_at'])}\n${item['notes'] ?? ''}')),
+                  ]),
+                  section('Recent human assessments', [
+                    const Text(
+                        'Matching items from the latest 50 visible assessments.',
+                        style:
+                            TextStyle(fontSize: 12, color: FieldColors.muted)),
+                    if (reviews.isEmpty)
+                      const Text(
+                          'No recent assessment available for this batch.'),
+                    for (final item in reviews.take(5))
+                      ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.star_outline,
+                              color: FieldColors.amber),
+                          title: Text(
+                              '${item['rating']}/5 · Evaluator #${item['evaluator_id']}'),
+                          subtitle: Text(
+                              '${item['comments']}\n${displayDate(item['created_at'])}')),
+                  ]),
+                  const SizedBox(height: 18),
+                  if (operator && batch['status'] != 'archived')
+                    FilledButton.icon(
+                        onPressed: () {
+                          Navigator.pop(sheetContext);
+                          unawaited(editBatch(batch));
+                        },
+                        icon: const Icon(Icons.edit_outlined),
+                        label: const Text('Update stage or notes')),
+                  if (evaluator) ...[
+                    const Text('Your independent assessment'),
+                    FieldStars(
+                        value: 0,
+                        onChanged: (rating) {
+                          Navigator.pop(sheetContext);
+                          unawaited(submitEvaluation(batch, rating));
+                        })
+                  ],
+                ])));
+  }
+
+  Future<void> editBatch(Record batch) async {
     final saved = await Navigator.of(context).push<bool>(MaterialPageRoute(
         builder: (_) => RecordEditor(
             title: '${batch['code']} · ${batch['seed_type']}',
@@ -337,12 +434,7 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
                   options: const {'active': 'Active', 'archived': 'Archived'})
             ],
             onSave: (values) async {
-              await client
-                  .from('batches')
-                  .update(values)
-                  .eq('id', batch['id'])
-                  .select()
-                  .single();
+              await source.update('batches', batch['id'] as int, values);
             })));
     if (saved == true) {
       await refresh();
@@ -350,30 +442,23 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
     }
   }
 
-  Future<void> addDevice() async {
-    final code = await Navigator.of(context)
-        .push<String>(MaterialPageRoute(builder: (_) => const DeviceScanner()));
-    if (!mounted || code == null) return;
-    await create('devices', 'Register device', [
-      const InputField('name', 'Device name'),
-      InputField('serial_number', 'Device serial number', initial: code)
-    ]);
-  }
-
-  Future<void> recordMaintenance() async {
-    final code = await Navigator.of(context).push<String>(MaterialPageRoute(
-        builder: (_) => const DeviceScanner(
-            title: 'Scan equipment for maintenance',
-            helper:
-                'Use the camera to identify the chamber before recording work.',
-            manualLabel: 'Or enter equipment serial number')));
-    if (!mounted || code == null) return;
-    final normalized = code.trim().toLowerCase();
-    final device = data['devices']!
-        .where((item) =>
-            item['serial_number'].toString().toLowerCase() == normalized ||
-            item['name'].toString().toLowerCase() == normalized)
-        .firstOrNull;
+  Future<void> recordMaintenance([Record? selectedDevice]) async {
+    Record? device = selectedDevice;
+    if (device == null) {
+      final code = await Navigator.of(context).push<String>(MaterialPageRoute(
+          builder: (_) => const DeviceScanner(
+              title: 'Scan equipment for maintenance',
+              helper:
+                  'Use the camera to identify the chamber before recording work.',
+              manualLabel: 'Or enter equipment serial number')));
+      if (!mounted || code == null) return;
+      final normalized = code.trim().toLowerCase();
+      device = data['devices']!
+          .where((item) =>
+              item['serial_number'].toString().toLowerCase() == normalized ||
+              item['name'].toString().toLowerCase() == normalized)
+          .firstOrNull;
+    }
     if (device == null) {
       toast('No registered equipment matches that serial number.');
       return;
@@ -387,90 +472,21 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
     ]);
   }
 
-  Future<void> showIncidentDraft() async {
-    await showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        useSafeArea: true,
-        showDragHandle: true,
-        builder: (context) => Padding(
-            padding: EdgeInsets.fromLTRB(
-                24, 8, 24, MediaQuery.viewInsetsOf(context).bottom + 24),
-            child: SingleChildScrollView(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                  Text('Report current situation',
-                      style: Theme.of(context).textTheme.headlineSmall),
-                  const SizedBox(height: 8),
-                  const Text(
-                      'UI draft only. Submission is not connected, so no incident will be saved.',
-                      style: TextStyle(color: Colors.black54)),
-                  const SizedBox(height: 18),
-                  const Wrap(spacing: 8, runSpacing: 8, children: [
-                    Chip(label: Text('1 Describe')),
-                    Chip(label: Text('2 Locate')),
-                    Chip(label: Text('3 Link records')),
-                    Chip(label: Text('4 Escalate'))
-                  ]),
-                  const SizedBox(height: 18),
-                  const TextField(
-                      maxLines: 3,
-                      decoration:
-                          InputDecoration(labelText: 'Current situation')),
-                  const SizedBox(height: 14),
-                  const TextField(
-                      decoration: InputDecoration(
-                          labelText: 'Location or component',
-                          hintText: 'For example 3D fan, seal, pump or tray')),
-                  const SizedBox(height: 14),
-                  TextField(
-                      decoration: InputDecoration(
-                          labelText: 'Affected batch',
-                          hintText: batches.isEmpty
-                              ? 'No shared batches available'
-                              : 'Type a batch code')),
-                  const SizedBox(height: 14),
-                  const DropdownMenu<String>(
-                      expandedInsets: EdgeInsets.zero,
-                      label: Text('Risk category'),
-                      dropdownMenuEntries: [
-                        DropdownMenuEntry(
-                            value: 'pests',
-                            label: 'Pests or external contamination'),
-                        DropdownMenuEntry(
-                            value: 'water', label: 'Water contamination'),
-                        DropdownMenuEntry(
-                            value: 'compliance', label: 'Compliance risk'),
-                        DropdownMenuEntry(
-                            value: 'light', label: 'Light leak'),
-                        DropdownMenuEntry(
-                            value: 'equipment', label: 'Equipment problem')
-                      ]),
-                  const SizedBox(height: 14),
-                  const TextField(
-                      decoration:
-                          InputDecoration(labelText: 'Screen or LCD message')),
-                  const SizedBox(height: 18),
-                  const FilledButton(
-                      onPressed: null,
-                      child: Text('Submit incident report'))
-                ]))));
-  }
-
-  Future<void> submitEvaluation() async {
+  Future<void> submitEvaluation([Record? batch, int? rating]) async {
     await create('evaluations', 'Submit field assessment', [
-      batchField,
-      const InputField('rating', 'Human assessment', options: {
-        '1': '1 - Poor',
-        '2': '2 - Fair',
-        '3': '3 - Good',
-        '4': '4 - Very good',
-        '5': '5 - Excellent'
-      }),
-      const InputField(
-          'comments', 'Observations or disagreement with machine data',
-          multiline: true)
+      InputField('batch_id', 'Batch',
+          initial: batch == null ? '' : '${batch['id']}',
+          options: {for (final b in batches) '${b['id']}': '${b['code']}'}),
+      InputField('rating', 'Human assessment',
+          initial: rating?.toString() ?? '',
+          options: const {
+            '1': '1 - Poor',
+            '2': '2 - Fair',
+            '3': '3 - Good',
+            '4': '4 - Very good',
+            '5': '5 - Excellent'
+          }),
+      const InputField('comments', 'Comments', multiline: true, maxLength: 2000)
     ]);
   }
 
@@ -482,7 +498,11 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
                 'Scan a label where the work happens to open its shared record.',
             manualLabel: 'Or enter batch code or serial number')));
     if (!mounted || code == null) return;
-    final normalized = code.trim().toLowerCase();
+    final normalized = labelIdentity(code).toLowerCase();
+    if (normalized.isEmpty) {
+      toast('Use a printed batch code, chamber serial, or SproutSync label.');
+      return;
+    }
     final batch = batches
         .where((item) => item['code'].toString().toLowerCase() == normalized)
         .firstOrNull;
@@ -500,75 +520,66 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
       return;
     }
     toast(operator
-        ? 'No linked record matches that label. Register a new chamber from More if needed.'
+        ? 'No linked record matches that label. Check the code or register equipment in the web workspace.'
         : 'No shared batch or chamber matches that label. Ask the operator to confirm access.');
   }
 
+  Record? readingFor(Record device) => data['telemetry_readings']!
+      .where((item) => item['device_id'] == device['id'])
+      .firstOrNull;
+
   Future<void> showDeviceSnapshot(Record device) async {
-    final reading = data['telemetry_readings']!
-        .where((item) => item['device_id'] == device['id'])
-        .firstOrNull;
     await showModalBottomSheet<void>(
-        context: context,
-        useSafeArea: true,
-        showDragHandle: true,
-        builder: (context) => Padding(
-            padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const CircleAvatar(child: Icon(Icons.sensors)),
-                  title: Text(device['name'],
-                      style: Theme.of(context).textTheme.titleLarge),
-                  subtitle: Text(
-                      '${device['status']} · Last seen ${displayDate(device['last_seen_at'])}')),
-              const Divider(),
-              if (reading == null)
-                const Padding(
-                    padding: EdgeInsets.all(20),
-                    child: Text('No machine reading is available yet.'))
-              else
-                ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.monitor_heart_outlined),
-                    title: Text(
-                        '${reading['temperature_c'] ?? '—'}°C · ${reading['humidity_percent'] ?? '—'}% humidity'),
-                    subtitle: Text(
-                        'Machine reading · ${displayDate(reading['recorded_at'])}'))
-            ])));
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
+          child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ChamberCard(
+                    device: device,
+                    reading: readingFor(device),
+                    sourceUnavailable: sensorUnavailable),
+                section('Chamber record', [
+                  Text(
+                      'Last heartbeat: ${displayDate(device['last_seen_at'])}'),
+                  if (device['firmware_version'] != null)
+                    Text('Firmware: ${device['firmware_version']}'),
+                  const SizedBox(height: 12),
+                  const Text(
+                      'A saved schedule is a plan. This screen does not start a pump or confirm a completed rinse.'),
+                ]),
+                section(
+                    'Recent maintenance',
+                    data['maintenance_records']!
+                        .where((m) => m['device_id'] == device['id'])
+                        .take(5)
+                        .map((m) => ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: Text('${m['notes']}'),
+                            subtitle: Text(displayDate(m['performed_at']))))
+                        .toList()),
+                if (operator)
+                  Padding(
+                      padding: const EdgeInsets.only(top: 16),
+                      child: FilledButton.icon(
+                          onPressed: () {
+                            Navigator.pop(sheetContext);
+                            unawaited(recordMaintenance(device));
+                          },
+                          icon: const Icon(Icons.build_outlined),
+                          label: const Text('Record maintenance'))),
+              ])),
+    );
   }
 
-  Widget card(String title, String value, IconData icon) => Card(
-      child: Padding(
-          padding: const EdgeInsets.all(18),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Icon(icon, color: const Color(0xFF247547)),
-            const SizedBox(height: 14),
-            Text(value,
-                style:
-                    const TextStyle(fontSize: 23, fontWeight: FontWeight.bold)),
-            Text(title,
-                style: const TextStyle(fontSize: 12, color: Colors.black54))
-          ])));
-  Widget roleScopeCard() => Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-          color: const Color(0xFFEEF7F1),
-          border: Border.all(color: const Color(0xFFDCEFE2)),
-          borderRadius: BorderRadius.circular(16)),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Icon(Icons.verified_user_outlined, color: Color(0xFF1F6F45)),
-        const SizedBox(width: 14),
-        Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('$roleLabel field scope',
-              style: const TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 4),
-          Text(rolePurpose, style: const TextStyle(color: Color(0xFF52665A)))
-        ]))
-      ]));
+  bool get sensorUnavailable => unavailable.any(
+      (name) => ['workspace', 'devices', 'telemetry readings'].contains(name));
+
   Widget empty(String text) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 12),
       child: Column(children: [
@@ -586,235 +597,321 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
         const SizedBox(height: 12),
         ...children
       ]));
+  String get firstName {
+    final raw = '${widget.profile['first_name'] ?? ''}'.trim();
+    final fallback =
+        '${widget.profile['display_name'] ?? ''}'.split(',').last.trim();
+    final name = (raw.isEmpty ? fallback : raw).split(RegExp(r'\s+')).first;
+    return name.isEmpty
+        ? 'grower'
+        : name[0].toUpperCase() + name.substring(1).toLowerCase();
+  }
+
   List<Widget> home() {
-    final latest = data['telemetry_readings']!.firstOrNull;
+    final active = batches.where((b) => b['status'] == 'active').toList();
+    final openAlerts = alerts.where((a) => a['status'] != 'resolved').toList()
+      ..sort((a, b) => (a['severity'] == 'critical' ? 0 : 1)
+          .compareTo(b['severity'] == 'critical' ? 0 : 1));
     final schedules = data['irrigation_schedules']!
         .where((s) =>
             s['enabled'] == true &&
-            DateTime.parse(s['next_run_at']).isAfter(DateTime.now()))
+            (DateTime.tryParse('${s['next_run_at']}')
+                    ?.isAfter(DateTime.now()) ??
+                false))
         .toList()
-      ..sort((a, b) =>
-          a['next_run_at'].toString().compareTo(b['next_run_at'].toString()));
-    final online = data['devices']!
-        .where((d) =>
-            d['status'] == 'online' &&
-            d['last_seen_at'] != null &&
-            DateTime.now()
-                    .difference(DateTime.parse(d['last_seen_at']))
-                    .inMinutes <
-                5)
-        .length;
-    final metrics = [
-      card('System status', '$online online', Icons.sensors),
-      card(
-          'Active batches',
-          '${batches.where((b) => b['status'] == 'active').length}',
-          Icons.spa_outlined),
-      card(
-          'Active alerts',
-          '${alerts.where((a) => a['status'] != 'resolved').length}',
-          Icons.notifications_outlined),
-      card(
-          'Latest temperature',
-          latest?['temperature_c'] == null
-              ? '—'
-              : '${latest!['temperature_c']}°C',
-          Icons.thermostat),
-    ];
+      ..sort((a, b) => '${a['next_run_at']}'.compareTo('${b['next_run_at']}'));
     return [
       Container(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(22),
           decoration: BoxDecoration(
-              color: const Color(0xFF1B5A38),
-              borderRadius: BorderRadius.circular(22)),
+              color: FieldColors.forest,
+              borderRadius: BorderRadius.circular(24)),
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Hello, ${widget.profile['first_name']}.',
-                style: const TextStyle(
-                    fontSize: 27,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white)),
+            const Row(children: [
+              Icon(Icons.eco_outlined, color: Color(0xFFD5EAD4), size: 20),
+              SizedBox(width: 8),
+              Expanded(
+                  child: Text('SPROUTSYNC / FIELD',
+                      style: TextStyle(
+                          color: Color(0xFFD5EAD4),
+                          letterSpacing: 1.4,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700)))
+            ]),
+            const SizedBox(height: 18),
+            Text('Hello, $firstName.',
+                style: Theme.of(context)
+                    .textTheme
+                    .headlineMedium
+                    ?.copyWith(color: Colors.white)),
             const SizedBox(height: 8),
             Text(
-                operator
-                    ? 'Today’s production priorities, ready for the floor.'
-                    : 'Shared work that is ready for independent review.',
-                style: const TextStyle(color: Colors.white70))
+                evaluator
+                    ? 'Observe, compare and capture your assessment.'
+                    : 'A quick check before your next round.',
+                style: const TextStyle(color: Color(0xFFE0EDE3))),
+            const SizedBox(height: 18),
+            FilledButton.icon(
+                style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFFE5F2DE),
+                    foregroundColor: FieldColors.forest),
+                onPressed: scanWorkspace,
+                icon: const Icon(Icons.qr_code_scanner),
+                label: const Text('Scan a batch or chamber')),
           ])),
-      const SizedBox(height: 12),
-      roleScopeCard(),
-      if (batches.any((batch) => batch['is_demo'] == true))
-        const Padding(
-            padding: EdgeInsets.all(8),
-            child: Text('Sample records · Saved in your workspace',
-                style: TextStyle(fontSize: 12, color: Colors.black54))),
       const SizedBox(height: 16),
-      for (var i = 0; i < metrics.length; i += 2)
-        IntrinsicHeight(
-            child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-              Expanded(child: metrics[i]),
-              Expanded(child: metrics[i + 1])
-            ])),
-      if (latest != null)
-        Padding(
-            padding: const EdgeInsets.all(8),
-            child: Text('Last reading: ${displayDate(latest['recorded_at'])}',
-                style: const TextStyle(fontSize: 12, color: Colors.black54))),
-      section('Next irrigation', [
-        Text(schedules.isEmpty
-            ? 'No upcoming run'
-            : '${deviceName(schedules.first['device_id'])} · ${displayDate(schedules.first['next_run_at'])} · ${schedules.first['duration_seconds']}s')
+      Wrap(spacing: 8, runSpacing: 8, children: [
+        FieldTag(
+            '${active.length} active ${active.length == 1 ? 'batch' : 'batches'}'),
+        FieldTag(
+            '${data['devices']!.length} ${data['devices']!.length == 1 ? 'chamber' : 'chambers'}',
+            color: FieldColors.water),
+        FieldTag(
+            '${openAlerts.length} open ${openAlerts.length == 1 ? 'alert' : 'alerts'}',
+            color: openAlerts.isEmpty ? FieldColors.forest : FieldColors.amber)
       ]),
-      section('Recent batches', batchCards(batches.take(3).toList()))
+      if (openAlerts.isNotEmpty)
+        section('Needs attention',
+            [for (final alert in openAlerts.take(2)) alertCard(alert)]),
+      section(
+          'Your chambers',
+          data['devices']!.isEmpty
+              ? [
+                  empty(
+                      'No chambers are linked. Ask your administrator to register and assign your equipment.')
+                ]
+              : [
+                  for (final device in data['devices']!)
+                    ChamberCard(
+                        device: device,
+                        reading: readingFor(device),
+                        sourceUnavailable: sensorUnavailable,
+                        onTap: () => showDeviceSnapshot(device))
+                ]),
+      section('Next planned rinse', [
+        if (unavailable.contains('irrigation schedules'))
+          const Text(
+              'Schedules could not be refreshed. Any plan shown below may be outdated.'),
+        if (schedules.isEmpty)
+          const Text('No upcoming plan available.')
+        else
+          Card(
+              child: ListTile(
+                  leading: const Icon(Icons.water_drop_outlined,
+                      color: FieldColors.water),
+                  title: Text(deviceName(schedules.first['device_id'])),
+                  subtitle: Text(
+                      '${displayDate(schedules.first['next_run_at'])} · ${schedules.first['duration_seconds']} seconds${schedules.first['is_demo'] == true ? ' · Sample' : ''}'))),
+        const SizedBox(height: 6),
+        const Text(
+            'Local phone time. A saved plan does not confirm pump execution.',
+            style: TextStyle(fontSize: 12, color: FieldColors.muted)),
+      ]),
+      section(evaluator ? 'Ready to review' : 'On your next round',
+          batchCards(active.take(3).toList())),
+      TextButton(
+          onPressed: () => setState(() => tab = 1),
+          child: const Text('See all batches')),
     ];
   }
 
-  List<Widget> scanTools() => [
-        Container(
-            padding: const EdgeInsets.all(22),
-            decoration: BoxDecoration(
-                color: const Color(0xFF123F2B),
-                borderRadius: BorderRadius.circular(20)),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Icon(Icons.qr_code_scanner,
-                  size: 34, color: Color(0xFFDCEFE2)),
-              const SizedBox(height: 18),
-              const Text('Open the record in front of you',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w700)),
-              const SizedBox(height: 8),
-              const Text(
-                  'Scan a batch or chamber label to avoid searching and reduce entry mistakes.',
-                  style: TextStyle(color: Color(0xFFC9DED0), height: 1.5)),
-              const SizedBox(height: 20),
-              FilledButton.icon(
-                  onPressed: scanWorkspace,
-                  icon: const Icon(Icons.center_focus_strong),
-                  label: const Text('Scan label'))
-            ])),
-        const SizedBox(height: 18),
-        section('Quick capture', [
-          if (operator)
-            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              OutlinedButton.icon(
-                  onPressed:
-                      data['devices']!.isEmpty ? null : recordMaintenance,
-                  icon: const Icon(Icons.camera_alt_outlined),
-                  label: const Text('Scan equipment & record maintenance')),
-              const SizedBox(height: 8),
-              const Text(
-                  'The camera identifies the equipment. Maintenance photo upload is not connected yet.',
-                  style: TextStyle(fontSize: 12, color: Colors.black54)),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                  onPressed: showIncidentDraft,
-                  icon: const Icon(Icons.report_problem_outlined),
-                  label: const Text('Report current situation'))
-            ])
-          else
-            OutlinedButton.icon(
-                onPressed: batches.isEmpty ? null : submitEvaluation,
-                icon: const Icon(Icons.fact_check_outlined),
-                label: const Text('Submit field assessment'))
-        ]),
-        const Padding(
-            padding: EdgeInsets.only(top: 18),
-            child: Text(
-                'Planning, printable historical reports, and account access remain in the web workspace.',
-                style: TextStyle(color: Color(0xFF52665A))))
-      ];
+  Widget alertCard(Record alert) => Card(
+          child: ListTile(
+        contentPadding: const EdgeInsets.all(16),
+        leading: Icon(
+            alert['severity'] == 'critical'
+                ? Icons.error_outline
+                : Icons.notifications_outlined,
+            color: alert['severity'] == 'critical'
+                ? FieldColors.danger
+                : FieldColors.amber),
+        title: Text('${alert['title']}',
+            style: const TextStyle(fontWeight: FontWeight.w700)),
+        subtitle: Text(
+            '${batchName(alert['batch_id'])} · ${alert['severity']}\n${alert['status']} · ${displayDate(alert['created_at'])}'),
+        isThreeLine: true,
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => showAlert(alert),
+      ));
 
   List<Widget> batchCards(List<Record> records) => records.isEmpty
       ? [
-          empty(operator
-              ? 'Create your first batch.'
-              : 'No batches have been shared with your account yet.')
+          empty(evaluator
+              ? 'No shared batches match. Ask your operator to check your access.'
+              : 'No batches match. Start production in the web workspace, then track it here.')
         ]
       : records
-          .map((b) => Card(
-              elevation: 0,
-              color: Colors.white,
-              child: ListTile(
-                  contentPadding: const EdgeInsets.all(16),
-                  leading: const Icon(Icons.spa_outlined),
-                  title: Text(b['code'],
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle:
-                      Text('${b['seed_type']} · ${b['stage']}\n${b['status']} · Operator #${b['owner_id']}'),
-                  isThreeLine: true,
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => showBatch(b))))
+          .map((batch) => Card(
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                  onTap: () => showBatch(batch),
+                  child: Padding(
+                      padding: const EdgeInsets.all(18),
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(children: [
+                              const Icon(Icons.spa_outlined,
+                                  color: FieldColors.forest),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                  child: Text('${batch['code']}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium)),
+                              const Icon(Icons.chevron_right,
+                                  color: FieldColors.muted)
+                            ]),
+                            const SizedBox(height: 10),
+                            Text('${batch['seed_type']} · ${batch['status']}'),
+                            const SizedBox(height: 8),
+                            Wrap(spacing: 8, runSpacing: 6, children: [
+                              FieldTag('${batch['stage']}'),
+                              if (batch['is_demo'] == true)
+                                const FieldTag('Sample',
+                                    color: FieldColors.water)
+                            ]),
+                            const SizedBox(height: 10),
+                            Text(
+                                'Started ${displayDate(batch['started_at'])}\nTarget harvest ${displayDate(batch['target_harvest_at'])}',
+                                style: const TextStyle(
+                                    fontSize: 12, color: FieldColors.muted)),
+                            if (evaluator) ...[
+                              const SizedBox(height: 10),
+                              const Text('Tap a star to assess this batch',
+                                  style: TextStyle(fontSize: 12)),
+                              FieldStars(
+                                  value: 0,
+                                  onChanged: (rating) =>
+                                      submitEvaluation(batch, rating)),
+                            ],
+                          ])))))
           .toList();
-  List<Widget> more() => [
-        ListTile(
-            leading: const Icon(Icons.person_outline),
-            title: Text(widget.profile['display_name']),
-            subtitle: Text(widget.profile['email']),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute<void>(
-                    builder: (_) => ProfileForm(
-                        editing: true,
-                        profile: widget.profile,
-                        onSaved: (profile) {
-                          widget.onProfile(profile);
-                          Navigator.pop(context);
-                        })))),
-        section(
-            'Sensors & chamber equipment',
-            data['devices']!.isEmpty
-                ? [empty('No equipment is linked yet.')]
-                : data['devices']!
-                    .map((d) => Card(
-                        child: ListTile(
-                            leading: const Icon(Icons.sensors),
-                            title: Text(d['name']),
-                            subtitle: Text(
-                                'Serial ${d['serial_number']}\n${d['status']} · Last seen ${displayDate(d['last_seen_at'])}'),
-                            isThreeLine: true)))
-                    .toList()),
-        if (admin)
-          OutlinedButton.icon(
-              onPressed: addDevice,
-              icon: const Icon(Icons.qr_code_scanner),
-              label: const Text('Register equipment')),
-        const Padding(
-            padding: EdgeInsets.all(8),
-            child: Text(
-                'Admin IT registers equipment. Connect a registered chamber to Wi-Fi through its controller setup; it stays pending until a heartbeat is received.',
-                style: TextStyle(fontSize: 12, color: Colors.black54))),
-        section(
-            'Maintenance',
-            data['maintenance_records']!.isEmpty
-                ? [empty('No maintenance records yet.')]
-                : data['maintenance_records']!
-                    .map((m) => ListTile(
-                        title: Text(deviceName(m['device_id'])),
-                        subtitle: Text(
-                            '${m['notes']}\n${displayDate(m['performed_at'])}')))
-                    .toList()),
-        section(
-            'Evidence',
-            data['evidence_records']!.isEmpty
-                ? [empty('No evidence has been shared yet.')]
-                : data['evidence_records']!
-                    .map((e) => ListTile(
-                        leading: const Icon(Icons.fact_check_outlined),
-                        title: Text(e['title']),
-                        subtitle: Text(
-                            '${e['category']} · ${e['result']}\n${e['notes']}')))
-                    .toList()),
-        section('Notifications', [
+
+  List<Widget> batchList() {
+    final query = batchSearch.trim().toLowerCase();
+    final filtered = batches
+        .where((batch) =>
+            (batchFilter == 'All' ||
+                batch['status'] == batchFilter.toLowerCase()) &&
+            ['code', 'seed_type', 'stage', 'owner_id']
+                .any((key) => '${batch[key]}'.toLowerCase().contains(query)))
+        .toList();
+    return [
+      Text(evaluator ? 'Review shared production' : 'Keep your round moving',
+          style: Theme.of(context).textTheme.headlineSmall),
+      const SizedBox(height: 8),
+      const Text('Find a batch or scan its label to open the right record.',
+          style: TextStyle(color: FieldColors.muted)),
+      const SizedBox(height: 18),
+      TextField(
+          key: const ValueKey('batch-search'),
+          decoration: const InputDecoration(
+              labelText: 'Search batches',
+              hintText: 'Code, seed, stage or operator number',
+              prefixIcon: Icon(Icons.search)),
+          onChanged: (value) => setState(() => batchSearch = value)),
+      const SizedBox(height: 12),
+      Wrap(spacing: 8, children: [
+        for (final filter in ['Active', 'Archived', 'All'])
+          ChoiceChip(
+              label: Text(filter),
+              selected: batchFilter == filter,
+              onSelected: (_) => setState(() => batchFilter = filter))
+      ]),
+      const SizedBox(height: 12),
+      Text('${filtered.length} matching batches',
+          style: const TextStyle(fontSize: 12, color: FieldColors.muted)),
+      ...batchCards(filtered),
+    ];
+  }
+
+  List<Widget> alertList() {
+    final filtered = alerts
+        .where((a) =>
+            alertFilter == 'All' ||
+            (alertFilter == 'Resolved'
+                ? a['status'] == 'resolved'
+                : a['status'] != 'resolved'))
+        .toList();
+    return [
+      Text('Know what needs a check',
+          style: Theme.of(context).textTheme.headlineSmall),
+      const SizedBox(height: 8),
+      const Text(
+          'Open an alert for context and the recommended next step. These are in-app records, not background push notifications.',
+          style: TextStyle(color: FieldColors.muted)),
+      const SizedBox(height: 12),
+      Wrap(spacing: 8, children: [
+        for (final filter in ['Open', 'Resolved', 'All'])
+          ChoiceChip(
+              label: Text(filter),
+              selected: alertFilter == filter,
+              onSelected: (_) => setState(() => alertFilter = filter))
+      ]),
+      const SizedBox(height: 12),
+      if (filtered.isEmpty)
+        empty('No $alertFilter alerts available.')
+      else
+        ...filtered.map(alertCard),
+    ];
+  }
+
+  List<Widget> account() => [
+        Card(
+            child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const CircleAvatar(
+                          radius: 26,
+                          backgroundColor: FieldColors.mint,
+                          child: Icon(Icons.person_outline,
+                              color: FieldColors.forest)),
+                      const SizedBox(height: 14),
+                      Text('${widget.profile['display_name'] ?? firstName}',
+                          style: Theme.of(context).textTheme.titleLarge),
+                      Text('${widget.profile['email'] ?? ''}'),
+                      const SizedBox(height: 12),
+                      FieldTag(roleLabel),
+                      const SizedBox(height: 14),
+                      Text(rolePurpose,
+                          style: const TextStyle(color: FieldColors.muted)),
+                      TextButton.icon(
+                          onPressed: () => Navigator.push(
+                              context,
+                              MaterialPageRoute<void>(
+                                  builder: (_) => ProfileForm(
+                                      editing: true,
+                                      profile: widget.profile,
+                                      onSaved: (profile) {
+                                        widget.onProfile(profile);
+                                        Navigator.pop(context);
+                                      }))),
+                          icon: const Icon(Icons.edit_outlined),
+                          label: const Text('Account details')),
+                    ]))),
+        section('Notification preferences', [
+          const Text(
+              'Choose which saved alerts contribute to your in-app badge. Phone push delivery is not enabled.'),
           NotificationSettings(
               userId: widget.profile['id'],
+              preferences: notificationPreferences,
+              available: !unavailable.any((name) =>
+                  ['workspace', 'notification preferences'].contains(name)),
+              onRetry: refresh,
+              onSave: source.savePreferences,
               onChanged: (preferences) =>
-                  setState(() => notificationPreferences = preferences))
+                  setState(() => notificationPreferences = preferences)),
+        ]),
+        section('About this app', [
+          const Text(
+              'SproutSync Field is your mobile workspace for chamber checks, label scanning, batch updates and independent assessments. It shares authorized records with the web app. Planning, access administration and exports are handled on the web.'),
+          const SizedBox(height: 12),
+          const Text(
+              'Connection required. The app retains the last view in memory during refresh failures; it does not save an offline copy or queue actions.')
         ]),
         const SizedBox(height: 24),
         OutlinedButton.icon(
@@ -822,81 +919,109 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
             icon: const Icon(Icons.logout),
             label: const Text('Sign out')),
       ];
+
   @override
   Widget build(BuildContext context) {
     final content = switch (tab) {
       0 => home(),
-      1 => scanTools(),
-      2 => alerts.isEmpty
-          ? [empty('No alerts have been recorded.')]
-          : alerts
-              .map((a) => Card(
-                  elevation: 0,
-                  color: Colors.white,
-                  child: ListTile(
-                      leading: Icon(Icons.notifications_outlined,
-                          color: a['severity'] == 'critical'
-                              ? Colors.red
-                              : Colors.orange),
-                      title: Text(a['title']),
-                      subtitle: Text(
-                          '${a['batch_id'] == null ? 'No batch linked' : 'Batch ${batchName(a['batch_id'])}'}\n${a['status']} · ${displayDate(a['created_at'])}'),
-                      isThreeLine: true,
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => showAlert(a))))
-              .toList(),
-      _ => more(),
+      1 => batchList(),
+      2 => alertList(),
+      _ => account()
     };
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
     return Scaffold(
-        appBar: AppBar(
-            title: Text(['Today', 'Scan', 'Alerts', 'More'][tab],
-                style: const TextStyle(fontWeight: FontWeight.bold)),
-            actions: [
-              IconButton(
-                  tooltip: 'Refresh',
-                  onPressed: refresh,
-                  icon: const Icon(Icons.refresh)),
-              IconButton(
-                  tooltip: 'Alerts',
-                  onPressed: () => setState(() => tab = 2),
-                  icon: Badge(
-                      isLabelVisible: notificationCount > 0,
-                      label: Text('$notificationCount'),
-                      child: const Icon(Icons.notifications_outlined)))
-            ]),
-        body: SafeArea(
-            child: loading
-                ? const Center(child: CircularProgressIndicator())
-                : RefreshIndicator(
-                    onRefresh: refresh,
-                    child: ListView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.all(20),
-                        children: [
-                          if (error != null)
-                            Padding(
-                                padding: const EdgeInsets.only(bottom: 16),
-                                child: Text('$error Pull down to retry.',
-                                    style: TextStyle(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .error))),
-                          ...content
-                        ]))),
-        bottomNavigationBar: NavigationBar(
-            selectedIndex: tab,
-            onDestinationSelected: (index) => setState(() => tab = index),
-            destinations: const [
-              NavigationDestination(
-                  icon: Icon(Icons.today_outlined),
-                  selectedIcon: Icon(Icons.today),
-                  label: 'Today'),
-              NavigationDestination(
-                  icon: Icon(Icons.qr_code_scanner), label: 'Scan'),
-              NavigationDestination(
-                  icon: Icon(Icons.notifications_outlined), label: 'Alerts'),
-              NavigationDestination(icon: Icon(Icons.more_horiz), label: 'More')
-            ]));
+      appBar: AppBar(
+          title:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(['Today', 'Batches', 'Alerts', 'Account'][tab],
+                style: const TextStyle(fontWeight: FontWeight.w700)),
+            Text('SproutSync Field · $roleLabel',
+                style: const TextStyle(fontSize: 11, color: FieldColors.muted)),
+          ]),
+          actions: [
+            IconButton(
+                tooltip: 'Scan label',
+                onPressed: loading ? null : scanWorkspace,
+                icon: const Icon(Icons.qr_code_scanner)),
+            IconButton(
+                tooltip: 'Refresh workspace',
+                onPressed: refreshing ? null : refresh,
+                icon: const Icon(Icons.refresh))
+          ]),
+      body: SafeArea(
+          child: loading
+              ? const FieldLoading()
+              : Column(children: [
+                  if (refreshing) const LinearProgressIndicator(minHeight: 2),
+                  Expanded(
+                      child: AnimatedSwitcher(
+                          duration:
+                              Duration(milliseconds: reduceMotion ? 0 : 180),
+                          transitionBuilder: (child, animation) =>
+                              FadeTransition(opacity: animation, child: child),
+                          child: RefreshIndicator(
+                              key: ValueKey(tab),
+                              onRefresh: refresh,
+                              child: ListView(
+                                  key: PageStorageKey('field-tab-$tab'),
+                                  physics:
+                                      const AlwaysScrollableScrollPhysics(),
+                                  padding:
+                                      const EdgeInsets.fromLTRB(20, 12, 20, 32),
+                                  children: [
+                                    if (error != null)
+                                      FieldNotice(
+                                          title: lastSync == null
+                                              ? 'Workspace partly unavailable'
+                                              : 'Showing last available records',
+                                          message:
+                                              '$error ${lastSync == null ? 'Unavailable sources may be empty.' : 'Last complete sync: ${displayDate(lastSync!.toIso8601String())}. Some records may be outdated.'}',
+                                          warning: true,
+                                          onRetry: refreshing ? null : refresh)
+                                    else
+                                      Padding(
+                                          padding:
+                                              const EdgeInsets.only(bottom: 12),
+                                          child: Text(
+                                              'Updated ${readingAge(lastSync?.toIso8601String(), DateTime.now())} · Pull to refresh',
+                                              style: const TextStyle(
+                                                  fontSize: 11,
+                                                  color: FieldColors.muted))),
+                                    if (batches
+                                            .any((b) => b['is_demo'] == true) ||
+                                        data['devices']!
+                                            .any((d) => d['is_demo'] == true))
+                                      const FieldNotice(
+                                          title: 'Sample records included',
+                                          message:
+                                              'Sample batches, chambers and rinse plans are demonstrations. They do not prove live sensor or pump activity.'),
+                                    ...content,
+                                  ])))),
+                ])),
+      bottomNavigationBar: NavigationBar(
+          selectedIndex: tab,
+          onDestinationSelected: (index) => setState(() => tab = index),
+          destinations: [
+            const NavigationDestination(
+                icon: Icon(Icons.wb_sunny_outlined),
+                selectedIcon: Icon(Icons.wb_sunny),
+                label: 'Today'),
+            const NavigationDestination(
+                icon: Icon(Icons.spa_outlined),
+                selectedIcon: Icon(Icons.spa),
+                label: 'Batches'),
+            NavigationDestination(
+                icon: Badge(
+                    isLabelVisible: notificationCount > 0,
+                    label: Text('$notificationCount'),
+                    child: const Icon(Icons.notifications_outlined)),
+                label: 'Alerts'),
+            const NavigationDestination(
+                icon: Icon(Icons.person_outline),
+                selectedIcon: Icon(Icons.person),
+                label: 'Account'),
+          ]),
+    );
   }
 }
 
@@ -964,7 +1089,7 @@ class _RecordEditorState extends State<RecordEditor> {
   }
 
   Future<void> save() async {
-    if (!form.currentState!.validate()) return;
+    if (busy || !form.currentState!.validate()) return;
     setState(() {
       busy = true;
       error = null;
@@ -998,114 +1123,79 @@ class _RecordEditorState extends State<RecordEditor> {
                                   padding: const EdgeInsets.only(bottom: 18),
                                   child: f.key == 'rating'
                                       ? FormField<String>(
-                                          initialValue: controllers[f.key]!
-                                                  .text
-                                                  .isEmpty
-                                              ? null
-                                              : controllers[f.key]!.text,
+                                          initialValue:
+                                              controllers[f.key]!.text.isEmpty
+                                                  ? null
+                                                  : controllers[f.key]!.text,
                                           validator: (value) =>
                                               value == null || value.isEmpty
                                                   ? 'Select a rating'
                                                   : null,
                                           builder: (state) => Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(f.label,
-                                                    style: Theme.of(context)
-                                                        .textTheme
-                                                        .bodySmall),
-                                                const SizedBox(height: 8),
-                                                SegmentedButton<String>(
-                                                    multiSelectionEnabled:
-                                                        false,
-                                                    emptySelectionAllowed: true,
-                                                    showSelectedIcon: false,
-                                                    segments: [
-                                                      for (final value in [
-                                                        '1',
-                                                        '2',
-                                                        '3',
-                                                        '4',
-                                                        '5'
-                                                      ])
-                                                        ButtonSegment(
-                                                            value: value,
-                                                            icon: const Icon(
-                                                                Icons.star_outline,
-                                                                size: 18),
-                                                            label: Text(value))
-                                                    ],
-                                                    selected: state.value == null
-                                                        ? <String>{}
-                                                        : {state.value!},
-                                                    onSelectionChanged:
-                                                        busy || widget.readOnly
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(f.label,
+                                                        style: Theme.of(context)
+                                                            .textTheme
+                                                            .bodySmall),
+                                                    const SizedBox(height: 8),
+                                                    FieldStars(
+                                                        value: int.tryParse(
+                                                                state.value ??
+                                                                    '') ??
+                                                            0,
+                                                        onChanged: busy ||
+                                                                widget.readOnly
                                                             ? null
-                                                            : (selection) {
-                                                                final value =
-                                                                    selection
-                                                                            .isEmpty
-                                                                        ? null
-                                                                        : selection
-                                                                            .first;
+                                                            : (rating) {
                                                                 controllers[f
                                                                             .key]!
                                                                         .text =
-                                                                    value ?? '';
+                                                                    '$rating';
                                                                 state.didChange(
-                                                                    value);
+                                                                    '$rating');
                                                               }),
-                                                const SizedBox(height: 6),
-                                                const Text(
-                                                    '1 Poor · 2 Fair · 3 Good · 4 Very good · 5 Excellent',
-                                                    style: TextStyle(
-                                                        fontSize: 11,
-                                                        color:
-                                                            Colors.black54)),
-                                                if (state.hasError)
-                                                  Padding(
-                                                      padding:
-                                                          const EdgeInsets.only(
-                                                              top: 6),
-                                                      child: Text(
-                                                          state.errorText!,
-                                                          style: TextStyle(
-                                                              color: Theme.of(
-                                                                      context)
-                                                                  .colorScheme
-                                                                  .error,
-                                                              fontSize: 12)))
-                                              ]))
+                                                    const SizedBox(height: 6),
+                                                    const Text(
+                                                        '1 Poor · 2 Fair · 3 Good · 4 Very good · 5 Excellent',
+                                                        style: TextStyle(
+                                                            fontSize: 11,
+                                                            color: Colors
+                                                                .black54)),
+                                                    if (state.hasError)
+                                                      Padding(
+                                                          padding: const EdgeInsets
+                                                              .only(top: 6),
+                                                          child: Text(
+                                                              state.errorText!,
+                                                              style: TextStyle(
+                                                                  color: Theme.of(
+                                                                          context)
+                                                                      .colorScheme
+                                                                      .error,
+                                                                  fontSize:
+                                                                      12)))
+                                                  ]))
                                       : f.options != null
-                                      ? DropdownButtonFormField<String>(
-                                          initialValue:
-                                              controllers[f.key]!.text.isEmpty
+                                          ? DropdownButtonFormField<String>(
+                                              isExpanded: true,
+                                              initialValue: controllers[f.key]!.text.isEmpty
                                                   ? null
                                                   : controllers[f.key]!.text,
-                                          decoration: InputDecoration(
-                                              labelText: f.label),
-                                          items: f.options!.entries
-                                              .map((e) => DropdownMenuItem(
-                                                  value: e.key,
-                                                  child: Text(e.value)))
-                                              .toList(),
-                                          onChanged: busy || widget.readOnly
-                                              ? null
-                                              : (value) => controllers[f.key]!
-                                                  .text = value ?? '',
-                                          validator: (value) => f.required &&
-                                                  (value == null ||
-                                                      value.isEmpty)
-                                              ? 'Required'
-                                              : null)
-                                      : TextFormField(
-                                          controller: controllers[f.key],
-                                          enabled: !busy && !widget.readOnly,
-                                          maxLines: f.multiline ? 4 : 1,
-                                          maxLength: f.multiline ? 2000 : f.maxLength,
-                                          decoration: InputDecoration(labelText: f.label),
-                                          validator: (value) => f.required && (value?.trim().isEmpty ?? true) ? 'Required' : null)),
+                                              decoration: InputDecoration(
+                                                  labelText: f.label),
+                                              items: f.options!.entries
+                                                  .map((e) => DropdownMenuItem(
+                                                      value: e.key,
+                                                      child: Text(e.value)))
+                                                  .toList(),
+                                              onChanged: busy || widget.readOnly
+                                                  ? null
+                                                  : (value) =>
+                                                      controllers[f.key]!.text = value ?? '',
+                                              validator: (value) => f.required && (value == null || value.isEmpty) ? 'Required' : null)
+                                          : TextFormField(controller: controllers[f.key], enabled: !busy && !widget.readOnly, maxLines: f.multiline ? 4 : 1, maxLength: f.multiline ? 2000 : f.maxLength, decoration: InputDecoration(labelText: f.label), validator: (value) => f.required && (value?.trim().isEmpty ?? true) ? 'Required' : null)),
                             if (error != null)
                               Text(error!,
                                   style: TextStyle(
@@ -1196,7 +1286,26 @@ class _DeviceScannerState extends State<DeviceScanner> {
 /// Persists alert delivery preferences for the signed-in account.
 class NotificationSettings extends StatefulWidget {
   /// Creates the NotificationSettings widget or field definition.
-  const NotificationSettings({super.key, required this.userId, this.onChanged});
+  const NotificationSettings(
+      {super.key,
+      required this.userId,
+      required this.preferences,
+      required this.onSave,
+      this.available = true,
+      this.onRetry,
+      this.onChanged});
+
+  /// Last confirmed settings for the signed-in user.
+  final Record preferences;
+
+  /// Persists changes through the authenticated source.
+  final Future<Record> Function(Record) onSave;
+
+  /// Whether these preferences were successfully loaded.
+  final bool available;
+
+  /// Reloads after a source failure.
+  final VoidCallback? onRetry;
 
   /// Updates the surrounding notification badge after preferences change.
   final ValueChanged<Record>? onChanged;
@@ -1212,36 +1321,25 @@ class _NotificationSettingsState extends State<NotificationSettings> {
   bool busy = false;
   String? error;
   @override
-  void initState() {
-    super.initState();
-    unawaited(load());
-  }
-
-  Future<void> load() async {
-    try {
-      final data = await Supabase.instance.client
-          .from('notification_preferences')
-          .select()
-          .eq('user_id', widget.userId)
-          .maybeSingle();
-      if (mounted) {
-        setState(() {
-          alerts = data?['alerts_enabled'] ?? true;
-          harvest = data?['harvest_enabled'] ?? true;
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => error = readableError(e));
+  void didUpdateWidget(covariant NotificationSettings oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!busy &&
+        (oldWidget.preferences['alerts_enabled'] !=
+                widget.preferences['alerts_enabled'] ||
+            oldWidget.preferences['harvest_enabled'] !=
+                widget.preferences['harvest_enabled'])) {
+      alerts = null;
+      harvest = null;
     }
   }
 
   Future<void> save(bool a, bool h) async {
     setState(() => busy = true);
     try {
-      await Supabase.instance.client.from('notification_preferences').upsert({
+      await widget.onSave({
         'user_id': widget.userId,
         'alerts_enabled': a,
-        'harvest_enabled': h
+        'harvest_enabled': h,
       });
       if (mounted) {
         setState(() {
@@ -1260,19 +1358,36 @@ class _NotificationSettingsState extends State<NotificationSettings> {
 
   @override
   Widget build(BuildContext context) => Column(children: [
-        if (error != null)
-          Text(error!, style: const TextStyle(color: Colors.red)),
-        if (alerts == null)
-          const Text('Loading preferences…')
+        if (!widget.available)
+          FieldNotice(
+              title: 'Preferences unavailable',
+              message: 'Refresh before changing your badge settings.',
+              warning: true,
+              onRetry: widget.onRetry)
         else ...[
           SwitchListTile(
-              title: const Text('Alert notifications'),
-              value: alerts!,
-              onChanged: busy ? null : (value) => save(value, harvest!)),
+              title: const Text('Alert badge'),
+              value: alerts ?? widget.preferences['alerts_enabled'] == true,
+              onChanged: busy
+                  ? null
+                  : (value) => save(
+                      value,
+                      harvest ??
+                          widget.preferences['harvest_enabled'] == true)),
           SwitchListTile(
-              title: const Text('Harvest notifications'),
-              value: harvest!,
-              onChanged: busy ? null : (value) => save(alerts!, value))
-        ]
+              title: const Text('Harvest badge'),
+              value: harvest ?? widget.preferences['harvest_enabled'] == true,
+              onChanged: busy
+                  ? null
+                  : (value) => save(
+                      alerts ?? widget.preferences['alerts_enabled'] == true,
+                      value))
+        ],
+        if (error != null)
+          FieldNotice(
+              title: 'Preferences were not saved',
+              message: error!,
+              warning: true,
+              onRetry: widget.onRetry),
       ]);
 }

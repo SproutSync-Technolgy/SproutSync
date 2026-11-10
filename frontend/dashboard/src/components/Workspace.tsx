@@ -67,9 +67,6 @@ import {
   declineAccessRequest,
   requestOperatorAccess,
   exportCsv,
-  STATIC_ACCOUNTS,
-  STATIC_OPERATOR_EVALUATORS,
-  STATIC_ACCESS_REQUESTS,
   type Profile,
   type WorkspaceData,
   type Batch,
@@ -88,6 +85,8 @@ import { mergeReadings, useLiveTelemetry } from "../data/liveTelemetry";
 import { DeviceConnectionForm, LiveConnectionStatus } from "./DeviceConnection";
 import { WorkspaceNavigation } from "./WorkspaceNavigation";
 import logoUrl from "../assets/logo.png";
+import { BatchRatingPicker, StarRatingField } from "./StarRating";
+import { AdminOverview } from "./AdminOverview";
 
 export function getRolePages(profile: Profile, hasGrant: boolean) {
   if (profile.role === "pending" || (!hasGrant && !isSuperAdmin(profile))) {
@@ -230,6 +229,7 @@ type Dialog = {
   operator_id?: number;
   evaluator_id?: number;
   batch_id?: number;
+  initial_rating?: number;
 } | null;
 
 export default function Workspace({
@@ -282,41 +282,10 @@ export default function Workspace({
   const [batchFilter, setBatchFilter] = useState("all");
   const [batchMonth, setBatchMonth] = useState("");
   const [batchDate, setBatchDate] = useState("");
-  const initialAccounts = (() => {
-    const list = [...STATIC_ACCOUNTS];
-    if (
-      superadmin &&
-      !list.some(
-        (a) =>
-          a.id === profile.id ||
-          (profile.email && a.email.toLowerCase() === profile.email.toLowerCase()),
-      )
-    ) {
-      list.unshift({
-        id: profile.id,
-        email: profile.email,
-        role: profile.role,
-        first_name: profile.first_name || "",
-        last_name: profile.last_name || "",
-        display_name: profile.display_name || profile.email,
-        organization: profile.organization || "SproutSync Administration",
-        phone: profile.phone || "",
-        avatar_url: profile.avatar_url || null,
-        is_active: true,
-        granted_serial_count: 0,
-        evaluator_grant_count: 0,
-        created_at: new Date().toISOString(),
-      });
-    }
-    return list;
-  })();
-  const [accounts, setAccounts] = useState<UserAccount[]>(initialAccounts);
-  const [operatorEvaluators, setOperatorEvaluators] = useState<EvaluatorSummary[]>(
-    STATIC_OPERATOR_EVALUATORS,
-  );
-  const [accessRequests, setAccessRequests] = useState<AccessRequest[]>(
-    STATIC_ACCESS_REQUESTS,
-  );
+  const [accounts, setAccounts] = useState<UserAccount[]>([]);
+  const [accountsError, setAccountsError] = useState("");
+  const [operatorEvaluators, setOperatorEvaluators] = useState<EvaluatorSummary[]>([]);
+  const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([]);
   const [expandedOperatorId, setExpandedOperatorId] = useState<number | null>(null);
   const [accountSearchQuery, setAccountSearchQuery] = useState("");
   const [accountRoleFilter, setAccountRoleFilter] = useState("all");
@@ -331,11 +300,6 @@ export default function Workspace({
     alerts_enabled: true,
     harvest_enabled: true,
   });
-  useEffect(() => {
-    if (showWelcome) {
-      sessionStorage.setItem(`sproutsync-welcome-${profile.id}`, "seen");
-    }
-  }, [profile.id, showWelcome]);
   useEffect(() => {
     let active = true;
     supabase
@@ -424,23 +388,20 @@ export default function Workspace({
         setError("");
         setUpdated(new Date());
         if (superadmin) {
-          fetchAccounts()
-            .then((res) => {
-              if (Array.isArray(res) && res.length > 0) setAccounts(res);
-            })
-            .catch(console.error);
+          try {
+            const rows = await fetchAccounts();
+            if (!controller.signal.aborted) { setAccounts(rows); setAccountsError(""); }
+          } catch (e) {
+            if (!controller.signal.aborted) setAccountsError(errorMessage(e));
+          }
         }
-        if (operator) {
-          fetchOperatorEvaluators()
-            .then((res) => {
-              if (Array.isArray(res) && res.length > 0) setOperatorEvaluators(res);
-            })
-            .catch(console.error);
-          fetchAccessRequests()
-            .then((res) => {
-              if (Array.isArray(res) && res.length > 0) setAccessRequests(res);
-            })
-            .catch(console.error);
+        if (strictOperator) {
+          try {
+            const [evaluators, requests] = await Promise.all([fetchOperatorEvaluators(), fetchAccessRequests()]);
+            if (!controller.signal.aborted) { setOperatorEvaluators(evaluators); setAccessRequests(requests); }
+          } catch (e) {
+            if (!controller.signal.aborted) setError(errorMessage(e));
+          }
         }
       }
     } catch (error) {
@@ -451,7 +412,7 @@ export default function Workspace({
         setRefreshing(false);
       }
     }
-  }, [superadmin, operator]);
+  }, [superadmin, strictOperator]);
   useEffect(() => {
     void reload();
     const timer = setInterval(() => {
@@ -605,6 +566,10 @@ export default function Workspace({
     .join("")
     .slice(0, 2)
     .toUpperCase();
+  const rawWelcomeName = (profile.first_name?.trim() || profile.display_name?.trim() || profile.email.split("@")[0]).split(",").pop()!.trim();
+  const welcomeName = rawWelcomeName === rawWelcomeName.toLocaleUpperCase()
+    ? rawWelcomeName.toLocaleLowerCase().replace(/\b\p{L}/gu, (letter) => letter.toLocaleUpperCase())
+    : rawWelcomeName;
   const nextSchedule = data.schedules
     .filter((s) => s.enabled && new Date(s.next_run_at) > new Date())
     .sort((a, b) => a.next_run_at.localeCompare(b.next_run_at))[0];
@@ -640,7 +605,7 @@ export default function Workspace({
           : null;
 
         return [
-          <strong key="code">{b.code}</strong>,
+          <span key="code"><strong>{b.code}</strong>{b.is_demo && <small className="sample-record-label">Sample</small>}</span>,
           `Operator #${b.owner_id}`,
           b.seed_type,
           <button
@@ -652,33 +617,11 @@ export default function Workspace({
             <Status value={b.stage} />
           </button>,
           <Status key="status" value={b.status} />,
-          <span
-            key="rating"
-            className="inline-flex items-center gap-1.5"
-            title={
-              avgRating !== null
-                ? `Rated ${avgRating}/5 stars (${batchEvaluations.length} evaluation${batchEvaluations.length > 1 ? "s" : ""})`
-                : "Not yet evaluated"
-            }
-          >
-            {avgRating !== null ? (
-              <>
-                <Rating value={avgRating} />
-                <span className="text-xs font-semibold text-muted-foreground">
-                  ({avgRating}★)
-                </span>
-              </>
-            ) : evaluator ? (
-              <button
-                type="button"
-                className="text-xs text-primary font-semibold hover:underline"
-                onClick={() => open({ kind: "evaluation", batch_id: b.id })}
-              >
-                + Rate batch
-              </button>
-            ) : (
-              <span className="text-xs text-muted-foreground italic">Unrated</span>
-            )}
+          <span key="rating" className="batch-rating-cell">
+            {evaluator ? <BatchRatingPicker batch={b.code} value={avgRating ?? 0}
+              onSelect={(rating) => open({ kind: "evaluation", batch_id: b.id, initial_rating: rating })} />
+              : avgRating !== null ? <Rating value={avgRating} /> : <span className="text-xs text-muted-foreground">Unrated</span>}
+            {batchEvaluations.length > 0 && <small>{batchEvaluations.length} {batchEvaluations.length === 1 ? "review" : "reviews"}</small>}
           </span>,
           date(b.target_harvest_at),
           <button
@@ -846,6 +789,7 @@ export default function Workspace({
               Refresh
             </button>
           </div>
+          {data.batches.some((batch) => batch.is_demo) && <div className="sample-data-banner" role="note"><Sprout size={18} /><span><strong>Sample records are included.</strong> DEMO batches, watering history, and schedules are for demonstration. They do not indicate live sensor data or executed pump commands.</span></div>}
           {error && (
             <div role="alert" className="feedback-error mb-5">
               {error}
@@ -1020,19 +964,21 @@ export default function Workspace({
                     </div>
                   </div>
                 )
+              ) : page === "home" && superadmin ? (
+                <AdminOverview name={welcomeName} data={data} accounts={accounts} accountsError={accountsError}
+                  onAccounts={(role = "all") => { setAccountRoleFilter(role); navigate("accounts"); }}
+                  onGrant={() => open({ kind: "superadmin-grant-serial" })} onNavigate={navigate} />
               ) : page === "home" && (
                 <>
                   {showWelcome && (
                     <section className="welcome-panel">
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-widest text-emerald-200">
-                          {operator
-                            ? "Your growing space"
-                            : "Your evaluation space"}
+                          {superadmin ? "Your administration workspace" : operator ? "Your growing space" : "Your evaluation space"}
                         </p>
-                        <h2>Welcome back, {profile.first_name}.</h2>
+                        <h2>Welcome back, {welcomeName || "there"}.</h2>
                         <p>
-                          {operator
+                          {superadmin ? "Manage accounts, provision chambers, and review fleet activity." : operator
                             ? "A clear view of your batches, chamber, and daily operations."
                             : "Review shared batches, inspect evidence, and submit your assessment."}
                         </p>
@@ -1046,7 +992,7 @@ export default function Workspace({
                       <button
                         className="welcome-dismiss"
                         aria-label="Dismiss welcome"
-                        onClick={() => setShowWelcome(false)}
+                        onClick={() => { sessionStorage.setItem(`sproutsync-welcome-${profile.id}`, "seen"); setShowWelcome(false); }}
                       >
                         <X size={17} />
                       </button>
@@ -1214,46 +1160,6 @@ export default function Workspace({
                     </>
                   )}
 
-                  {superadmin && (
-                    <div className="summary-grid">
-                      <Metric
-                        icon={<Users />}
-                        label="Managed accounts"
-                        value={`${data.activity.filter((a) => a.resource.startsWith("users:")).length || "Fleet"} accounts`}
-                        detail="Operators, evaluators & admins"
-                        onClick={() => navigate("accounts")}
-                        targetLabel="Accounts & Roles"
-                      />
-                      <Metric
-                        icon={<Key />}
-                        label="Granted serial IDs"
-                        value={`${data.devices.length} chambers`}
-                        detail="Hardware serial provisioning"
-                        onClick={() => navigate("serials")}
-                        targetLabel="Serial ID Grants"
-                      />
-                      <Metric
-                        icon={<Cpu />}
-                        label="Fleet machine status"
-                        value={
-                          data.devices.length
-                            ? `${onlineDevices.length} / ${data.devices.length} online`
-                            : "No devices"
-                        }
-                        detail={deviceStatusDetail}
-                        onClick={() => navigate("readings")}
-                        targetLabel="Readings"
-                      />
-                      <Metric
-                        icon={<FileText />}
-                        label="Audit events recorded"
-                        value={String(data.activity.length)}
-                        detail="Immutable access & grant logs"
-                        onClick={() => navigate("audit")}
-                        targetLabel="Audit Log"
-                      />
-                    </div>
-                  )}
 
                   {!evaluator && !superadmin && (
                     <div className="summary-grid">
@@ -1303,7 +1209,7 @@ export default function Workspace({
                         value={
                           currentReading
                             ? `${currentReading.water_level_percent ?? "—"}%`
-                            : "Normal"
+                            : "No reading"
                         }
                         detail="Fresh-water level"
                         onClick={() => navigate("readings")}
@@ -1315,7 +1221,7 @@ export default function Workspace({
                         value={
                           nextSchedule
                             ? date(nextSchedule.next_run_at)
-                            : "Scheduled"
+                            : "No upcoming run"
                         }
                         detail={`${data.watering.length} watering events`}
                         onClick={() => navigate("irrigation")}
@@ -1426,7 +1332,7 @@ export default function Workspace({
                       </p>
                       <button
                         className="table-link mt-5"
-                        onClick={() => navigate("production")}
+                        onClick={() => navigate("irrigation")}
                       >
                         View irrigation <ChevronRight size={15} />
                       </button>
@@ -1947,7 +1853,7 @@ export default function Workspace({
                   <section className="surface">
                     <SectionTitle
                       title="Irrigation schedule"
-                      subtitle="Configured watering intervals and automated triggers."
+                      subtitle="Saved rinse plans. Execution requires validated controller integration."
                       action={
                         operator && (
                           <Btn
@@ -2107,31 +2013,10 @@ export default function Workspace({
                         )
                       }
                     />
-                    <div className="evaluation-guide mb-5">
-                      <div>
-                        <p className="role-kicker">Rating basis</p>
-                        <h3 className="text-base font-bold text-foreground">
-                          Use the standard five-point rubric for every batch
-                        </h3>
-                        <div
-                          className="rating-rubric"
-                          aria-label="Evaluation rating guide"
-                        >
-                          {[
-                            [1, "Poor"],
-                            [2, "Fair"],
-                            [3, "Good"],
-                            [4, "Very good"],
-                            [5, "Excellent"],
-                          ].map(([value, label]) => (
-                            <span key={value}>
-                              <strong>{value}★</strong>
-                              {label}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
+                    <details className="evaluation-rating-help">
+                      <summary>Rating guide</summary>
+                      <p>Use the standard five-point rubric for every batch: 1 Poor ? 2 Fair ? 3 Good ? 4 Very good ? 5 Excellent. Add comments to explain your observations.</p>
+                    </details>
                     <div className="table-toolbar">
                       <label className="search-field">
                         <Search size={17} />
@@ -2250,6 +2135,7 @@ export default function Workspace({
                 return (
                   <div className="space-y-6">
                     <section className="surface accounts-directory-table">
+                      {accountsError && <div className="feedback-error mb-4" role="alert">{accountsError} Use Refresh to retry.</div>}
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-border">
                         <div>
                           <h3 className="text-base font-bold tracking-tight">Accounts Directory & Governance</h3>
@@ -2264,11 +2150,11 @@ export default function Workspace({
                             onClick={async () => {
                               try {
                                 const res = await fetchAccounts();
-                                setAccounts(Array.isArray(res) && res.length > 0 ? res : initialAccounts);
+                                setAccounts(res);
+                                setAccountsError("");
                                 setToast("Accounts refreshed.");
-                              } catch {
-                                setAccounts(initialAccounts);
-                                setToast("Accounts refreshed with fallback data.");
+                              } catch (e) {
+                                setAccountsError(errorMessage(e));
                               }
                             }}
                           >
@@ -2865,7 +2751,7 @@ export default function Workspace({
                           onClick={() => {
                             fetchAccessRequests()
                               .then(setAccessRequests)
-                              .catch(console.error);
+                              .catch((e) => setError(errorMessage(e)));
                           }}
                         >
                           <RefreshCw size={14} /> Refresh
@@ -3857,7 +3743,7 @@ export default function Workspace({
             onSubmit={async (values) => {
               setBusy(true);
               try {
-                await updateAccount(dialog.account!.id, {
+                const savedAccount = await updateAccount(dialog.account!.id, {
                   first_name: values.first_name,
                   last_name: values.last_name,
                   email: values.email,
@@ -3865,10 +3751,10 @@ export default function Workspace({
                   organization: values.organization,
                   phone: values.phone,
                 });
-                const updatedAccounts = await fetchAccounts();
-                setAccounts(updatedAccounts);
+                setAccounts((current) => current.map((account) => account.id === savedAccount.id ? savedAccount : account));
                 setToast("Account updated successfully.");
-                close();
+                setDialog(null);
+                void reload();
               } catch (e) {
                 setDialogError(errorMessage(e));
               } finally {
@@ -3893,9 +3779,9 @@ export default function Workspace({
                     Are you sure you want to delete {dialog.account.display_name || dialog.account.email}?
                   </p>
                   <p className="mt-1 text-xs opacity-90 leading-relaxed">
-                    This will permanently remove account #{dialog.account.id} ({dialog.account.role}),
-                    revoke all associated chamber allocations, unlink evaluator permissions, and purge
-                    pending requests. This action is audited and cannot be undone.
+                    This removes application profile #{dialog.account.id} ({dialog.account.role}) and
+                    its access-request links. It does not disable the hosted sign-in identity.
+                    Accounts with production or linked history cannot be removed. This action is audited.
                   </p>
                 </div>
               </div>
@@ -3925,7 +3811,8 @@ export default function Workspace({
                       await deleteAccount(dialog.account!.id);
                       setAccounts((prev) => prev.filter((a) => a.id !== dialog.account!.id));
                       setToast("Account deleted successfully.");
-                      close();
+                      setDialog(null);
+                      void reload();
                     } catch (e) {
                       setDialogError(errorMessage(e));
                     } finally {
@@ -3975,11 +3862,9 @@ export default function Workspace({
                   serial_number: values.serial_number.trim().toUpperCase(),
                   name: values.name.trim(),
                 });
-                await reload();
-                const updatedAccounts = await fetchAccounts();
-                setAccounts(updatedAccounts);
                 setToast("Chamber serial ID granted to operator.");
-                close();
+                setDialog(null);
+                void reload();
               } catch (e) {
                 setDialogError(errorMessage(e));
               } finally {
@@ -4023,11 +3908,9 @@ export default function Workspace({
                   evaluator_id: Number(values.evaluator_id),
                   operator_id: Number(values.operator_id),
                 });
-                await reload();
-                const updatedAccounts = await fetchAccounts();
-                setAccounts(updatedAccounts);
                 setToast("Evaluator assigned to operator successfully.");
-                close();
+                setDialog(null);
+                void reload();
               } catch (e) {
                 setDialogError(errorMessage(e));
               } finally {
@@ -4060,19 +3943,15 @@ export default function Workspace({
             onSubmit={async (values) => {
               setBusy(true);
               try {
-                await updateOperatorEvaluator(dialog.evaluator!.id, {
+                const savedEvaluator = await updateOperatorEvaluator(dialog.evaluator!.id, {
                   first_name: values.first_name,
                   last_name: values.last_name,
                   email: values.email,
                 });
-                const [evals, updatedAccounts] = await Promise.all([
-                  fetchOperatorEvaluators(),
-                  fetchAccounts().catch(() => []),
-                ]);
-                setOperatorEvaluators(evals);
-                if (updatedAccounts.length) setAccounts(updatedAccounts);
+                setOperatorEvaluators((current) => current.map((item) => item.id === savedEvaluator.id ? savedEvaluator : item));
                 setToast("Evaluator details updated successfully.");
-                close();
+                setDialog(null);
+                void reload();
               } catch (e) {
                 setDialogError(errorMessage(e));
               } finally {
@@ -4091,9 +3970,9 @@ export default function Workspace({
             "access",
           ].includes(dialog.kind) && (
             <RecordForm
-              key={dialog.kind}
+              key={`${dialog.kind}-${dialog.batch_id ?? "all"}-${dialog.initial_rating ?? 0}`}
               busy={busy}
-              fields={formFields(dialog.kind, data, dialog.batch_id)}
+              fields={formFields(dialog.kind, data, dialog.batch_id, dialog.initial_rating)}
               onSubmit={async (values) => {
                 const payload: Record<string, unknown> = {
                   ...values,
@@ -4404,24 +4283,7 @@ function RecordForm({
           f.type === "rating" ? (
             <fieldset className="field" key={f.name}>
               <legend>{f.label}</legend>
-              <div className="rating-picker">
-                {[1, 2, 3, 4, 5].map((value) => (
-                  <label key={value}>
-                    <input
-                      type="radio"
-                      name={f.name}
-                      value={value}
-                      required={f.required !== false}
-                      defaultChecked={f.value === String(value)}
-                    />
-                    <Star size={21} aria-hidden="true" />
-                    <span>{value}</span>
-                  </label>
-                ))}
-              </div>
-              <small className="text-muted-foreground">
-                1 Poor · 2 Fair · 3 Good · 4 Very good · 5 Excellent
-              </small>
+              <StarRatingField name={f.name} initialValue={Number(f.value ?? 0)} required={f.required !== false} />
             </fieldset>
           ) : (
             <label className="field" key={f.name}>
@@ -4480,6 +4342,7 @@ function formFields(
   kind: string,
   data: WorkspaceData,
   defaultBatchId?: number,
+  initialRating?: number,
 ): Field[] {
   const device: Field = {
     name: "device_id",
@@ -4557,6 +4420,7 @@ function formFields(
             name: "rating",
             label: "Human assessment",
             type: "rating",
+            value: initialRating ? String(initialRating) : undefined,
           },
           {
             name: "comments",

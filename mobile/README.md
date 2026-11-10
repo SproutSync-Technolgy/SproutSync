@@ -4,18 +4,32 @@ The Flutter app shares Supabase Auth and database access policies with the web a
 Android, iOS and web host projects are included.
 
 Mobile is the field companion to the web planning and oversight workspace. Its
-four primary areas are Today, Scan, Alerts, and More. A user can scan the label on
+four primary areas are Today, Batches, Alerts, and Account. Scanning is available
+from every area. A user can scan the label on
 a batch or chamber at the point of work, open its shared record, record maintenance
 as an operator, submit an independent assessment as an evaluator, and respond to
 alerts. Historical reports, exports, access management, and detailed planning stay
 on the web instead of being duplicated on a smaller screen.
 
 The app provides email/password and Google sign-in plus prefilled profile
-confirmation. Operators can register devices by QR or serial, update a scanned
-batch, record maintenance, and acknowledge or resolve alerts. Evaluators can review
+confirmation. Operators can find batches by search or scan, update stage/notes,
+record maintenance against a chamber, and acknowledge or resolve alerts. Equipment
+registration and serial grants use the web workflow. Evaluators can review
 shared records and evidence and submit an assessment that never overwrites machine
 readings. Account and notification settings persist in Supabase. Pull-to-refresh
-and a foreground 30-second refresh keep records current.
+and a foreground 30-second refresh recover missed changes. Database change events
+also trigger a debounced refresh. Only the latest raw reading per device is fetched;
+the app no longer downloads the entire telemetry history every round. A failed
+source keeps its previous in-memory records and displays a warning.
+
+This is an independent installed application: using it does not require opening
+or running the web frontend. It still requires the configured hosted data services
+and the backend ingestion worker for new sensor data. It has no persistent offline
+cache, automatic pump control or background push delivery.
+
+Read the [mobile experience guide](../docs/mobile-experience.md) for the screen
+purposes, color palette, supported features, design references and realistic
+roadmap. Version 0.2.0 introduces the field navigation and workflow redesign.
 
 ## Run and validate
 

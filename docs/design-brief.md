@@ -120,3 +120,13 @@ stable. Incoming sensor updates do not replay page transitions. Selecting a new
 page moves keyboard focus to its heading and returns to the top of the page.
 Section controls expose their expanded state and support native keyboard
 activation. Reduced-motion preferences remove page and selection movement.
+
+The Superadmin overview prioritizes account/role review, chamber grants, open
+alerts and recent activity. Each metric leads to an implemented destination or
+form. Operational samples carry persistent sample labels; missing live data
+never receives a healthy status by default. Evaluators can select one of five
+batch stars to open the assessment with that score preselected, add comments,
+and explicitly save. The rating guide is available on demand.
+
+See the [feature guide's design references](feature-guide.md#design-references)
+for the Dribbble inspiration and the limits of the Figma reference review.

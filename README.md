@@ -66,3 +66,11 @@ Read [architecture](docs/architecture.md), [technology stack](docs/tech-stack.md
 [workspace release](docs/workspace-release.md), [testing](docs/testing.md),
 [contribution rules](CONTRIBUTING.md), and [security](SECURITY.md).
 Licensing remains a team decision; no open-source license is assumed.
+
+For a complete explanation of implemented features and proposed additions, read
+the [feature guide](docs/feature-guide.md). The [MVP readiness assessment](docs/mvp-readiness.md)
+separates the working connected prototype from unfinished acceptance criteria.
+The [API and free-service guide](docs/api-setup-and-free-services.md) lists current
+routes, required configuration, and optional providers with their free limits.
+The [mobile experience guide](docs/mobile-experience.md) explains the independent
+Flutter app, its field workflows, design choices and realistic mobile roadmap.

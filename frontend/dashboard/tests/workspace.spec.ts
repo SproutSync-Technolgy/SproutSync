@@ -31,6 +31,7 @@ async function mock(
   signedIn = true,
   googleNew = false,
 ) {
+  await page.route("**/api/v1/**", (route) => route.fulfill({ status: 503, json: { detail: "This API integration is not part of the current browser fixture." } }));
   let profile = {
     id: 1,
     email: user.email,
@@ -109,6 +110,8 @@ async function mock(
     });
   });
   await page.route("**/api/v1/devices/discover", (route) => route.fulfill({ json: { devices: [] } }));
+  await page.route("**/api/v1/operator/evaluators", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/v1/operator/access-requests", (route) => route.fulfill({ json: [] }));
 }
 
 const nearbyIdentity = {
@@ -244,6 +247,9 @@ test("signup collects profile details and opens dashboard", async ({
   await expect(page.getByText("Welcome back, Pat.")).toBeVisible();
   await expect(page).toHaveURL(/dashboard/);
   await page.reload();
+  await expect(page.getByText("Welcome back, Pat.")).toBeVisible();
+  await page.getByRole("button", { name: "Dismiss welcome" }).click();
+  await page.reload();
   await expect(page.getByText("Welcome back, Pat.")).toHaveCount(0);
 });
 
@@ -341,6 +347,7 @@ test("evaluator cannot enter operator route or see operational controls", async 
     .getByRole("navigation", { name: "Main navigation" })
     .getByRole("button", { name: "Evidence & Checks", exact: true })
     .click();
+  await page.getByText("Rating guide", { exact: true }).click();
   await expect(page.getByText("Use the standard five-point rubric for every batch"))
     .toBeVisible();
   await page.getByRole("button", { name: "Evaluate a batch" }).click();
@@ -639,7 +646,10 @@ test("Amaro notification details and Help FAQ work on a narrow screen", async ({
 
 test("Amaro account and audit layouts keep search, event order, and mobile reflow", async ({ page }) => {
   await mock(page, "superadmin");
-  await page.route("**/api/v1/superadmin/accounts", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/v1/superadmin/accounts", (route) => route.fulfill({ json: [
+    { id: 1, display_name: "Test Admin", first_name: "Test", last_name: "Admin", email: "admin@example.invalid", role: "superadmin", is_active: true, granted_serial_count: 0, evaluator_grant_count: 0 },
+    { id: 2, display_name: "Test Operator", first_name: "Test", last_name: "Operator", email: "operator@example.invalid", role: "operator", is_active: true, granted_serial_count: 0, evaluator_grant_count: 0 },
+  ] }));
   await page.route(`https://${authHost}/rest/v1/activity_logs*`, (route) => route.fulfill({ json: [
     { id: 2, action: "register_nearby_device", resource: "devices:ESP32-1:wifi", created_at: "2026-10-29T02:00:00Z" },
     { id: 1, action: "update_account", resource: "users:5", created_at: "2026-10-28T02:00:00Z" },
@@ -753,4 +763,107 @@ test("reference navigation exposes every page on mobile and respects reduced mot
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(more).toBeFocused();
+});
+
+test("clicking a batch star opens a preselected rating and saves comments only on submit", async ({ page }) => {
+  await mock(page, "evaluator");
+  const evaluations: Record<string, unknown>[] = [];
+  await page.route(`https://${authHost}/rest/v1/evaluations*`, async (route) => {
+    if (route.request().method() === "POST") {
+      const body = route.request().postDataJSON();
+      expect(body).toMatchObject({ batch_id: 1, evaluator_id: 1, rating: 4, comments: "Fresh, even sprouts with no visible discoloration." });
+      expect(body).not.toHaveProperty("owner_id");
+      const saved = { ...body, id: 25, created_at: new Date().toISOString() };
+      evaluations.push(saved);
+      await route.fulfill({ status: 201, json: saved });
+    } else await route.fulfill({ json: evaluations });
+  });
+  await page.goto("/dashboard");
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "Batch Evaluations", exact: true }).click();
+  await page.getByRole("button", { name: "Rate MB-001 4 out of 5", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("radio", { name: "4", exact: true })).toBeChecked();
+  await expect(dialog.getByRole("combobox", { name: "Batch", exact: true })).toHaveValue("1");
+  expect(evaluations).toHaveLength(0);
+  await dialog.getByLabel("Observations or disagreement with machine data").fill("Fresh, even sprouts with no visible discoloration.");
+  await page.screenshot({ path: "test-results/rating-comments-form.png", fullPage: true });
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(evaluations).toHaveLength(1);
+});
+
+test("welcome handles missing first names and is dismissed only by the user", async ({ page }) => {
+  await mock(page);
+  await page.route(`https://${authHost}/rest/v1/rpc/ensure_profile`, (route) => route.fulfill({ json: {
+    id: 1, email: user.email, role: "operator", first_name: "", last_name: "", display_name: "JABONETE, CHRISTIAN JOSH", profile_complete: true,
+  } }));
+  await page.goto("/operator");
+  const welcome = page.getByRole("heading", { name: "Welcome back, Christian Josh.", exact: true });
+  await expect(welcome).toBeVisible();
+  await page.reload();
+  await expect(welcome).toBeVisible();
+  await page.getByRole("button", { name: "Dismiss welcome" }).click();
+  await page.reload();
+  await expect(welcome).toHaveCount(0);
+});
+
+test("superadmin grant action persists and closes while failed account edits stay visible", async ({ page }) => {
+  await mock(page, "superadmin");
+  const accounts = [
+    { id: 1, role: "superadmin", display_name: "Test Admin", first_name: "Test", last_name: "Admin", email: "admin@example.invalid", is_active: true, granted_serial_count: 0, evaluator_grant_count: 0 },
+    { id: 2, role: "operator", display_name: "Test Operator", first_name: "Test", last_name: "Operator", email: "operator@example.invalid", is_active: true, granted_serial_count: 0, evaluator_grant_count: 0, organization: "", phone: "" },
+  ];
+  await page.route("**/api/v1/superadmin/accounts", (route) => route.fulfill({ json: accounts }));
+  await page.route("**/api/v1/superadmin/accounts/2", (route) => route.fulfill({ status: 403, json: { detail: "Account update denied by server." } }));
+  let grants = 0;
+  await page.route("**/api/v1/superadmin/device-grants", async (route) => {
+    expect(route.request().postDataJSON()).toMatchObject({ operator_id: 2, serial_number: "SS-TEST-02", name: "Test chamber" });
+    grants++;
+    await route.fulfill({ status: 201, json: { id: 10, owner_id: 2, serial_number: "SS-TEST-02" } });
+  });
+  await page.goto("/superadmin");
+  await expect(page.getByRole("heading", { name: "Needs attention", exact: true })).toBeVisible();
+  await page.screenshot({ path: "test-results/superadmin-overview-polish.png", fullPage: true });
+  await page.getByRole("button", { name: "Grant serial ID", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Assign to Operator").selectOption("2");
+  await dialog.getByLabel("Printed Hardware Serial Number").fill("SS-TEST-02");
+  await dialog.getByLabel("Chamber Name / Equipment Label").fill("Test chamber");
+  await dialog.getByRole("button", { name: "Grant Serial ID", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(grants).toBe(1);
+  await page.getByRole("button", { name: "Manage accounts", exact: true }).click();
+  await page.getByRole("row").filter({ hasText: "operator@example.invalid" }).getByRole("button", { name: "Edit Account", exact: true }).click();
+  await dialog.getByLabel("First Name", { exact: true }).fill("Changed");
+  await dialog.getByRole("button", { name: "Update Account", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("Account update denied by server.");
+  await expect(dialog).toBeVisible();
+  await page.getByRole("button", { name: "Close dialog" }).click();
+  await expect(page.getByRole("row").filter({ hasText: "operator@example.invalid" })).toContainText("Test Operator");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("navigation", { name: "Mobile navigation" }).getByRole("button", { name: "Home", exact: true }).click();
+  const toast = page.locator(".app-toast");
+  if (await toast.isVisible()) {
+    const bounds = await toast.boundingBox();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: "test-results/superadmin-overview-mobile.png", fullPage: true });
+});
+
+test("empty or unavailable account APIs never fabricate accounts or successful changes", async ({ page }) => {
+  await mock(page, "superadmin");
+  let unavailable = true;
+  await page.route("**/api/v1/superadmin/accounts", (route) => route.fulfill(unavailable
+    ? { status: 503, json: { detail: "Accounts are temporarily unavailable." } }
+    : { json: [] }));
+  await page.goto("/superadmin");
+  await expect(page.getByRole("alert")).toContainText("Accounts are temporarily unavailable.");
+  await expect(page.getByRole("button", { name: /Registered accounts/ })).toContainText("Unavailable");
+  await page.getByRole("button", { name: "Manage accounts", exact: true }).click();
+  unavailable = false;
+  await page.locator(".accounts-directory-table").getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(page.locator(".accounts-directory-table").getByRole("row")).toHaveCount(0);
+  await expect(page.getByText("No accounts match the current search query or filter.")).toBeVisible();
 });

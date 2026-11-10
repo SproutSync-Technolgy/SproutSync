@@ -115,6 +115,19 @@ def test_operator_cannot_modify_another_operators_batch(workspace):
     )
 
 
+def test_superadmin_cannot_delete_an_operator_with_production_history(workspace):
+    client, db, operator, _evaluator, _other, batch = workspace
+    admin = User(google_subject="delete-admin", email="delete-admin@example.test", display_name="Admin", role="superadmin", is_active=True)
+    db.add(admin)
+    db.commit()
+    app.dependency_overrides[get_current_user] = lambda: admin
+    response = client.delete(f"/api/v1/superadmin/accounts/{operator.id}")
+    assert response.status_code == 409
+    assert "production history" in response.json()["detail"]
+    assert db.get(User, operator.id) is not None
+    assert db.get(Batch, batch.id) is not None
+
+
 def test_superadmin_can_manage_accounts_and_grants(workspace):
     client, db, operator, evaluator, _other, batch = workspace
     superadmin = User(

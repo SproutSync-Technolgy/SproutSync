@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens.dart';
 import 'onboarding.dart';
 import 'auth_redirect.dart';
+import 'field_widgets.dart';
 
 /// Public project URL supplied when building the application.
 const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
@@ -30,81 +31,10 @@ class SproutSyncMobileApp extends StatelessWidget {
   final bool configured;
   @override
   Widget build(BuildContext context) {
-    const primary = Color(0xFF1F6F45);
-    final scheme = ColorScheme.fromSeed(
-      seedColor: primary,
-      brightness: Brightness.light,
-      surface: const Color(0xFFF5F7F3),
-    ).copyWith(
-      primary: primary,
-      onPrimary: Colors.white,
-      secondary: const Color(0xFF2F6B9A),
-      error: const Color(0xFFB42318),
-      outline: const Color(0xFFCBD8CF),
-      surfaceContainerLow: Colors.white,
-    );
     return MaterialApp(
       title: 'SproutSync',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: scheme,
-        scaffoldBackgroundColor: const Color(0xFFF5F7F3),
-        textTheme: const TextTheme(
-          headlineMedium: TextStyle(
-              fontSize: 28, height: 1.15, fontWeight: FontWeight.w700),
-          titleLarge:
-              TextStyle(fontSize: 22, height: 1.2, fontWeight: FontWeight.w700),
-          titleMedium:
-              TextStyle(fontSize: 16, height: 1.3, fontWeight: FontWeight.w700),
-          bodyLarge: TextStyle(fontSize: 16, height: 1.5),
-          bodyMedium: TextStyle(fontSize: 14, height: 1.5),
-          labelLarge: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-        ),
-        cardTheme: CardThemeData(
-          elevation: 0,
-          color: Colors.white,
-          margin: const EdgeInsets.symmetric(vertical: 6),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: const BorderSide(color: Color(0xFFDCE5DF)),
-          ),
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-          filled: true,
-          fillColor: Colors.white,
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-        ),
-        filledButtonTheme: FilledButtonThemeData(
-          style: FilledButton.styleFrom(
-            minimumSize: const Size.fromHeight(48),
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          ),
-        ),
-        outlinedButtonTheme: OutlinedButtonThemeData(
-          style: OutlinedButton.styleFrom(
-            minimumSize: const Size.fromHeight(48),
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          ),
-        ),
-        navigationBarTheme: const NavigationBarThemeData(
-          height: 72,
-          backgroundColor: Colors.white,
-          indicatorColor: Color(0xFFDCEFE2),
-          elevation: 0,
-        ),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFFF5F7F3),
-          surfaceTintColor: Colors.transparent,
-          centerTitle: false,
-          elevation: 0,
-          scrolledUnderElevation: 0,
-        ),
-      ),
+      theme: fieldTheme(),
       home: configured
           ? const SessionGate()
           : const Scaffold(
@@ -228,8 +158,39 @@ class _SessionGateState extends State<SessionGate> {
       return ProfileForm(
           profile: profile!, onSaved: (next) => setState(() => profile = next));
     }
+    if (!['operator', 'admin', 'superadmin', 'evaluator']
+            .contains(profile!['role']) ||
+        profile!['is_active'] == false) {
+      return Scaffold(
+          body: SafeArea(
+              child: Center(
+                  child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        const Icon(Icons.lock_outline,
+                            size: 48, color: FieldColors.forest),
+                        const SizedBox(height: 16),
+                        const Text('Workspace access pending',
+                            style: TextStyle(
+                                fontSize: 24, fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 12),
+                        const Text(
+                            'Ask your operator or administrator to activate your account and confirm your role. Shared records appear after access is granted.',
+                            textAlign: TextAlign.center),
+                        const SizedBox(height: 20),
+                        FilledButton(
+                            onPressed: loadProfile,
+                            child: const Text('Check access again')),
+                        TextButton(
+                            onPressed: () =>
+                                client.auth.signOut(scope: SignOutScope.local),
+                            child: const Text('Sign out')),
+                      ])))));
+    }
     return MobileWorkspace(
-        profile: profile!, onProfile: (next) => setState(() => profile = next));
+        key: ValueKey('${profile!['id']}:${profile!['role']}'),
+        profile: profile!,
+        onProfile: (next) => setState(() => profile = next));
   }
 }
 
@@ -663,7 +624,8 @@ class _ProfileFormState extends State<ProfileForm> {
                                         contentPadding: EdgeInsets.zero,
                                         title: const Text('Name'),
                                         subtitle: Text(
-                                            '${first.text} ${last.text}'.trim())),
+                                            '${first.text} ${last.text}'
+                                                .trim())),
                                     const Align(
                                         alignment: Alignment.centerLeft,
                                         child: Text(
@@ -691,8 +653,7 @@ class _ProfileFormState extends State<ProfileForm> {
                                             onPressed: null,
                                             icon: const Icon(
                                                 Icons.verified_user_outlined),
-                                            label:
-                                                const Text('Change email')))
+                                            label: const Text('Change email')))
                                   ]))),
                         if (!editDetails) ...[
                           for (final entry in [
@@ -729,8 +690,7 @@ class _ProfileFormState extends State<ProfileForm> {
                                     last,
                                     'Last name',
                                     80,
-                                    widget.profile[
-                                            'registration_provider'] !=
+                                    widget.profile['registration_provider'] !=
                                         'google'
                                   ),
                                   (
