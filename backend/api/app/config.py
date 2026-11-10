@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
     mqtt_enabled: bool = True
-    mqtt_broker_url: str = "wss://broker.hivemq.com:8884/mqtt"
+    mqtt_broker_url: str = "wss://k11f016c.ala.asia-southeast1.emqxsl.com:8084/mqtt"
     mqtt_username: str = ""
     mqtt_password: str = ""
     # Firmware label; the backend uses a distinct, suffixed MQTT client ID.
