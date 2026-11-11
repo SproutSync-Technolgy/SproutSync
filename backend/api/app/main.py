@@ -21,7 +21,7 @@ from app.config import settings
 from app.db import get_db
 from app.models import AccessRequest, ActivityLog, Batch, Device, EvaluatorAccess, TelemetryReading, User
 from app.devices import router as device_router
-from app.mqtt import bridge
+from app.mqtt import bridge, telemetry_buffer
 
 logger = logging.getLogger(__name__)
 
@@ -866,6 +866,11 @@ def grant_device_serial(
         db.add(device)
     else:
         if device.owner_id != operator.id:
+            if telemetry_buffer.has_pending(device.id):
+                raise HTTPException(
+                    409,
+                    "This device has readings in an unfinished five-minute window. Try again after the interval is saved.",
+                )
             if db.scalar(select(func.count()).select_from(TelemetryReading).where(
                 TelemetryReading.device_id == device.id
             )):
@@ -1260,5 +1265,4 @@ def create_access_request(
         created_at=req.created_at,
         decided_at=req.decided_at,
     )
-
 

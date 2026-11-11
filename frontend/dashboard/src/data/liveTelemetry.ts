@@ -94,7 +94,7 @@ export function useLiveTelemetry(profileId: number, setData: Dispatch<SetStateAc
           setError("");
           setData((current) => ({
             ...current, devices: next.devices,
-            readings: mergeReadings(current.readings, next.readings).filter((r) => next.devices.some((d) => d.id === r.device_id)),
+            liveReadings: mergeReadings(current.liveReadings, next.readings).filter((r) => next.devices.some((d) => d.id === r.device_id)),
           }));
         } catch (err) {
           if (!active) return;
@@ -108,12 +108,12 @@ export function useLiveTelemetry(profileId: number, setData: Dispatch<SetStateAc
       if (active) timer = setTimeout(refresh, 2000);
     };
 
-    // Database push updates provide immediate readings; snapshots recover missed packets
-    // and keep live monitoring usable when Realtime is unavailable.
+    // The authenticated API serves transient live packets; database push is only for saved averages.
     const channel = supabase.channel(`live-telemetry-${profileId}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "telemetry_readings" }, ({ new: row }) => {
         if (!active) return;
         const reading = row as Reading;
+        if (!reading.aggregation || reading.aggregation === "raw") return;
         setData((current) => current.devices.some((d) => d.id === reading.device_id)
           ? { ...current, readings: mergeReadings(current.readings, [reading]) } : current);
       })

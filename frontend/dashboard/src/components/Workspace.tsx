@@ -392,6 +392,9 @@ export default function Workspace({
           readings: mergeReadings(next.readings, current.readings).filter((reading) =>
             next.devices.some((device) => device.id === reading.device_id),
           ),
+          liveReadings: current.liveReadings.filter((reading) =>
+            next.devices.some((device) => device.id === reading.device_id),
+          ),
         }));
         setError("");
         setUpdated(new Date());
@@ -561,12 +564,20 @@ export default function Workspace({
         .includes(evaluationQuery.toLowerCase())
     );
   });
+<<<<<<< HEAD
   const deviceReadings = data.readings.map((reading) => controllerOff(reading.sensor_status)
     ? {...reading, temperature_c: null, humidity_percent: null, water_level_percent: null, water_temperature_c: null, light_lux: null, wastewater_level_percent: null}
     : reading).filter(
     (r) => selectedDevice === "all" || r.device_id === Number(selectedDevice),
+=======
+  const deviceReadings = data.readings.filter(
+    (r) => r.aggregation !== "raw" &&
+      (selectedDevice === "all" || r.device_id === Number(selectedDevice)),
   );
-  const liveDeviceReadings = deviceReadings.filter((reading) => !reading.aggregation || reading.aggregation === "raw");
+  const liveDeviceReadings = data.liveReadings.filter(
+    (reading) => selectedDevice === "all" || reading.device_id === Number(selectedDevice),
+>>>>>>> 9f505db (UI:History Adjustment)
+  );
   const telemetryExportHeaders = [
     "Chamber",
     "Aggregation",
@@ -581,7 +592,7 @@ export default function Workspace({
   ];
   const telemetryExportRows = deviceReadings.map((reading) => [
     deviceName(reading.device_id),
-    reading.aggregation === "hourly" ? "Hourly average" : reading.aggregation === "daily" ? "Daily average" : "Raw sample",
+    reading.aggregation === "five_minute" ? "5-minute average" : reading.aggregation === "hourly" ? "Hourly average" : "Daily average",
     reading.sample_count ?? 1,
     reading.temperature_c ?? "",
     reading.humidity_percent ?? "",
@@ -1690,7 +1701,7 @@ export default function Workspace({
                     {/* Historical Telemetry Log */}
                     <SectionTitle
                       title="Historical Sensor Telemetry"
-                      subtitle="Chronological log of machine-reported chamber sensor packets."
+                      subtitle="Five-minute averages of machine-reported chamber readings."
                       action={
                         <div className="telemetry-export-actions">
                         <Btn
@@ -1752,7 +1763,7 @@ export default function Workspace({
                       ],
                       deviceReadings.map((r) => [
                         deviceName(r.device_id),
-                        r.aggregation === "hourly" ? "Hourly average" : r.aggregation === "daily" ? "Daily average" : "Raw sample",
+                        r.aggregation === "five_minute" ? "5-minute average" : r.aggregation === "hourly" ? "Hourly average" : "Daily average",
                         r.sample_count ?? 1,
                         r.temperature_c !== null ? `${r.temperature_c} °C` : "—",
                         r.humidity_percent !== null ? `${r.humidity_percent} %` : "—",
@@ -4074,7 +4085,20 @@ function DataTable({
     setPage((current) => Math.min(current, pageCount));
   }, [pageCount]);
   if (!rows.length) return <Empty text={empty} />;
-  const visibleRows = rows.slice((page - 1) * pageSize, page * pageSize);
+  const firstRow = (page - 1) * pageSize;
+  const visibleRows = rows.slice(firstRow, page * pageSize);
+  const pageNumbers: (number | "start-ellipsis" | "end-ellipsis")[] = [];
+  if (pageCount <= 5) {
+    pageNumbers.push(...Array.from({ length: pageCount }, (_, index) => index + 1));
+  } else {
+    const start = Math.max(2, page === pageCount ? pageCount - 2 : page - 1);
+    const end = Math.min(pageCount - 1, page === 1 ? 3 : page + 1);
+    pageNumbers.push(1);
+    if (start > 2) pageNumbers.push("start-ellipsis");
+    for (let number = start; number <= end; number++) pageNumbers.push(number);
+    if (end < pageCount - 1) pageNumbers.push("end-ellipsis");
+    pageNumbers.push(pageCount);
+  }
   return (
     <>
       <div
@@ -4107,6 +4131,7 @@ function DataTable({
       </div>
       <p className="table-range">Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, rows.length)} of {rows.length} loaded records</p>
       {pageCount > 1 && (
+<<<<<<< HEAD
         <nav className="table-pagination" aria-label="Table pages">
           <button disabled={page === 1} onClick={() => setPage(page - 1)}>
             Previous
@@ -4119,6 +4144,42 @@ function DataTable({
             Next
           </button>
         </nav>
+=======
+        <div className="table-pagination">
+          <span className="table-pagination-summary" aria-live="polite">
+            Showing {firstRow + 1}–{Math.min(page * pageSize, rows.length)} of {rows.length}
+          </span>
+          <nav aria-label="Table pages">
+            <button type="button" disabled={page === 1} onClick={() => setPage(page - 1)}>
+              Previous
+            </button>
+            {pageNumbers.map((item) =>
+              typeof item === "string" ? (
+                <span key={item} className="table-pagination-ellipsis" aria-hidden="true">
+                  …
+                </span>
+              ) : (
+              <button
+                key={item}
+                type="button"
+                aria-label={`Go to page ${item}`}
+                aria-current={page === item ? "page" : undefined}
+                onClick={() => setPage(item)}
+              >
+                {item}
+              </button>
+              ),
+            )}
+            <button
+              type="button"
+              disabled={page === pageCount}
+              onClick={() => setPage(page + 1)}
+            >
+              Next
+            </button>
+          </nav>
+        </div>
+>>>>>>> 9f505db (UI:History Adjustment)
       )}
     </>
   );

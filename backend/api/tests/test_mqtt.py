@@ -18,14 +18,19 @@ from app.db import Base, get_db
 from app.main import app
 from app.models import Device, EvaluatorAccess, TelemetryReading, User
 from app.discovery import Advertisement, DeviceIdentity, discovery
+<<<<<<< HEAD
 from app.mqtt import MQTTBridge, bridge, ingest_message, utc
 from app.live_readings import LiveReadings
 from app.models import ActivityLog, Alert, Batch
 from uuid import uuid4
+=======
+from app.mqtt import MQTTBridge, bridge, ingest_message, telemetry_buffer, utc
+>>>>>>> 9f505db (UI:History Adjustment)
 
 
 @pytest.fixture
 def workspace(monkeypatch):
+    telemetry_buffer.clear()
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
@@ -74,6 +79,7 @@ def workspace(monkeypatch):
                 other=other,
                 factory=factory,
             )
+        telemetry_buffer.clear()
         app.dependency_overrides.clear()
     engine.dispose()
 
@@ -795,6 +801,50 @@ def test_raw_packets_keep_their_cadence_and_correct_rollup_metadata(workspace):
     assert (
         healthy.fault_count == 0 and healthy.metric_counts["water_temperature_c"] == 1
     )
+
+
+def test_live_packets_are_buffered_and_only_five_minute_means_are_persisted(workspace):
+    w = workspace
+    connect(w)
+    start = datetime.now(timezone.utc).replace(second=0, microsecond=0) + timedelta(
+        seconds=5
+    )
+    first = b'{"airTemp":26,"airHum":80,"waterTemp":20,"lux":10}'
+    second = b'{"airTemp":28,"airHum":84,"waterTemp":22,"lux":14}'
+    assert ingest_message(
+        w.db,
+        "sproutsync/telemetry",
+        first,
+        received_at=start + timedelta(seconds=1),
+        persist_raw=False,
+    )
+    assert ingest_message(
+        w.db,
+        "sproutsync/telemetry",
+        second,
+        received_at=start + timedelta(seconds=3),
+        persist_raw=False,
+    )
+
+    assert count(w.db) == 0
+    live = w.client.get("/api/v1/devices/live").json()["readings"]
+    assert len(live) == 2
+    assert live[-1]["temperature_c"] == 26
+
+    assert telemetry_buffer.flush_due(
+        w.db, now=start + timedelta(minutes=5)
+    ) == 1
+    assert count(w.db) == 1
+    average = w.db.scalar(select(TelemetryReading))
+    assert average.aggregation == "five_minute"
+    assert average.sample_count == 2
+    assert average.fault_count == 0
+    assert average.temperature_c == 27
+    assert average.humidity_percent == 82
+    assert average.water_temperature_c == 21
+    assert average.light_lux == 12
+    assert average.metric_counts["temperature_c"] == 2
+    assert not telemetry_buffer.has_pending(w.device.id)
 
 
 def test_rollups_never_replace_raw_readings_in_live_recovery(workspace):

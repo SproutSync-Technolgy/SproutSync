@@ -4,6 +4,8 @@ import logging
 import queue
 import threading
 import time
+from collections import OrderedDict, deque
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -35,6 +37,165 @@ SENSORS = {
     "waterLevel": ("water_level_percent", 0, 100),
     "wastewaterLevel": ("wastewater_level_percent", 0, 100),
 }
+HISTORY_INTERVAL = timedelta(minutes=5)
+NUMERIC_COLUMNS = tuple(column for column, _, _ in SENSORS.values()) + ("voltage",)
+HEALTHY_STATUSES = {"NONE", "OK", "NORMAL"}
+
+
+@dataclass
+class TelemetryBucket:
+    owner_id: int
+    device_id: int
+    started_at: datetime
+    sums: dict[str, float] = field(default_factory=dict)
+    metric_counts: dict[str, int] = field(default_factory=dict)
+    sample_count: int = 0
+    fault_count: int = 0
+    sensor_status: str = "NONE"
+    sd_ok: bool | None = None
+    received_at: datetime | None = None
+
+
+class TelemetryBuffer:
+    """Keep live packets transient and persist one mean per device per 5-minute bucket."""
+
+    def __init__(self, *, max_live_events: int = 2000, max_message_ids: int = 10000):
+        self._lock = threading.RLock()
+        self._buckets: dict[tuple[int, datetime], TelemetryBucket] = {}
+        self._events: deque[dict] = deque(maxlen=max_live_events)
+        self._seen_message_ids: OrderedDict[tuple[int, str], None] = OrderedDict()
+        self._max_message_ids = max_message_ids
+        self._sequence = 0
+
+    def clear(self) -> None:
+        with self._lock:
+            self._buckets.clear()
+            self._events.clear()
+            self._seen_message_ids.clear()
+            self._sequence = 0
+
+    def has_pending(self, device_id: int) -> bool:
+        with self._lock:
+            return any(key[0] == device_id for key in self._buckets)
+
+    def events_after(
+        self, after_id: int | None, device_ids: set[int]
+    ) -> list[dict]:
+        with self._lock:
+            if after_id is None or after_id > self._sequence:
+                events = list(self._events)
+            else:
+                events = [event for event in self._events if event["id"] > after_id]
+            return [event.copy() for event in events if event["device_id"] in device_ids]
+
+    def add(
+        self,
+        *,
+        owner_id: int,
+        device_id: int,
+        values: dict[str, float | None],
+        voltage: float | None,
+        sd_ok: bool | None,
+        sensor_status: str,
+        recorded_at: datetime,
+        received_at: datetime,
+        message_id: str | None,
+        fault_count: int,
+    ) -> bool:
+        with self._lock:
+            if message_id:
+                key = (device_id, message_id)
+                if key in self._seen_message_ids:
+                    return False
+                self._seen_message_ids[key] = None
+                if len(self._seen_message_ids) > self._max_message_ids:
+                    self._seen_message_ids.popitem(last=False)
+
+            bucket_start = recorded_at.replace(
+                minute=(recorded_at.minute // 5) * 5, second=0, microsecond=0
+            )
+            key = (device_id, bucket_start)
+            bucket = self._buckets.get(key)
+            if bucket is None:
+                bucket = TelemetryBucket(owner_id, device_id, bucket_start)
+                self._buckets[key] = bucket
+            bucket.sample_count += 1
+            bucket.fault_count += fault_count
+            bucket.received_at = received_at
+            bucket.sd_ok = sd_ok if sd_ok is not None else bucket.sd_ok
+            if sensor_status not in HEALTHY_STATUSES:
+                bucket.sensor_status = sensor_status
+            for column, value in (values | {"voltage": voltage}).items():
+                if value is not None:
+                    bucket.sums[column] = bucket.sums.get(column, 0.0) + value
+                    bucket.metric_counts[column] = bucket.metric_counts.get(column, 0) + 1
+
+            self._sequence = max(
+                self._sequence + 1, int(received_at.timestamp() * 1_000_000)
+            )
+            self._events.append(
+                {
+                    "id": self._sequence,
+                    "owner_id": owner_id,
+                    "device_id": device_id,
+                    **values,
+                    "voltage": voltage,
+                    "sd_ok": sd_ok,
+                    "sensor_status": sensor_status,
+                    "recorded_at": recorded_at.isoformat(),
+                    "received_at": received_at.isoformat(),
+                    "aggregation": "raw",
+                    "sample_count": 1,
+                    "fault_count": fault_count,
+                }
+            )
+            return True
+
+    def flush_due(self, db, *, now: datetime | None = None, force: bool = False) -> int:
+        current = now or datetime.now(timezone.utc)
+        with self._lock:
+            due = [
+                (key, bucket)
+                for key, bucket in self._buckets.items()
+                if force or bucket.started_at + HISTORY_INTERVAL <= current
+            ]
+            if not due:
+                return 0
+            for _, bucket in due:
+                db.add(
+                    TelemetryReading(
+                        owner_id=bucket.owner_id,
+                        device_id=bucket.device_id,
+                        **{
+                            column: (
+                                bucket.sums[column] / bucket.metric_counts[column]
+                                if bucket.metric_counts.get(column)
+                                else None
+                            )
+                            for column in NUMERIC_COLUMNS
+                        },
+                        sd_ok=bucket.sd_ok,
+                        sensor_status=bucket.sensor_status,
+                        message_id=None,
+                        recorded_at=bucket.started_at,
+                        received_at=bucket.received_at or bucket.started_at,
+                        aggregation="five_minute",
+                        sample_count=bucket.sample_count,
+                        fault_count=bucket.fault_count,
+                        metric_counts=bucket.metric_counts,
+                    )
+                )
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+            for key, _ in due:
+                self._buckets.pop(key, None)
+            return len(due)
+
+
+telemetry_buffer = TelemetryBuffer()
 
 
 def utc(value: datetime) -> datetime:
@@ -83,9 +244,21 @@ class SensorPacket(BaseModel):
 
 
 def ingest_message(
+<<<<<<< HEAD
     db, topic: str, payload: bytes, *, retained=False, received_at=None, live_store=None
 ) -> bool:
     """Update each live heartbeat; persist sampled history and fault transitions."""
+=======
+    db,
+    topic: str,
+    payload: bytes,
+    *,
+    retained=False,
+    received_at=None,
+    persist_raw=True,
+) -> bool:
+    """Validate a packet, update the transient live feed, and buffer its average."""
+>>>>>>> 9f505db (UI:History Adjustment)
     if retained or len(payload) > 8192 or not topic.endswith("/telemetry"):
         return False
     try:
@@ -127,6 +300,7 @@ def ingest_message(
     if message_id is None and packet.recordedAt is not None:
         message_id = "time:" + packet.recordedAt.astimezone(timezone.utc).isoformat()
     if (
+<<<<<<< HEAD
         message_id
         and live_store is not None
         and live_store.has_message(device, message_id)
@@ -134,6 +308,10 @@ def ingest_message(
         return False
     if (
         message_id
+=======
+        persist_raw
+        and message_id
+>>>>>>> 9f505db (UI:History Adjustment)
         and db.scalar(
             select(TelemetryReading.id).where(
                 TelemetryReading.device_id == device.id,
@@ -162,6 +340,7 @@ def ingest_message(
         sensor_status = "SENSOR_FAULT"
     if packet.sdOK is False and sensor_status in ("NONE", "OK", "NORMAL"):
         sensor_status = "SD_ERROR"
+<<<<<<< HEAD
     device.status = "online" if sensor_status in ("NONE", "OK", "NORMAL") else "fault"
     device.last_seen_at = received
     previous = db.scalar(
@@ -181,6 +360,36 @@ def ingest_message(
         or previous.sd_ok != packet.sdOK
     )
     if persist:
+=======
+    fault_count = int(sensor_status not in HEALTHY_STATUSES)
+    if not telemetry_buffer.add(
+        owner_id=device.owner_id,
+        device_id=device.id,
+        values=values,
+        voltage=packet.voltage,
+        sd_ok=packet.sdOK,
+        sensor_status=sensor_status,
+        recorded_at=recorded,
+        received_at=received,
+        message_id=message_id,
+        fault_count=fault_count,
+    ):
+        db.rollback()
+        return False
+
+    next_status = "fault" if fault_count else "online"
+    heartbeat_interval = max(1, settings.mqtt_stale_seconds // 3)
+    heartbeat_due = (
+        device.last_seen_at is None
+        or (received - utc(device.last_seen_at)).total_seconds() >= heartbeat_interval
+    )
+    status_changed = device.status != next_status
+    device.status = next_status if status_changed else device.status
+    if heartbeat_due:
+        device.last_seen_at = received
+
+    if persist_raw:
+>>>>>>> 9f505db (UI:History Adjustment)
         db.add(
             TelemetryReading(
                 owner_id=device.owner_id,
@@ -194,7 +403,11 @@ def ingest_message(
                 received_at=received,
                 aggregation="raw",
                 sample_count=1,
+<<<<<<< HEAD
                 fault_count=int(device.status == "fault"),
+=======
+                fault_count=fault_count,
+>>>>>>> 9f505db (UI:History Adjustment)
                 metric_counts={
                     column: int(values[column] is not None)
                     for column, _, _ in SENSORS.values()
@@ -202,6 +415,7 @@ def ingest_message(
                 | {"voltage": int(packet.voltage is not None)},
             )
         )
+<<<<<<< HEAD
     # One notification per active device fault, never one per sensor packet.
     status_changed = previous is None or previous.sensor_status != sensor_status
     if status_changed or (persist and device.status == "fault"):
@@ -246,8 +460,13 @@ def ingest_message(
         elif device.status == "online":
             for alert in fault_alerts:
                 alert.status = "resolved"
+=======
+>>>>>>> 9f505db (UI:History Adjustment)
     try:
-        db.commit()
+        if persist_raw or heartbeat_due or status_changed:
+            db.commit()
+        else:
+            db.rollback()
     except IntegrityError:
         db.rollback()
         raise
@@ -331,6 +550,14 @@ class MQTTBridge:
             self.client.loop_stop()
         if self._thread:
             self._thread.join(timeout=5)
+        try:
+            with self.session_factory() as db:
+                telemetry_buffer.flush_due(db, force=True)
+        except Exception as error:
+            logger.error(
+                "Unable to flush pending telemetry during shutdown (%s)",
+                type(error).__name__,
+            )
         self.connected = False
         self.latest.clear()
 
@@ -401,10 +628,11 @@ class MQTTBridge:
         next_sync = 0
         while not self._stop.is_set():
             try:
-                if time.monotonic() >= next_sync:
-                    with self.session_factory() as db:
+                with self.session_factory() as db:
+                    if time.monotonic() >= next_sync:
                         self._sync(db)
-                    next_sync = time.monotonic() + 2
+                        next_sync = time.monotonic() + 2
+                    telemetry_buffer.flush_due(db)
                 try:
                     topic, payload, received = self._messages.get(timeout=0.5)
                 except queue.Empty:
@@ -416,7 +644,11 @@ class MQTTBridge:
                             topic,
                             payload,
                             received_at=received,
+<<<<<<< HEAD
                             live_store=self.latest,
+=======
+                            persist_raw=False,
+>>>>>>> 9f505db (UI:History Adjustment)
                         )
                     elif topic.endswith("/status") and payload.decode(
                         "utf-8", errors="replace"

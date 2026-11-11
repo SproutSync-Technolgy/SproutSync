@@ -96,7 +96,7 @@ class Device(Base):
 
 
 class TelemetryReading(Base):
-    """A raw telemetry packet or its hourly/daily summary."""
+    """A raw telemetry packet or an aggregated history bucket."""
 
     __tablename__ = "telemetry_readings"
     __table_args__ = (
@@ -104,7 +104,7 @@ class TelemetryReading(Base):
             "device_id", "message_id", name="telemetry_device_message_unique"
         ),
         CheckConstraint(
-            "aggregation in ('raw', 'hourly', 'daily')",
+            "aggregation in ('raw', 'five_minute', 'hourly', 'daily')",
             name="telemetry_aggregation_check",
         ),
         CheckConstraint("sample_count > 0", name="telemetry_sample_count_check"),
@@ -118,8 +118,8 @@ class TelemetryReading(Base):
             "aggregation",
             "recorded_at",
             unique=True,
-            postgresql_where=text("aggregation in ('hourly', 'daily')"),
-            sqlite_where=text("aggregation in ('hourly', 'daily')"),
+            postgresql_where=text("aggregation in ('five_minute', 'hourly', 'daily')"),
+            sqlite_where=text("aggregation in ('five_minute', 'hourly', 'daily')"),
         ),
     )
 
@@ -140,7 +140,7 @@ class TelemetryReading(Base):
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     aggregation: Mapped[str] = mapped_column(
-        String(8), default="raw", server_default="raw"
+        String(16), default="raw", server_default="raw"
     )
     sample_count: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     fault_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -208,4 +208,3 @@ class ActivityLog(Base):
     resource: Mapped[str] = mapped_column(String(255))
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-

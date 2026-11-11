@@ -122,11 +122,21 @@ An API failure shows an error with a retry action. For a pending device, check
 its Wi-Fi and topic prefix, then retry detection; changing a prefix preserves
 stored history.
 
-Existing hourly/daily history is labelled with its aggregation and number of
-source samples in tables and exports. Live recovery and current sensor cards use
-raw packets. Each valid incoming raw packet is still stored; this integration
-does not start an automatic compaction/retention worker. A connected controller
-reporting a sensor fault is identified separately from a healthy online device.
+The browser polls the authenticated API's bounded in-memory live feed every two
+seconds; MQTT credentials never go to the browser. The service keeps validated
+packets transiently for current sensor cards and sparkline updates, and persists
+one mean per device for each completed five-minute bucket. Numeric values are
+averaged independently over non-null samples; the row records the number of
+source packets, valid metric counts, and faulty packet count. The bucket's UTC
+start is stored in `recorded_at`. Existing raw rows remain unchanged and are
+coalesced into five-minute averages for history display. Hourly/daily rows retain
+their explicit labels. Automatic hourly/daily compaction is not enabled.
+
+The incomplete in-memory bucket is flushed on controlled shutdown, but a
+process or host crash can lose up to five minutes of not-yet-persisted readings.
+Use a durable queue if that loss window is not acceptable for deployment.
+A connected controller reporting a sensor fault is identified separately from
+a healthy online device.
 
 Devices with recorded telemetry cannot be reassigned through the API because
 their readings retain the original ownership. This avoids exposing history to a

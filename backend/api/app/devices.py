@@ -12,6 +12,7 @@ from zeroconf import Error as ZeroconfError
 from app.auth import get_current_user
 from app.config import settings
 from app.db import get_db
+<<<<<<< HEAD
 from app.models import (
     ActivityLog,
     Alert,
@@ -24,6 +25,10 @@ from app.models import (
 from typing import Literal
 from uuid import UUID
 from app.mqtt import bridge, utc
+=======
+from app.models import ActivityLog, Device, EvaluatorAccess, User
+from app.mqtt import bridge, telemetry_buffer, utc
+>>>>>>> 9f505db (UI:History Adjustment)
 from app.discovery import DeviceIdentity, discovery
 
 router = APIRouter(prefix="/api/v1/devices", tags=["devices"])
@@ -384,19 +389,9 @@ def live_devices(
     elif user.role not in ("admin", "superadmin"):
         query = query.where(Device.id == -1)
     devices = db.scalars(query).all()
-    readings_query = select(TelemetryReading).where(
-        TelemetryReading.device_id.in_([d.id for d in devices]),
-        # Historical rollups are loaded separately by the workspace; they must
-        # never replace fresh raw readings in the live recovery stream.
-        TelemetryReading.aggregation == "raw",
+    live_readings = telemetry_buffer.events_after(
+        after_id, {device.id for device in devices}
     )
-    if after_id is None:
-        readings_query = readings_query.order_by(TelemetryReading.id.desc())
-    else:
-        readings_query = readings_query.where(TelemetryReading.id > after_id).order_by(
-            TelemetryReading.id
-        )
-    readings = db.scalars(readings_query.limit(1000)).all()
     now = datetime.now(timezone.utc)
     response_devices = []
     for device in devices:
@@ -416,7 +411,8 @@ def live_devices(
     return {
         "devices": response_devices,
         "readings": [
-            ReadingResponse.model_validate(r).model_dump(mode="json") for r in readings
+            ReadingResponse.model_validate(reading).model_dump(mode="json")
+            for reading in live_readings
         ],
         "mqtt": bridge.snapshot(),
         "latest_readings": [

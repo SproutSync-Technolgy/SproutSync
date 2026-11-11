@@ -80,6 +80,7 @@ this integration. Revision `0016_remove_demo_workspace_data` irreversibly remove
 labelled demo records and disables automatic sample seeding; review that original
 migration before upgrading a different database that is still behind it.
 
+<<<<<<< HEAD
 `telemetry_readings.aggregation` distinguishes `raw`, `hourly`, and `daily` rows.
 `sample_count`, `fault_count`, and per-metric counts describe what each row
 represents. New packets remain raw samples, with faulty/missing sensor counts
@@ -115,3 +116,15 @@ Access requests retain policy-filtered authenticated reads; direct client writes
 truncate and sequence grants are removed. Trusted backend operations keep their
 existing access. No application records are removed. See the
 [security review and verification commands](database-security-review.md).
+=======
+`telemetry_readings.aggregation` distinguishes transient `raw` readings from
+persisted `five_minute`, `hourly`, and `daily` averages. The MQTT service keeps
+raw readings and the current live feed in bounded process memory, then stores
+one five-minute mean per device and bucket. `sample_count`, `fault_count`, and
+per-metric counts describe the source data represented by an aggregate. The
+live API returns authorized transient readings; the workspace history displays
+only averages. Existing raw rows remain intact and are coalesced into five-minute
+averages for display. A process crash can lose the unfinished in-memory bucket;
+a controlled shutdown flushes pending buckets. Automatic hourly/daily compaction
+is not enabled.
+>>>>>>> 9f505db (UI:History Adjustment)

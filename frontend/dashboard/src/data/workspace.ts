@@ -65,7 +65,7 @@ export type Reading = {
   sd_ok?: boolean | null;
   sensor_status?: string;
   received_at?: string;
-  aggregation?: "raw" | "hourly" | "daily";
+  aggregation?: "raw" | "five_minute" | "hourly" | "daily";
   sample_count?: number;
   fault_count?: number;
 };
@@ -169,6 +169,7 @@ export type WorkspaceData = {
   devices: Device[];
   alerts: Alert[];
   readings: Reading[];
+  liveReadings: Reading[];
   watering: Watering[];
   schedules: Schedule[];
   evidence: Evidence[];
@@ -183,6 +184,7 @@ export const emptyWorkspace: WorkspaceData = {
   devices: [],
   alerts: [],
   readings: [],
+  liveReadings: [],
   watering: [],
   schedules: [],
   evidence: [],
@@ -218,6 +220,100 @@ export const errorMessage = (error: unknown) =>
   error && typeof error === "object" && "message" in error
     ? String(error.message)
     : "Something went wrong. Please try again.";
+
+function aggregateLegacyTelemetry(readings: Reading[]): Reading[] {
+  const bucketFor = (reading: Reading) => {
+    const recorded = new Date(reading.recorded_at);
+    if (!Number.isFinite(recorded.getTime())) return null;
+    recorded.setUTCMinutes(Math.floor(recorded.getUTCMinutes() / 5) * 5, 0, 0);
+    return recorded.toISOString();
+  };
+  const storedBuckets = new Set(
+    readings
+      .filter((reading) => reading.aggregation && reading.aggregation !== "raw")
+      .map((reading) => `${reading.device_id}:${bucketFor(reading)}`),
+  );
+  const buckets = new Map<string, {
+    reading: Reading;
+    sums: Map<keyof Reading, number>;
+    counts: Map<keyof Reading, number>;
+    samples: number;
+    faults: number;
+  }>();
+  const metricFields: (keyof Reading)[] = [
+    "temperature_c",
+    "humidity_percent",
+    "water_temperature_c",
+    "light_lux",
+    "water_level_percent",
+    "wastewater_level_percent",
+    "voltage",
+  ];
+
+  readings.forEach((reading) => {
+    if (reading.aggregation && reading.aggregation !== "raw") return;
+    const recorded = new Date(reading.recorded_at);
+    if (!Number.isFinite(recorded.getTime())) return;
+    const bucketAt = bucketFor(reading);
+    if (!bucketAt) return;
+    if (storedBuckets.has(`${reading.device_id}:${bucketAt}`)) return;
+    const key = `${reading.device_id}:${bucketAt}`;
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = {
+        reading: {
+          ...reading,
+          id: -(buckets.size + 1),
+          aggregation: "five_minute",
+          recorded_at: bucketAt,
+          received_at: reading.received_at,
+          sample_count: 0,
+          fault_count: 0,
+        },
+        sums: new Map(),
+        counts: new Map(),
+        samples: 0,
+        faults: 0,
+      };
+      buckets.set(key, bucket);
+    }
+    bucket.samples += reading.sample_count ?? 1;
+    bucket.faults += reading.fault_count ?? 0;
+    for (const field of metricFields) {
+      const value = reading[field];
+      if (typeof value !== "number" || !Number.isFinite(value)) continue;
+      bucket.sums.set(field, (bucket.sums.get(field) ?? 0) + value);
+      bucket.counts.set(field, (bucket.counts.get(field) ?? 0) + 1);
+    }
+    if (Date.parse(reading.received_at ?? reading.recorded_at) >
+      Date.parse(bucket.reading.received_at ?? bucket.reading.recorded_at)) {
+      bucket.reading.received_at = reading.received_at;
+      bucket.reading.sd_ok = reading.sd_ok;
+      bucket.reading.sensor_status = reading.sensor_status;
+    }
+  });
+
+  const legacyAverages = [...buckets.values()].map(({ reading, sums, counts, samples, faults }) => {
+    const averageFor = (field: keyof Reading) => {
+      const count = counts.get(field) ?? 0;
+      return count ? (sums.get(field) ?? 0) / count : null;
+    };
+    return {
+      ...reading,
+      sample_count: samples,
+      fault_count: faults,
+      temperature_c: averageFor("temperature_c"),
+      humidity_percent: averageFor("humidity_percent"),
+      water_temperature_c: averageFor("water_temperature_c"),
+      light_lux: averageFor("light_lux"),
+      water_level_percent: averageFor("water_level_percent"),
+      wastewater_level_percent: averageFor("wastewater_level_percent"),
+      voltage: averageFor("voltage"),
+    };
+  });
+  return [...readings.filter((reading) => reading.aggregation && reading.aggregation !== "raw"), ...legacyAverages]
+    .sort((a, b) => Date.parse(b.recorded_at) - Date.parse(a.recorded_at) || b.id - a.id);
+}
 
 export async function loadWorkspace(
   signal: AbortSignal,
@@ -261,6 +357,8 @@ export async function loadWorkspace(
     }),
   );
   const workspace = Object.fromEntries(results) as WorkspaceData;
+  workspace.readings = aggregateLegacyTelemetry(workspace.readings);
+  workspace.liveReadings = [];
   return workspace;
 }
 export async function saveProfile(values: {
