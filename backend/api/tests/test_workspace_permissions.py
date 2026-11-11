@@ -94,7 +94,9 @@ def test_evaluator_only_sees_granted_records(workspace):
     app.dependency_overrides[get_current_user] = lambda: evaluator
     assert client.get("/api/v1/batches").json() == []
     db.execute(
-        text("INSERT INTO evaluator_access (owner_id, evaluator_id, evaluator_email) VALUES (:owner, :eval_id, :email)"),
+        text(
+            "INSERT INTO evaluator_access (owner_id, evaluator_id, evaluator_email) VALUES (:owner, :eval_id, :email)"
+        ),
         {"owner": operator.id, "eval_id": evaluator.id, "email": evaluator.email},
     )
     db.commit()
@@ -117,7 +119,13 @@ def test_operator_cannot_modify_another_operators_batch(workspace):
 
 def test_superadmin_cannot_delete_an_operator_with_production_history(workspace):
     client, db, operator, _evaluator, _other, batch = workspace
-    admin = User(google_subject="delete-admin", email="delete-admin@example.test", display_name="Admin", role="superadmin", is_active=True)
+    admin = User(
+        google_subject="delete-admin",
+        email="delete-admin@example.test",
+        display_name="Admin",
+        role="superadmin",
+        is_active=True,
+    )
     db.add(admin)
     db.commit()
     app.dependency_overrides[get_current_user] = lambda: admin
@@ -395,6 +403,36 @@ def test_operator_approve_and_decline_requests(workspace):
     assert grant.owner_id == operator.id
 
 
+def test_approval_links_email_grant_without_stealing_another_operators_access(
+    workspace,
+):
+    client, db, operator, evaluator, other, _batch = workspace
+    existing = EvaluatorAccess(
+        owner_id=other.id, evaluator_id=evaluator.id, evaluator_email=evaluator.email
+    )
+    email_only = EvaluatorAccess(owner_id=operator.id, evaluator_email=evaluator.email)
+    db.add_all([existing, email_only])
+    db.commit()
+    app.dependency_overrides[get_current_user] = lambda: evaluator
+    request = client.post(
+        "/api/v1/access-requests", json={"operator_email": operator.email}
+    )
+    assert request.status_code == 201
+    app.dependency_overrides[get_current_user] = lambda: operator
+    assert (
+        client.post(
+            f"/api/v1/operator/access-requests/{request.json()['id']}/approve"
+        ).status_code
+        == 200
+    )
+    db.refresh(email_only)
+    db.refresh(existing)
+    assert email_only.evaluator_id == evaluator.id
+    assert existing.owner_id == other.id and existing.evaluator_id == evaluator.id
+    assert len(db.scalars(select(EvaluatorAccess)).all()) == 2
+    assert len(client.get("/api/v1/operator/evaluators").json()) == 1
+
+
 def test_superadmin_delete_account_safeguards(workspace):
     client, db, operator, _evaluator, _other, _batch = workspace
     admin = User(
@@ -493,9 +531,7 @@ async def test_email_edit_survives_relogin():
         }
         mock_response.raise_for_status = MagicMock()
 
-        creds = HTTPAuthorizationCredentials(
-            scheme="Bearer", credentials="dummy-token"
-        )
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="dummy-token")
         with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_response
             logged_in_user = await get_current_user(credentials=creds, db=db)
@@ -509,5 +545,3 @@ async def test_email_edit_survives_relogin():
         assert user.email == "corrected@example.test"
         assert user.display_name == "Corrected Name"
     engine.dispose()
-
-

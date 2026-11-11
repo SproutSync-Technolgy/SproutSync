@@ -54,7 +54,7 @@ documented in [workspace search and design](workspace-search-and-design.md).
 | Live readings | View temperature, humidity, fresh/wastewater, water temperature, light, voltage/SD status when supplied | Supports observation of current conditions | Missing/faulty values remain unavailable; no invented sensor values are added by the sample-data script |
 | Connection and stale status | Inspect last-seen, pending/offline/fault status, and API/broker errors | Prevents old readings being mistaken for live measurements | Hardware reconnect, power-loss, and endurance evidence remain separate acceptance work |
 | Realtime plus recovery | Supabase Realtime delivers inserts; API polling recovers missed readings | Keeps updates useful when one transport fails | Requires correct Realtime publication and ownership policies |
-| Historical readings | Browse timestamped values, raw samples, and labelled hourly/daily summaries | Supports review without confusing averages with live samples | Current cards use raw readings. Automatic compaction/retention is not enabled by this change |
+| Historical readings | Browse minute/five-minute means, state events, and existing raw/hourly/daily records | Keeps normal history compact while retaining fault detail and per-sensor ranges | Current cards use latest packets. Normal history averages five minutes; fault windows retain minutes. Old history is retained |
 
 ## Irrigation, evidence, and evaluation
 

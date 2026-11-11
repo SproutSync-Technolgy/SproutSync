@@ -29,9 +29,15 @@ Use [SETUP.md](../SETUP.md) for exact startup commands and prerequisites.
 The generated OpenAPI schema at `/openapi.json` and Swagger UI at `/docs` are the
 authoritative request/response definitions. The current primary routes are:
 
+For authorization instructions, the complete endpoint/connection explanation,
+deployment configuration and a read-only HTTP checker, see the
+[Swagger and backend deployment guide](backend-api-and-deployment.md).
+
 | Method and path | Use / permission |
 | --- | --- |
 | `GET /api/v1/health` | Public process liveness; does not prove database, email, or MQTT readiness |
+| `GET /api/v1/ready` | Public database/schema readiness; 503 when unavailable or migration stamp is out of date |
+| `GET /api/v1/system/connections` | Superadmin/admin-only service diagnostics; per-connection status with no secrets |
 | `GET /api/v1/auth/me` | Verify bearer identity and return current profile |
 | `POST /api/v1/auth/profile` | Save the current account's supported details |
 | `POST /api/v1/auth/verify/send` | Request configured API onboarding email verification |
@@ -44,6 +50,7 @@ authoritative request/response definitions. The current primary routes are:
 | `POST /api/v1/devices/nearby` | Validate and register a selected discovered identity |
 | `POST /api/v1/devices/connect` | Bind/validate an owned device/topic and wait for evidence |
 | `GET /api/v1/devices/live` | Authorized device state and raw-reading recovery |
+| `POST /api/v1/devices/{device_id}/issues` | Save a scoped, idempotent inspection report and persistent alert |
 | `GET /api/v1/superadmin/accounts` | Superadmin directory and serial/evaluator relationships |
 | `PATCH /api/v1/superadmin/accounts/{user_id}` | Superadmin account correction/role management |
 | `DELETE /api/v1/superadmin/accounts/{user_id}` | Permitted deletion; conflicts preserve production/history |

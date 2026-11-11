@@ -119,6 +119,102 @@ const nearbyIdentity = {
   name: "SproutSync bench ESP32", topic_prefix: "sproutsync/ESP32-A1B2C3",
 };
 
+test("evaluator grants use hosted RPCs, support multiple accounts and tolerate retries", async ({page}) => {
+  await mock(page);
+  const evaluators = [
+    {id:20,name:"First reviewer",first_name:"First",last_name:"Reviewer",email:"first@example.invalid",is_active:true,granted_at:new Date().toISOString()},
+    {id:21,name:"Second reviewer",first_name:"Second",last_name:"Reviewer",email:"second@example.invalid",is_active:true,granted_at:new Date().toISOString()},
+  ];
+  let grants = 0;
+  const obsoleteCalls: string[] = [];
+  page.on("request",request => {if (/\/api\/v1\/operator\/(evaluators|access-requests)/.test(request.url())) obsoleteCalls.push(request.url());});
+  await page.route(`https://${authHost}/rest/v1/rpc/operator_list_evaluators`,route => route.fulfill({json:evaluators}));
+  await page.route(`https://${authHost}/rest/v1/rpc/operator_list_access_requests`,route => route.fulfill({json:[]}));
+  await page.route(`https://${authHost}/rest/v1/rpc/grant_evaluator_access`,route => {
+    expect(route.request().postDataJSON()).toEqual({target_email:"first@example.invalid"});
+    grants++;
+    return route.fulfill({json:{access:{id:1,owner_id:1,evaluator_email:"first@example.invalid"},already_granted:true}});
+  });
+  await page.goto("/operator");
+  await page.getByRole("navigation",{name:"Main navigation"}).getByRole("button",{name:"Chamber & Access",exact:true}).click();
+  await expect(page.getByText("first@example.invalid",{exact:true})).toBeVisible();
+  await expect(page.getByText("second@example.invalid",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Grant by Email",exact:true}).click();
+  const dialog=page.getByRole("dialog",{name:"Grant evaluator access",exact:true});
+  await dialog.getByLabel("Evaluator’s account email").fill("FIRST@example.invalid");
+  await dialog.getByRole("button",{name:"Grant access",exact:true}).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText("This evaluator already has access.",{exact:true})).toBeVisible();
+  expect(grants).toBe(1);
+  expect(obsoleteCalls).toEqual([]);
+});
+
+test("hosted live fallback shows six sensors and fresh faulting hardware as connected", async ({page}) => {
+  await mock(page);
+  await page.setViewportSize({width:390,height:844});
+  const now = new Date().toISOString();
+  const device={id:1,owner_id:1,name:"Nursery ESP32",serial_number:"ESP32-001",status:"fault",is_demo:false,last_seen_at:now};
+  const latest={device_id:1,temperature_c:31.3,humidity_percent:63.94,water_level_percent:null,water_temperature_c:22.2,light_lux:0,wastewater_level_percent:15,sd_ok:false,voltage:5.01,sensor_status:"SD_ERROR",recorded_at:now,received_at:now};
+  let polls=0;
+  await page.route(`https://${authHost}/rest/v1/devices*`,route => route.fulfill({json:[device]}));
+  await page.route(`https://${authHost}/rest/v1/rpc/workspace_live_snapshot`,route => {polls++; return route.fulfill({json:{devices:[device],readings:[],latest_readings:[latest],minute_previews:[],stale_seconds:30,mqtt:null}});});
+  await page.goto("/operator");
+  const card=page.getByRole("button",{name:"View chamber Nursery ESP32",exact:true});
+  await expect(page.getByText("1 connected",{exact:true})).toBeVisible();
+  await expect(card.locator(".chamber-metric")).toHaveCount(6);
+  await expect(card).toContainText("Connected · Needs attention");
+  await expect(card).toContainText("Not reported");
+  await expect(card).toContainText("0 lux");
+  await expect(card).toContainText("SD card: Error");
+  const status=page.getByRole("button",{name:"System status: Chamber needs attention"});
+  await status.click();
+  await expect(page.getByRole("region",{name:"System status details"})).toContainText("Supabase · every 2 seconds");
+  await expect(page.getByRole("region",{name:"System status details"})).toContainText("MQTT broker: Not checked");
+  await status.press("Escape");
+  await expect.poll(() => polls).toBeGreaterThanOrEqual(2);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({path:"test-results/adaptive-chamber-mobile.png",fullPage:true});
+});
+
+test("live packets refresh without adding history and averages remain labelled", async ({page}) => {
+  await mock(page);
+  const now=new Date().toISOString();
+  const device={id:1,owner_id:1,name:"Averaging chamber",serial_number:"ESP32-AVG",status:"online",is_demo:false,last_seen_at:now};
+  const latest={device_id:1,temperature_c:27.12,humidity_percent:85,water_level_percent:70,water_temperature_c:20,light_lux:0,wastewater_level_percent:10,sensor_status:"NORMAL",recorded_at:now,received_at:now};
+  const average={...latest,id:300,temperature_c:24.123456,aggregation:"five_min",sample_count:150,fault_count:0,metric_counts:{temperature_c:150},metric_stats:{temperature_c:{count:150,sum:3618.5184,min:20,max:28}},recorded_at:new Date(Date.now()-300000).toISOString()};
+  const preview={...latest,temperature_c:26,aggregation:"minute",provisional:true,sample_count:12,metric_counts:{temperature_c:12}};
+  let polls=0;
+  await page.route(`https://${authHost}/rest/v1/devices*`,route => route.fulfill({json:[device]}));
+  await page.route(`https://${authHost}/rest/v1/telemetry_readings*`,route => route.fulfill({json:[average]}));
+  await page.route("**/api/v1/devices/live*",route => {polls++;return route.fulfill({json:{devices:[device],readings:[average],latest_readings:[{...latest,temperature_c:polls===1 ? 27.12 : 28.34}],minute_previews:[preview],stale_seconds:30,mqtt:{connected:false,state:"disconnected",stale_seconds:30}}});});
+  await page.goto("/operator");
+  await page.getByRole("navigation",{name:"Main navigation"}).getByRole("button",{name:"Readings",exact:true}).click();
+  await expect(page.getByText("28.34 °C",{exact:true})).toBeVisible();
+  await expect(page.getByText("5-min average",{exact:true})).toBeVisible();
+  await expect(page.getByText("1-min average · in progress",{exact:true})).toBeVisible();
+  await expect(page.getByRole("row").filter({hasText:"5-min average"})).toContainText("150");
+  await expect(page.getByRole("row").filter({hasText:"5-min average"})).toContainText("24.12 °C");
+  await page.getByText("5-min average",{exact:true}).click();
+  await expect(page.getByText("150 valid samples · 20 °C–28 °C",{exact:true})).toBeVisible();
+  await expect(page.getByText("Showing 1-2 of 2 loaded records",{exact:true})).toBeVisible();
+  expect(polls).toBeGreaterThanOrEqual(2);
+});
+
+test("a stalled backend falls back to hosted live state without losing the first refresh", async ({page}) => {
+  await mock(page);
+  const now=new Date().toISOString();
+  const device={id:1,owner_id:1,name:"Shared collector",serial_number:"ESP32-SHARED",status:"online",is_demo:false,last_seen_at:now};
+  await page.route(`https://${authHost}/rest/v1/devices*`,route => route.fulfill({json:[device]}));
+  await page.route("**/api/v1/devices/live*",async route => {
+    await new Promise(resolve => setTimeout(resolve,4000));
+    await route.fulfill({status:504,json:{detail:"Timed out"}}).catch(() => {});
+  });
+  await page.route(`https://${authHost}/rest/v1/rpc/workspace_live_snapshot`,route => route.fulfill({json:{devices:[device],readings:[],latest_readings:[],minute_previews:[],stale_seconds:30,mqtt:null}}));
+  await page.goto("/operator");
+  await page.getByRole("button",{name:"System status: Chambers connected"}).click();
+  await expect(page.getByRole("region",{name:"System status details"})).toContainText("Supabase · every 2 seconds");
+});
+
 async function mockFirstDevice(page: Page) {
   await mock(page);
   const devices: Record<string, unknown>[] = [];
@@ -561,7 +657,7 @@ test("header status works by keyboard and touch, and off measurements are unavai
   const status = page.getByRole("button", {name: "System status: Chamber needs attention"});
   await status.focus();
   const details = page.getByRole("region", {name: "System status details"});
-  await expect(details.getByText("Controller off", {exact: true})).toBeVisible();
+  await expect(details.getByText("Connected · Controller off", {exact: true})).toBeVisible();
   await page.keyboard.press("Tab");
   await expect(details.getByRole("button", {name: "Check connection"})).toBeFocused();
   await page.keyboard.press("Escape");

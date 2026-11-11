@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint, Uuid, func, text
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, Float, ForeignKey, ForeignKeyConstraint, Index, Integer, String, UniqueConstraint, Uuid, func, text
 from uuid import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -77,6 +77,7 @@ class Device(Base):
     """An IoT chamber controller device assigned to an operator."""
 
     __tablename__ = "devices"
+    __table_args__ = (UniqueConstraint("id", "owner_id", name="devices_id_owner_unique"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
@@ -104,7 +105,7 @@ class TelemetryReading(Base):
             "device_id", "message_id", name="telemetry_device_message_unique"
         ),
         CheckConstraint(
-            "aggregation in ('raw', 'hourly', 'daily')",
+            "aggregation in ('raw', 'hourly', 'daily', 'event', 'minute', 'five_min')",
             name="telemetry_aggregation_check",
         ),
         CheckConstraint("sample_count > 0", name="telemetry_sample_count_check"),
@@ -147,6 +148,24 @@ class TelemetryReading(Base):
     metric_counts: Mapped[dict[str, int]] = mapped_column(
         JSON, default=dict, server_default="{}"
     )
+    metric_stats: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    window_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    window_ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DeviceLiveState(Base):
+    """One mutable live packet and bounded private aggregation state per device."""
+
+    __tablename__ = "device_live_state"
+    __table_args__ = (ForeignKeyConstraint(["device_id", "owner_id"], ["devices.id", "devices.owner_id"], ondelete="CASCADE"),)
+    device_id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(Integer, index=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    latest: Mapped[dict] = mapped_column(JSON, default=dict)
+    minute_preview: Mapped[dict] = mapped_column(JSON, default=dict)
+    history_state: Mapped[dict] = mapped_column(JSON, default=dict)
+    flush_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    stale_seconds: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
 
 
 class Alert(Base):
@@ -173,10 +192,11 @@ class EvaluatorAccess(Base):
     """Explicit access grant from an operator workspace to an evaluator."""
 
     __tablename__ = "evaluator_access"
+    __table_args__ = (UniqueConstraint("owner_id", "evaluator_email", name="evaluator_access_owner_email_unique"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    evaluator_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True, nullable=True)
+    evaluator_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True)
     evaluator_email: Mapped[str] = mapped_column(String(320), index=True)
     granted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

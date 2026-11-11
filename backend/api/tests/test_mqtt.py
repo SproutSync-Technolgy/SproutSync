@@ -16,11 +16,12 @@ from app.auth import get_current_user
 from app.config import settings
 from app.db import Base, get_db
 from app.main import app
-from app.models import Device, EvaluatorAccess, TelemetryReading, User
+from app.models import Device, DeviceLiveState, EvaluatorAccess, TelemetryReading, User
 from app.discovery import Advertisement, DeviceIdentity, discovery
 from app.mqtt import MQTTBridge, bridge, ingest_message, utc
 from app.live_readings import LiveReadings
 from app.models import ActivityLog, Alert, Batch
+from app.telemetry_history import flush_history_windows
 from uuid import uuid4
 
 
@@ -93,13 +94,20 @@ def count(db):
     return db.scalar(select(func.count()).select_from(TelemetryReading))
 
 
-def test_live_packets_are_fresh_while_history_is_sampled(workspace, monkeypatch):
+def aligned_start(workspace):
+    start = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    start = start.replace(minute=start.minute // 5 * 5)
+    workspace.device.connection_requested_at = start - timedelta(seconds=1)
+    workspace.db.commit()
+    return start
+
+
+def test_live_packets_are_fresh_while_history_is_averaged(workspace, monkeypatch):
     w = workspace
-    monkeypatch.setattr(settings, "telemetry_sample_seconds", 60)
     cache = LiveReadings()
     monkeypatch.setattr(bridge, "latest", cache)
     connect(w)
-    start = datetime.now(timezone.utc)
+    start = aligned_start(w)
     for second in range(62):
         assert ingest_message(
             w.db,
@@ -108,24 +116,35 @@ def test_live_packets_are_fresh_while_history_is_sampled(workspace, monkeypatch)
             received_at=start + timedelta(seconds=second),
             live_store=cache,
         )
-    assert count(w.db) == 2
+    assert count(w.db) == 1  # Initial connection event, no per-packet history.
+    assert w.db.scalar(select(func.count()).select_from(DeviceLiveState)) == 1
     latest = cache.for_device(w.device)
     assert latest["temperature_c"] == 20.61
     assert "id" not in latest
     assert utc(w.device.last_seen_at) == start + timedelta(seconds=61)
     live = w.client.get("/api/v1/devices/live").json()
     assert live["latest_readings"][0]["temperature_c"] == 20.61
+    flush_history_windows(w.db, start + timedelta(minutes=5))
+    w.db.commit()
+    average = w.db.scalar(
+        select(TelemetryReading).where(TelemetryReading.aggregation == "five_min")
+    )
+    assert average.sample_count == 62
+    assert average.temperature_c == pytest.approx(20.305)
+    # Flushing again must not duplicate the window.
+    flush_history_windows(w.db, start + timedelta(minutes=6))
+    w.db.commit()
+    assert count(w.db) == 2
     app.dependency_overrides[get_current_user] = lambda: w.evaluator
     assert w.client.get("/api/v1/devices/live").json()["latest_readings"] == []
 
 
 def test_faults_recovery_and_real_zeroes_are_preserved_without_notification_flood(
-    workspace, monkeypatch
+    workspace,
 ):
     w = workspace
-    monkeypatch.setattr(settings, "telemetry_sample_seconds", 60)
     connect(w)
-    start = datetime.now(timezone.utc)
+    start = aligned_start(w)
     packets = [
         {"airTemp": 25, "lux": 0},
         {"airTemp": 0, "lux": 0, "status": "SYSTEM OFF"},
@@ -152,7 +171,7 @@ def test_unsaved_packet_duplicates_do_not_extend_heartbeat(workspace):
     w = workspace
     connect(w)
     cache = LiveReadings()
-    start = datetime.now(timezone.utc)
+    start = aligned_start(w)
     for second, message_id in [(0, "first"), (1, "second")]:
         assert ingest_message(
             w.db,
@@ -423,7 +442,7 @@ def test_sensor_disconnect_sentinels_are_faults_not_measurements(workspace):
     assert w.db.get(Device, w.device.id).status == "fault"
 
 
-def test_stale_or_broker_disconnected_devices_go_offline_and_recover(
+def test_fresh_device_evidence_survives_transport_failure_until_stale(
     workspace, monkeypatch
 ):
     w = workspace
@@ -431,11 +450,12 @@ def test_stale_or_broker_disconnected_devices_go_offline_and_recover(
     assert ingest_message(w.db, "sproutsync/telemetry", b'{"airTemp":25}')
     monkeypatch.setattr(bridge, "connected", False)
     assert (
-        w.client.get("/api/v1/devices/live").json()["devices"][0]["status"] == "offline"
+        w.client.get("/api/v1/devices/live").json()["devices"][0]["status"] == "online"
     )
+    assert w.client.get("/api/v1/devices/live").json()["mqtt"]["connected"] is False
     worker = MQTTBridge(w.factory)
     worker._sync(w.db)
-    assert w.db.get(Device, w.device.id).status == "offline"
+    assert w.db.get(Device, w.device.id).status == "online"
     monkeypatch.setattr(bridge, "connected", True)
     assert ingest_message(w.db, "sproutsync/telemetry", b'{"airTemp":26}')
     assert (
@@ -766,10 +786,10 @@ def test_authenticated_backend_client_never_reuses_the_firmware_client_id(monkey
     )
 
 
-def test_raw_packets_keep_their_cadence_and_correct_rollup_metadata(workspace):
+def test_fault_and_recovery_events_preserve_counts_and_valid_zeroes(workspace):
     w = workspace
     connect(w)
-    now = datetime.now(timezone.utc)
+    now = aligned_start(w)
     assert ingest_message(
         w.db,
         "sproutsync/telemetry",
@@ -778,7 +798,7 @@ def test_raw_packets_keep_their_cadence_and_correct_rollup_metadata(workspace):
     )
     fault = w.db.scalar(select(TelemetryReading))
     assert (
-        fault.aggregation == "raw"
+        fault.aggregation == "event"
         and fault.sample_count == 1
         and fault.fault_count == 1
     )
@@ -797,7 +817,7 @@ def test_raw_packets_keep_their_cadence_and_correct_rollup_metadata(workspace):
     )
 
 
-def test_rollups_never_replace_raw_readings_in_live_recovery(workspace):
+def test_rollups_never_replace_current_packets_in_live_recovery(workspace, monkeypatch):
     w = workspace
     connect(w)
     assert ingest_message(w.db, "sproutsync/telemetry", b'{"airTemp":26}')
@@ -815,7 +835,69 @@ def test_rollups_never_replace_raw_readings_in_live_recovery(workspace):
     w.db.commit()
     readings = w.client.get("/api/v1/devices/live").json()["readings"]
     assert len(readings) == 1 and readings[0]["id"] == raw.id
-    assert readings[0]["aggregation"] == "raw" and readings[0]["sample_count"] == 1
+    assert readings[0]["aggregation"] == "event" and readings[0]["sample_count"] == 1
+    # A process restart loses memory, while the current packet remains durable.
+    monkeypatch.setattr(bridge, "latest", LiveReadings())
+    live = w.client.get("/api/v1/devices/live").json()
+    assert live["latest_readings"][0]["temperature_c"] == 26
     assert (
         w.client.get(f"/api/v1/devices/live?after_id={raw.id}").json()["readings"] == []
+    )
+
+
+def test_unsaved_duplicate_is_rejected_after_collector_restart(workspace):
+    w = workspace
+    connect(w)
+    start = aligned_start(w)
+    for second, value in enumerate(("boot:1", "boot:2")):
+        assert ingest_message(
+            w.db,
+            "sproutsync/telemetry",
+            json.dumps({"airTemp": 25, "messageId": value}).encode(),
+            received_at=start + timedelta(seconds=second),
+            live_store=LiveReadings(),
+        )
+    # boot:2 has no separate history row, so rejection must use durable state.
+    assert count(w.db) == 1
+    with w.factory() as restarted:
+        assert not ingest_message(
+            restarted,
+            "sproutsync/telemetry",
+            b'{"airTemp":25,"messageId":"boot:2"}',
+            received_at=start + timedelta(seconds=10),
+            live_store=LiveReadings(),
+        )
+    w.db.refresh(w.device)
+    assert utc(w.device.last_seen_at) == start + timedelta(seconds=1)
+
+
+def test_durable_current_packet_wins_over_an_api_processes_older_cache(
+    workspace, monkeypatch
+):
+    w = workspace
+    connect(w)
+    cache = LiveReadings()
+    monkeypatch.setattr(bridge, "latest", cache)
+    start = aligned_start(w)
+    assert ingest_message(
+        w.db,
+        "sproutsync/telemetry",
+        b'{"airTemp":26}',
+        received_at=start,
+        live_store=cache,
+    )
+    # A separate collector writes newer durable state, not this API's memory.
+    assert ingest_message(
+        w.db,
+        "sproutsync/telemetry",
+        b'{"airTemp":27}',
+        received_at=start + timedelta(seconds=1),
+        live_store=LiveReadings(),
+    )
+    assert cache.for_device(w.device)["temperature_c"] == 26
+    assert (
+        w.client.get("/api/v1/devices/live").json()["latest_readings"][0][
+            "temperature_c"
+        ]
+        == 27
     )

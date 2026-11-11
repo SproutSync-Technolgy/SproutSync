@@ -11,7 +11,11 @@ from app.config import settings
 from app.db import get_db
 from app.models import User
 
-bearer_scheme = HTTPBearer(auto_error=False)
+bearer_scheme = HTTPBearer(
+    auto_error=False,
+    scheme_name="SupabaseSession",
+    description="Paste your signed-in Supabase session access token only, without the Bearer prefix. Public client keys, service-role keys and MQTT passwords are not session tokens.",
+)
 
 
 async def get_current_user(

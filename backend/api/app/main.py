@@ -9,10 +9,10 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
@@ -22,6 +22,8 @@ from app.db import get_db
 from app.models import AccessRequest, ActivityLog, Batch, Device, EvaluatorAccess, TelemetryReading, User
 from app.devices import router as device_router
 from app.mqtt import bridge
+from app.api_documentation import API_DESCRIPTION, API_TAGS, install_openapi_docs
+from app.monitoring import ConnectionsResponse, ReadinessResponse, connection_snapshot, readiness_probe
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +36,21 @@ async def lifespan(app: FastAPI):
         bridge.stop()
 
 
-app = FastAPI(title="SproutSync API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(
+    title="SproutSync API",
+    version="0.3.0",
+    description=API_DESCRIPTION,
+    openapi_tags=API_TAGS,
+    swagger_ui_parameters={
+        "filter": True,
+        "displayRequestDuration": True,
+        "persistAuthorization": False,
+        "tryItOutEnabled": False,
+        "validatorUrl": None,
+        "defaultModelsExpandDepth": 0,
+    },
+    lifespan=lifespan,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"https://.*\.vercel\.app|http://localhost:\d+|http://127\.0\.0\.1:\d+",
@@ -165,6 +181,13 @@ class VerifyConfirmResponse(BaseModel):
 class BatchCreateRequest(BaseModel):
     """Validated fields required to create a grower batch."""
 
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "code": "MB-EXAMPLE-001", "seed_type": "Mung beans", "seed_weight_grams": 250,
+        "stage": "soaking", "started_at": "2026-11-11T08:00:00+08:00",
+        "target_harvest_at": "2026-11-15T08:00:00+08:00",
+        "notes": "Example only; replace dates and code before saving.",
+    }]})
+
     code: str = Field(min_length=1, max_length=64)
     seed_type: str = Field(default="Mung beans", min_length=1, max_length=120)
     seed_weight_grams: float | None = Field(default=None, gt=0)
@@ -204,12 +227,59 @@ class BatchResponse(BaseModel):
     notes: str | None
 
 
-@app.get("/", tags=["health"])
-@app.get("/health", response_model=HealthResponse, tags=["health"])
+@app.get("/", include_in_schema=False)
+@app.get("/health", response_model=HealthResponse, include_in_schema=False)
 @app.get("/api/v1/health", response_model=HealthResponse, tags=["health"])
 def health() -> HealthResponse:
-    """Report process liveness without masking database readiness failures."""
+    """Check whether the API process responds (public).
+
+    Returns 200 without querying the database or broker. Use this for process
+    restart checks. Use /api/v1/ready for database/schema readiness and the
+    protected /api/v1/system/connections for other service diagnostics.
+    """
     return HealthResponse(status="ok", service="sproutsync-api")
+
+
+@app.get(
+    "/api/v1/ready", response_model=ReadinessResponse, tags=["health"],
+    responses={503: {"model": ReadinessResponse, "description": "Database unavailable, unconfigured or migration stamp does not match this release."}},
+)
+def readiness(response: Response) -> ReadinessResponse:
+    """Check database and migration readiness (public, read-only).
+
+    Returns 200 when a read-only SELECT succeeds and the Alembic stamp matches
+    this release, otherwise 503 with redacted check statuses. The probe caches
+    results for ten seconds, uses a three-second connection timeout and a
+    two-second SQL statement timeout. It never runs migrations or changes data.
+    This is not an OAuth, SMTP, Realtime or live ESP32 test.
+    """
+    result = readiness_probe.check()
+    response.status_code = 200 if result.status == "ready" else 503
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@app.get("/api/v1/system/connections", response_model=ConnectionsResponse, tags=["system"])
+async def system_connections(
+    response: Response,
+    _admin: User = Depends(require_superadmin),
+    readiness: ReadinessResponse = Depends(readiness_probe.check),
+) -> ConnectionsResponse:
+    """Inspect service connections (superadmin/admin only, read-only).
+
+    Checks cached database/schema readiness, Supabase Auth health and Data API
+    reachability (three-second HTTP timeouts), and this process's MQTT state.
+    Data API reachability requires the expected anonymous permission denial for
+    protected migration metadata with limit=0; a generic 401 is not success.
+    Returns 200 with status 'ok' or 'degraded'; inspect every check. Optional SMTP
+    is configuration-only, not a delivery test. Disabled MQTT is reported, not
+    treated as connected. No credentials, broker URLs or account records are
+    returned. This does not test Realtime subscriptions, database write privileges,
+    MQTT packet ingestion or sensor accuracy; use an authorized devices/live
+    snapshot for chamber status. No commands or verification emails are sent.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return await connection_snapshot(readiness)
 
 
 @app.get("/api/v1/batches", response_model=list[BatchResponse], tags=["batches"])
@@ -217,7 +287,13 @@ def list_batches(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[BatchResponse]:
-    """List active and archived batches visible to the current user."""
+    """List batches in the caller's workspace (active signed-in user).
+
+    Operators receive their own active and archived batches; evaluators receive
+    batches from granted operators; admins/superadmins receive all batches.
+    Pending users and evaluators without a grant receive an empty 200 list.
+    Ordered by start date and ID descending. Currently unpaginated.
+    """
     query = select(Batch).order_by(Batch.started_at.desc(), Batch.id.desc())
     if user.role in ("superadmin", "admin"):
         # Superadmin audits all batches across the entire fleet
@@ -254,7 +330,13 @@ def create_batch(
     user: User = Depends(require_operator),
     db: Session = Depends(get_db),
 ) -> BatchResponse:
-    """Create a batch owned by the authenticated grower."""
+    """Create a production batch (operator/admin/superadmin).
+
+    Saves a real batch owned by the caller and returns 201. Replace the example
+    code and dates with actual batch details; include timezone offsets in dates.
+    Optional weights must be positive. Does not start irrigation or operate the
+    ESP32. This is a write operation, not a connectivity test.
+    """
     batch = Batch(owner_id=user.id, **payload.model_dump())
     db.add(batch)
     db.commit()
@@ -262,14 +344,20 @@ def create_batch(
     return BatchResponse.model_validate(batch)
 
 
-@app.patch("/api/v1/batches/{batch_id}", response_model=BatchResponse, tags=["batches"])
+@app.patch("/api/v1/batches/{batch_id}", response_model=BatchResponse, tags=["batches"],
+           responses={404: {"description": "Batch is missing or not owned by the caller."}})
 def update_batch(
     batch_id: int,
     payload: BatchUpdateRequest,
     user: User = Depends(require_operator),
     db: Session = Depends(get_db),
 ) -> BatchResponse:
-    """Update a visible batch while preserving its owner."""
+    """Update a batch owned by the caller (operator/admin/superadmin).
+
+    Only submitted fields change. Ownership cannot be transferred here. Even an
+    elevated admin must own the target batch; missing/foreign batches return 404.
+    Stage/status changes are persisted and do not command hardware.
+    """
     query = select(Batch).where(Batch.id == batch_id)
     query = query.where(Batch.owner_id == user.id)
     batch = db.scalar(query)
@@ -285,14 +373,20 @@ def update_batch(
 
 
 @app.post(
-    "/api/v1/batches/{batch_id}/archive", response_model=BatchResponse, tags=["batches"]
+    "/api/v1/batches/{batch_id}/archive", response_model=BatchResponse, tags=["batches"],
+    responses={404: {"description": "Batch is missing or not owned by the caller."}},
 )
 def archive_batch(
     batch_id: int,
     user: User = Depends(require_operator),
     db: Session = Depends(get_db),
 ) -> BatchResponse:
-    """Archive a visible batch without deleting its history."""
+    """Archive the caller's batch without deleting its history (operator/admin/superadmin).
+
+    Sets status to archived and returns the saved batch. Even an elevated admin
+    must own the target batch. Missing or foreign batch returns 404; repeating
+    the operation keeps it archived. No physical hardware action is sent.
+    """
     query = select(Batch).where(Batch.id == batch_id)
     query = query.where(Batch.owner_id == user.id)
     batch = db.scalar(query)
@@ -308,7 +402,15 @@ def archive_batch(
 
 @app.get("/api/v1/auth/me", response_model=UserResponse, tags=["auth"])
 def auth_me(user: User = Depends(get_current_user)) -> UserResponse:
-    """Return the current authenticated identity."""
+    """Check the signed-in Supabase identity and assigned application role.
+
+    Requires an access token for a verified-email, active account. The backend
+    verifies it against this project's Supabase Auth, then creates/updates the
+    local identity projection if needed. A first-time account normally has role
+    pending. Use this after Swagger Authorize; 401 means invalid/expired session,
+    403 means account requirements failed, 503 means Auth configuration/service
+    unavailable. No database/service-role/MQTT key should be supplied as a token.
+    """
     return UserResponse.model_validate(user)
 
 
@@ -318,7 +420,12 @@ def update_profile(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> UserResponse:
-    """Save user personal details directly, marking profile_complete and bypassing verification."""
+    """Save the current user's profile (any active signed-in user).
+
+    Updates name, organization and phone and marks the local profile complete.
+    Supabase email verification already occurs in the authentication dependency;
+    this endpoint does not send an email or change the caller's role.
+    """
     user.first_name = payload.first_name.strip()
     user.last_name = payload.last_name.strip()
     user.display_name = f"{user.first_name} {user.last_name}".strip()
@@ -336,12 +443,21 @@ def update_profile(
     "/api/v1/auth/verify/send",
     response_model=VerifySendResponse,
     tags=["auth"],
+    responses={503: {"description": "SMTP delivery or Supabase authentication unavailable/unconfigured."}},
 )
 def send_verification_code(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> VerifySendResponse:
-    """Send or resend a 6-digit verification code with a 60-second cooldown."""
+    """Send an optional onboarding OTP email (signed-in user; may send real email).
+
+    Already-verified accounts return already_verified without sending. Otherwise
+    uses the server SMTP configuration, with a 60-second resend cooldown and
+    ten-minute expiry. Cooldown is a 200 response with status cooldown_active;
+    inspect status rather than assuming every 200 sent mail. SMTP unconfigured
+    or delivery failure returns 503. Supabase's own Auth emails are a separate
+    service. Do not call repeatedly as a connectivity test.
+    """
     if user.onboarding_email_verified_at is not None:
         return VerifySendResponse(
             status="already_verified",
@@ -400,13 +516,21 @@ def send_verification_code(
     "/api/v1/auth/verify/confirm",
     response_model=VerifyConfirmResponse,
     tags=["auth"],
+    responses={400: {"description": "No active code, expired code or incorrect code."},
+               429: {"description": "Verification attempt limit or temporary lockout."}},
 )
 def confirm_verification_code(
     payload: VerifyConfirmRequest,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> VerifyConfirmResponse:
-    """Validate a 6-digit verification code allowing up to 5 attempts without resending."""
+    """Confirm an optional local onboarding OTP (signed-in user).
+
+    Already-verified accounts return already_verified with 200. Otherwise validates
+    the submitted code: 400 for missing/expired/incorrect codes, 429 after five
+    failed attempts or during lockout. Successful verification clears the code.
+    This is separate from Supabase Auth's mandatory verified-email check.
+    """
     if user.onboarding_email_verified_at is not None:
         return VerifyConfirmResponse(
             status="already_verified",
@@ -584,6 +708,28 @@ class AccessRequestResponse(BaseModel):
     decided_at: datetime | None = None
 
 
+class AccountDeleteResponse(BaseModel):
+    success: bool
+    deleted_id: int
+
+
+class AssignmentResponse(BaseModel):
+    success: bool
+    evaluator_id: int
+    operator_id: int
+
+
+class ApprovalResponse(BaseModel):
+    success: bool
+    status: str
+    evaluator_id: int
+
+
+class DeclineResponse(BaseModel):
+    success: bool
+    status: str
+
+
 @app.get(
     "/api/v1/superadmin/accounts",
     response_model=list[AccountResponse],
@@ -598,7 +744,12 @@ def list_accounts(
     _admin: User = Depends(require_superadmin),
     db: Session = Depends(get_db),
 ) -> list[AccountResponse]:
-    """List all accounts across the fleet with serial numbers, linked evaluators, and pending users."""
+    """List fleet accounts and their grants (superadmin/admin only).
+
+    Includes pending users, assigned serials and linked evaluator summaries.
+    Returns personal account information; ordinary operators/evaluators receive
+    403. Currently unpaginated and ordered by account ID ascending.
+    """
     users = db.scalars(select(User).order_by(User.id.asc())).all()
     accounts: list[AccountResponse] = []
     for u in users:
@@ -652,6 +803,8 @@ def list_accounts(
     "/api/v1/superadmin/accounts/{user_id}",
     response_model=AccountResponse,
     tags=["superadmin"],
+    responses={400: {"description": "Cannot demote the last active superadmin."},
+               404: {"description": "Target account does not exist."}},
 )
 @app.patch(
     "/superadmin/accounts/{user_id}",
@@ -664,7 +817,15 @@ async def update_account(
     admin: User = Depends(require_superadmin),
     db: Session = Depends(get_db),
 ) -> AccountResponse:
-    """Superadmin endpoint to update user name, email, role, and organization."""
+    """Edit an account's profile and application role (superadmin/admin only).
+
+    Saves the supplied account details, synchronizes evaluator email grants and
+    records an audit entry. Missing target returns 404, invalid changes return
+    400/422, and the last active superadmin cannot be demoted (400). Supabase
+    Auth email synchronization requires the optional server-only service-role
+    credential; a successful local edit does not prove that optional sync worked.
+    This changes real account access; never use it for connection testing.
+    """
     target = db.scalar(select(User).where(User.id == user_id))
     if target is None:
         raise HTTPException(
@@ -742,6 +903,10 @@ async def update_account(
 @app.delete(
     "/api/v1/superadmin/accounts/{user_id}",
     tags=["superadmin"],
+    response_model=AccountDeleteResponse,
+    responses={400: {"description": "Cannot delete yourself or the last active superadmin."},
+               404: {"description": "Target account does not exist."},
+               409: {"description": "Account owns chamber, batch or linked records; preserve its history."}},
 )
 @app.delete(
     "/superadmin/accounts/{user_id}",
@@ -752,7 +917,14 @@ def delete_account(
     admin: User = Depends(require_superadmin),
     db: Session = Depends(get_db),
 ) -> dict[str, bool | int]:
-    """Permanently delete a user account and unbind related associations."""
+    """Permanently delete an eligible account (superadmin/admin only).
+
+    DESTRUCTIVE: removes the local account and related access associations and
+    writes an audit record. Cannot delete yourself or the last active superadmin
+    (400); accounts with chamber, batch or linked production history return 409;
+    missing account returns 404. Does not delete a Supabase Auth identity here.
+    Never use this endpoint as an uptime or connection test.
+    """
     target = db.scalar(select(User).where(User.id == user_id))
     if target is None:
         raise HTTPException(
@@ -823,6 +995,9 @@ def delete_account(
     response_model=DeviceGrantResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["superadmin"],
+    responses={400: {"description": "Target account is not an active operational role."},
+               404: {"description": "Operator account not found."},
+               409: {"description": "Device telemetry history prevents ownership transfer."}},
 )
 @app.post(
     "/superadmin/device-grants",
@@ -835,7 +1010,14 @@ def grant_device_serial(
     admin: User = Depends(require_superadmin),
     db: Session = Depends(get_db),
 ) -> DeviceGrantResponse:
-    """Superadmin assigns or transfers a chamber device serial ID to an operator."""
+    """Assign a chamber serial to an operator (superadmin/admin only).
+
+    Creates or updates a serial grant and audit entry. The target must be an
+    active operator/admin. Transfer clears connection state and returns the
+    device to pending; a device with telemetry history cannot transfer (409).
+    A grant alone does not connect an ESP32: follow devices/connect or nearby
+    and then check devices/live for fresh packets.
+    """
     operator = db.scalar(select(User).where(User.id == payload.operator_id))
     if operator is None:
         raise HTTPException(
@@ -894,6 +1076,8 @@ def grant_device_serial(
 @app.post(
     "/api/v1/superadmin/assign-evaluator",
     tags=["superadmin"],
+    response_model=AssignmentResponse,
+    responses={404: {"description": "Operator/evaluator not found, or target has no operational role."}},
 )
 @app.post(
     "/superadmin/assign-evaluator",
@@ -905,7 +1089,13 @@ def assign_evaluator(
     admin: User = Depends(require_superadmin),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Superadmin assigns or reassigns an evaluator to a specific operator (1-to-1)."""
+    """Assign/reassign an evaluator through the account API (superadmin/admin only).
+
+    Promotes the target to evaluator and creates or updates its evaluator grant,
+    recording the administrative action. Both IDs must identify existing users;
+    the target operator must have an operational role or the request returns 404.
+    This grants access to saved operator records; it does not connect hardware.
+    """
     operator = db.scalar(select(User).where(User.id == payload.operator_id))
     if operator is None or operator.role not in ("operator", "admin", "superadmin"):
         raise HTTPException(
@@ -920,7 +1110,11 @@ def assign_evaluator(
     evaluator.role = "evaluator"
     now = datetime.now(timezone.utc)
 
-    grant = db.scalar(select(EvaluatorAccess).where(EvaluatorAccess.evaluator_id == evaluator.id))
+    grant = db.scalar(select(EvaluatorAccess).where(
+        EvaluatorAccess.owner_id == operator.id,
+        or_(EvaluatorAccess.evaluator_id == evaluator.id,
+            func.lower(EvaluatorAccess.evaluator_email) == evaluator.email.lower()),
+    ))
     if grant is None:
         grant = EvaluatorAccess(
             owner_id=operator.id,
@@ -931,7 +1125,7 @@ def assign_evaluator(
         )
         db.add(grant)
     else:
-        grant.owner_id = operator.id
+        grant.evaluator_id = evaluator.id
         grant.evaluator_email = evaluator.email
         grant.granted_by = admin.id
         grant.granted_at = now
@@ -961,7 +1155,12 @@ def list_operator_evaluators(
     operator: User = Depends(require_operator),
     db: Session = Depends(get_db),
 ) -> list[EvaluatorSummary]:
-    """List all Evaluators linked directly to this Operator's chambers."""
+    """List linked evaluators (operator/admin/superadmin).
+
+    All permitted roles see evaluator grants owned by their own account.
+    Returns summaries for linked accounts that exist; ordering is not guaranteed.
+    An empty 200 is valid, not an API connection failure.
+    """
     grants = db.scalars(select(EvaluatorAccess).where(EvaluatorAccess.owner_id == operator.id)).all()
     evaluators: list[EvaluatorSummary] = []
     for g in grants:
@@ -989,6 +1188,7 @@ def list_operator_evaluators(
     "/api/v1/operator/evaluators/{evaluator_id}",
     response_model=EvaluatorSummary,
     tags=["operator"],
+    responses={404: {"description": "Evaluator account not found."}},
 )
 @app.patch(
     "/operator/evaluators/{evaluator_id}",
@@ -1001,7 +1201,13 @@ async def update_operator_evaluator(
     operator: User = Depends(require_operator),
     db: Session = Depends(get_db),
 ) -> EvaluatorSummary:
-    """Operator updates name and email of an Evaluator linked to their chambers."""
+    """Edit a linked evaluator's name/email (operator/admin/superadmin).
+
+    Operators must have a grant linking the evaluator; otherwise 403. A missing
+    account returns 404. Updates local account/grant details and audit history,
+    never the evaluator's role. Optional Supabase Auth email sync depends on the
+    server service-role credential and is separate from the local update.
+    """
     grant = db.scalar(
         select(EvaluatorAccess).where(
             EvaluatorAccess.evaluator_id == evaluator_id,
@@ -1067,7 +1273,12 @@ def list_operator_access_requests(
     operator: User = Depends(require_operator),
     db: Session = Depends(get_db),
 ) -> list[AccessRequestResponse]:
-    """List pending evaluator access requests submitted to this operator."""
+    """List incoming access requests (operator/admin/superadmin).
+
+    All permitted roles see pending requests directed to their own account.
+    Includes requester summaries, ordered newest first.
+    Empty results are valid. No request is approved by reading this list.
+    """
     requests = db.scalars(
         select(AccessRequest)
         .where(
@@ -1098,6 +1309,8 @@ def list_operator_access_requests(
 @app.post(
     "/api/v1/operator/access-requests/{request_id}/approve",
     tags=["operator"],
+    response_model=ApprovalResponse,
+    responses={404: {"description": "Access request or requester account not found."}},
 )
 @app.post(
     "/operator/access-requests/{request_id}/approve",
@@ -1109,7 +1322,13 @@ def approve_access_request(
     operator: User = Depends(require_operator),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Operator approves a pending evaluator request, elevating role and linking chambers."""
+    """Approve an access request and grant evaluator access (operator/admin/superadmin).
+
+    Ordinary operators may approve only requests directed to them; otherwise 403.
+    Missing request/requester returns 404. Persists approved status, promotes the
+    requester to evaluator, creates/updates its operator grant and writes audit
+    history. This is an access-changing operation, not a read-only check.
+    """
     req = db.scalar(select(AccessRequest).where(AccessRequest.id == request_id))
     if req is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
@@ -1125,7 +1344,11 @@ def approve_access_request(
     req.decided_at = now
     eval_user.role = "evaluator"
 
-    grant = db.scalar(select(EvaluatorAccess).where(EvaluatorAccess.evaluator_id == eval_user.id))
+    grant = db.scalar(select(EvaluatorAccess).where(
+        EvaluatorAccess.owner_id == req.operator_id,
+        or_(EvaluatorAccess.evaluator_id == eval_user.id,
+            func.lower(EvaluatorAccess.evaluator_email) == eval_user.email.lower()),
+    ))
     if grant is None:
         grant = EvaluatorAccess(
             owner_id=req.operator_id,
@@ -1136,7 +1359,7 @@ def approve_access_request(
         )
         db.add(grant)
     else:
-        grant.owner_id = req.operator_id
+        grant.evaluator_id = eval_user.id
         grant.evaluator_email = eval_user.email
         grant.granted_by = operator.id
         grant.granted_at = now
@@ -1155,6 +1378,8 @@ def approve_access_request(
 @app.post(
     "/api/v1/operator/access-requests/{request_id}/decline",
     tags=["operator"],
+    response_model=DeclineResponse,
+    responses={404: {"description": "Access request not found."}},
 )
 @app.post(
     "/operator/access-requests/{request_id}/decline",
@@ -1166,7 +1391,12 @@ def decline_access_request(
     operator: User = Depends(require_operator),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Operator declines a pending evaluator access request."""
+    """Decline an access request (operator/admin/superadmin).
+
+    Ordinary operators may decline only requests directed to them (403 otherwise);
+    missing request returns 404. Saves declined status/decision time and an audit
+    entry. This does not revoke a previously created evaluator grant.
+    """
     req = db.scalar(select(AccessRequest).where(AccessRequest.id == request_id))
     if req is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
@@ -1192,6 +1422,7 @@ def decline_access_request(
     response_model=AccessRequestResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["access"],
+    responses={404: {"description": "No active operator/admin matches the provided email."}},
 )
 @app.post(
     "/access-requests",
@@ -1204,7 +1435,14 @@ def create_access_request(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> AccessRequestResponse:
-    """Pending user requests access to an operator by providing the operator's email address."""
+    """Request access to an operator workspace (active signed-in user).
+
+    Intended for pending/unassigned users. The current handler permits any active
+    authenticated account to submit a request. Looks up an active operational
+    account by email (404 if absent), declines this caller's earlier pending
+    requests, creates a new pending request and audit entry, and returns 201.
+    Does not grant access or promote the caller until the operator approves it.
+    """
     clean_operator_email = payload.operator_email.lower().strip()
     operator = db.scalar(
         select(User).where(
@@ -1260,5 +1498,8 @@ def create_access_request(
         created_at=req.created_at,
         decided_at=req.decided_at,
     )
+
+
+install_openapi_docs(app)
 
 

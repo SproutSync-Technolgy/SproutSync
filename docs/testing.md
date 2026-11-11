@@ -1,5 +1,14 @@
 # Validation strategy
 
+Backend deployment checks: `python scripts/check_backend.py --base-url
+http://127.0.0.1:8000` checks liveness, database/schema readiness, Swagger/OpenAPI
+and anonymous access denial using GET requests. Optional session-token checks
+exercise authorized reads and superadmin connection diagnostics. See the
+[API and deployment guide](backend-api-and-deployment.md) for token handling,
+the distinction between endpoint success and live hardware, and complete scope.
+Isolated monitoring/schema/checker tests run with the API suite without contacting
+Supabase, SMTP or MQTT.
+
 Linux launcher checks: `python3 scripts/test_linux_launchers.py -v` runs on Linux
 with Bash, flock, Node.js 22.12+, and Python 3.12+. Isolated fixtures simulate
 package installation and database checks while serving real loopback HTTP. They
@@ -36,6 +45,16 @@ require separate integration checks. Record local verification outcomes in
 [setup validation](setup-validation.md).
 
 Next tests: persistence across API restarts; rejected unauthorized access; MQTT schema validation and duplicate replay; WebSocket reconnect and stale telemetry; water/yield units and calculations; ESP32 network loss, sensor failure, maximum pump runtime, sequential valve operation, SD-full and power loss. Validate limits against actual hardware.
+
+Adaptive telemetry checks cover sample-weighted means, missing/zero values,
+fault-minute transitions, gap handling, restart state, bounded accumulators and
+duplicate message rejection. `scripts/verify_adaptive_workflows.py` verifies
+multiple evaluator grants, safe approval retries, snapshot RLS and private-state
+restrictions with synthetic PostgreSQL fixtures in an outer rollback. Apply
+0023 first; `--pending` can instead validate 0022/0023 transactionally from 0021.
+It never publishes MQTT commands or changes real-user grants. Browser checks
+cover hosted RPC fallback, API timeouts, six-sensor mobile cards, fresh faulting
+devices, current-minute previews and labelled five-minute history.
 
 Wireless discovery tests cover explicit mDNS identities, local address filtering,
 expired selections, role/ownership checks, first-device registration, MQTT serial

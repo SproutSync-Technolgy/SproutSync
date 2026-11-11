@@ -1,8 +1,11 @@
 """Verify real PostgreSQL telemetry persistence/RLS; roll back all synthetic records."""
 
 import json
+from pathlib import Path
 from uuid import uuid4
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from app.config import settings
 from app.mqtt import ingest_message
 from sqlalchemy import create_engine, text
@@ -10,12 +13,14 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 engine = create_engine(settings.database_url, connect_args={"connect_timeout": 10})
+head = ScriptDirectory.from_config(
+    Config(str(Path(__file__).resolve().parents[1] / "backend/api/alembic.ini"))
+).get_current_head()
 with engine.connect() as connection:
     transaction = connection.begin()
     try:
         assert (
-            connection.scalar(text("select version_num from alembic_version"))
-            == "0018_telemetry_rollups"
+            connection.scalar(text("select version_num from alembic_version")) == head
         )
         actors = []
         for role in ("operator", "operator", "evaluator"):

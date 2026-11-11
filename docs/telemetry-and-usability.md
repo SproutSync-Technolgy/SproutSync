@@ -22,31 +22,50 @@ interrupted users without requiring knowledge of MQTT or the database schema.
 
 ## Live updates and saved history
 
-`TELEMETRY_SAMPLE_SECONDS=60` is the default. The server accepts and validates
-each fresh packet, updates the device heartbeat, and maintains the latest packet
-in a bounded in-memory cache. `/api/v1/devices/live` returns that cache separately
-as `latest_readings`, alongside the existing persisted-reading delta contract.
-The foreground web workspace checks it every two seconds. A connected broker
-does not by itself prove that any device is online.
+The collector accepts each fresh packet, updates the heartbeat, and overwrites
+one `device_live_state` row per chamber. The foreground web workspace refreshes
+every two seconds. Current packets are separate from saved averages: neither a
+five-minute mean nor an hourly rollup can replace the current sensor value.
+The API reads durable state after a restart. A hosted browser can also use the
+RLS-scoped `workspace_live_snapshot` Supabase RPC when FastAPI is unavailable.
 
 Persisted history contains:
 
-- The first accepted packet for a chamber.
-- An ordinary sample when at least 60 seconds have elapsed since its last saved
-  sample. It saves the next received packet, rather than manufacturing a timed
-  measurement when the chamber is offline.
-- Immediate records when the sensor status or SD-card status changes, including
-  recovery. These exceptions can add records within the sampling interval.
+- One five-minute average per UTC window when no packet in that window reports
+  a fault. Boundaries are `:00`, `:05`, `:10`, and so on, not five minutes after
+  opening a browser.
+- One-minute averages for populated minutes in any five-minute window that
+  contains a fault. When the first fault arrives, completed minute context in
+  that window is emitted too. The next clean five-minute window returns to the
+  normal cadence; recovery cannot silently discard the earlier fault.
+- An immediate `event` at initial detection and sensor/SD state changes,
+  including recovery. Repeated identical statuses do not insert more events.
 
-At one packet per second, this changes ordinary history growth from about 86,400
-to 1,440 records per chamber per day: roughly 98% fewer rows, excluding status
-changes. Each row is an actual selected sample, not an average of the discarded
-packets; `sample_count=1` retains that meaning. Historical charts consequently
-do not prove the absence of short transients between saved samples.
+Each sensor uses its own `sum / valid_count`; combining minutes merges sums and
+counts rather than averaging their means. This is a sample-weighted arithmetic
+mean for the firmware's regular reporting cadence, not a time-weighted integral.
+Nulls and rejected sensor values have no weight, genuine zeroes do. Each saved
+average retains total packet count, fault count, per-metric count, minimum,
+maximum, sum and window boundaries. Averages are shown to two decimal places;
+opening their disclosure reveals counts and ranges without adding another modal.
 
-The heartbeat is still updated in PostgreSQL for every accepted packet. This
-change reduces inserted history rows, not all database writes or MQTT traffic.
-The new partial index supports finding the most recent raw sample efficiently.
+The current-minute average appears as **in progress** in the history view. It
+updates in the reusable state row and is not an additional saved history record.
+The collector flushes completed windows even when no next packet arrives.
+Offline gaps produce no invented samples. Five minute bins and 128 recent
+message IDs bound the private accumulator per device. Partial windows survive
+collector restarts, but packets missed while no collector ran cannot be recovered.
+
+At one packet every two seconds, normal history growth changes from 43,200 raw
+rows to about 288 averages per chamber per day: 99.3% fewer history rows, plus
+initial/state-change events. A day entirely in fault mode has at most 1,440
+populated minute averages, plus events. Persistent faults keep their finer
+history; this does not claim to detect every agronomic threshold breach.
+
+The heartbeat and live-state row still update for every accepted packet. This
+reduces inserted history rows, not all PostgreSQL writes, WAL or MQTT traffic.
+`TELEMETRY_SAMPLE_SECONDS` is obsolete and ignored by this collector. No new
+database extension, paid API or firmware change is required for aggregation.
 
 `SYSTEM OFF`, `POWER OFF`, and `OFF` normalize placeholder sensor zeroes to null.
 The web also treats old stored off-state records as unavailable when rendering
@@ -55,21 +74,29 @@ reading from a functioning sensor remains zero. SD-card failure preserves other
 valid measurements. Missing values use a dash; stale values are labelled Last
 known instead of appearing as healthy live readings.
 
-Message identifiers already saved in the database reject duplicates. The live
-cache additionally remembers the most recent 128 identifiers per chamber, so
-an unsaved duplicate does not extend its heartbeat. Packets without identifiers
+Message identifiers already saved in history reject duplicates. Durable state
+additionally remembers the most recent 128 identifiers per chamber, so even
+after restart an unsaved duplicate does not extend its heartbeat. Packets without identifiers
 cannot be deduplicated beyond the existing timestamp and binding checks.
 
-The cache stores at most 256 chambers, checks owner/topic/reconnection boundaries,
-and clears on shutdown. A restart waits for the next fresh packet; saved history
-is still available. The supported development deployment is one API subscriber
-process. Multiple workers/replicas require a shared live-state strategy and
-verified MQTT delivery behavior before promising consistent live reads across
-replicas. The cache is not a durable queue.
+The process cache stores at most 256 chambers; durable state has one row per
+bound device. Owner/topic/reconnection changes clear transient state. Clients
+cannot read the private accumulator or write live state. Device row locks
+serialize ingestion and window flushing; a unique index prevents duplicate
+minute/five-minute buckets. Use one persistent MQTT subscriber process. Shared
+state supports consistent reads across API restarts, but does not make arbitrary
+collector replicas or MQTT delivery exactly-once.
+
+Connected status uses the latest accepted heartbeat within `MQTT_STALE_SECONDS`
+(30 by default). Fresh faulting hardware is **connected, needs attention**.
+An API process's MQTT disconnect does not override fresh evidence from another
+collector. A broker connection alone never proves a device is online. If both
+snapshot sources fail, the UI retains saved values and reports unavailable
+updates rather than claiming that every device has physically disconnected.
 
 ## Retention decision
 
-Existing readings are retained. Sampling slows growth but does not cap lifetime
+Existing readings are retained. Aggregation slows growth but does not cap lifetime
 storage. There is still no enabled automatic history compactor or deletion job.
 The existing hourly/daily schema fields are not evidence of an active worker.
 
@@ -133,12 +160,12 @@ design reference. [ISO/IEC 25010:2023](https://www.iso.org/standard/78176.html)
 provides a product-quality reference model. Their publicly available descriptions
 inform the measurable acceptance criteria below; this is not a claim of formal
 conformity, a full clause-level assessment, or ISO certification. Neither source
-is a basis for claiming that ISO requires a 60-second sampling interval.
+is a basis for claiming that ISO requires a particular sampling interval.
 
 | Quality concern | Acceptance behavior | Evidence |
 | --- | --- | --- |
 | Functional accuracy | Fresh live values continue between saved samples; off-state placeholders are unavailable; valid zeroes remain zero | MQTT/API tests; rollback-only PostgreSQL verification; browser status test |
-| Efficient storage | 62 ordinary packets spanning 61 seconds produce two saved rows at the default interval | MQTT sampling test |
+| Efficient storage | 150 regular two-second packets produce one five-minute mean, with state events separate; faults retain minute detail | Reducer tests, MQTT/API tests, rollback-only PostgreSQL verification |
 | Reliability | Fault and recovery changes bypass sampling; duplicate packets do not extend heartbeat; retries reuse a report ID | MQTT/API tests and report retry browser flow |
 | Access control | Unauthorized owners and evaluators cannot submit operational reports or read another workspace's live cache | API tests and PostgreSQL RLS checks |
 | Understandable interaction | Defaults reduce repeated entry; date/duration errors identify the field; failed saves retain input | Browser task-form tests |
@@ -150,12 +177,19 @@ Repeatable checks:
 ```powershell
 backend/api/.venv/Scripts/python.exe -m pytest backend/api/tests -q -p no:cacheprovider --basetemp "$env:TEMP\sproutsync-quality-tests"
 backend/api/.venv/Scripts/python.exe scripts/verify_field_workflows.py
+backend/api/.venv/Scripts/python.exe scripts/verify_adaptive_workflows.py
 npm.cmd run build --workspace frontend/dashboard
 npm.cmd run test:browser --workspace frontend/dashboard
 ```
 
+The windowing approach follows the separation of live readings and materialized
+history in [Timescale's continuous aggregate documentation](https://docs.timescale.com/use-timescale/latest/continuous-aggregates/).
+SproutSync implements its small bounded reducer directly and does not install
+TimescaleDB. Time-weighted analysis is a separate future option for irregular
+sampling, not a description of the arithmetic means implemented here.
+
 The PostgreSQL verification uses synthetic records inside a rolled-back
-transaction; it sends no hardware commands. Apply migration `0019_field_workflows`
+transaction; it sends no hardware commands. Apply migration `0023_adaptive_telemetry`
 before running it. In Linux, use the venv's `bin/python` and `npm` equivalents.
 
 Remaining acceptance work: representative operator/evaluator usability sessions,
@@ -163,9 +197,19 @@ screen-reader review, sustained load/storage measurements, real ESP32 fault and
 recovery bench tests, network/power-loss tests, and an agreed retention policy.
 Software tests do not establish physical safety or complete the hardware MVP.
 
-Verification on 11 November 2026: 82 backend tests passed, all 26 dashboard
+Earlier workflow verification on 11 November 2026: 82 backend tests passed, all 26 dashboard
 browser tests passed, and the production dashboard build passed. PostgreSQL
 workflow/RLS verification passed with all synthetic records rolled back.
 Migration `0019_field_workflows` was applied to the configured development
 database after rollback-only validation. Local HTTP checks confirmed that the
 updated workspace is served and anonymous live/report API requests are rejected.
+
+Adaptive telemetry verification on 11 November 2026: 131 backend tests passed;
+the 33-test dashboard browser suite and five focused follow-up cases passed,
+including API timeout recovery and sample-range disclosures. Type checking,
+production build and Ruff passed. Rollback-only PostgreSQL checks passed for
+adaptive windows, multiple evaluator grants, private live-state permissions,
+existing field workflows, database security and search. Migrations 0022/0023
+were applied to the configured Supabase project. The managed local app was
+restarted and liveness/readiness/Swagger/OpenAPI checks passed. These results do
+not establish that the Vercel frontend or a cloud MQTT worker was redeployed.

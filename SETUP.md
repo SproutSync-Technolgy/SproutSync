@@ -20,10 +20,11 @@ Run **`.\verify.bat`** to list required libraries, installed versions, missing
 packages, and configuration problems. Verification installs nothing and starts
 no services. Use **`.\verify.bat -Online`** to also check database connectivity.
 
-The API saves ordinary sensor history every 60 seconds by default while keeping
-the latest live packet available to the dashboard. Fault and recovery changes
-save immediately. Set `TELEMETRY_SAMPLE_SECONDS` in `.env` to change the interval
-(1–3600 seconds), then restart. Existing history is retained. See
+The collector keeps the latest live packet in one reusable row per chamber;
+the dashboard refreshes every two seconds. History saves five-minute averages
+in normal operation and one-minute averages in windows containing a fault.
+Fault and recovery changes also save immediately. The legacy
+`TELEMETRY_SAMPLE_SECONDS` setting is ignored. Existing history is retained. See
 [telemetry, notifications and usability](docs/telemetry-and-usability.md) for
 storage limits, quality checks and the proposed retention policy.
 
@@ -139,3 +140,7 @@ troubleshooting**, use the [advanced setup reference](docs/setup-reference.md).
 For live ESP32 detection and sensor readings, see [MQTT device setup](docs/mqtt-device-setup.md).
 For adding an ESP32 over the local Wi-Fi network or Bluetooth, see
 [device discovery and firmware integration](docs/device-discovery.md).
+
+For backend deployment, endpoint explanations and connection checks, open
+**http://localhost:8000/docs** and read the
+[Swagger and deployment guide](docs/backend-api-and-deployment.md).

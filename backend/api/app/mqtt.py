@@ -23,8 +23,10 @@ from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import Alert, Device, TelemetryReading, User
+from app.models import Alert, Device, DeviceLiveState, TelemetryReading, User
 from app.live_readings import LiveReadings
+from app.telemetry_history import binding_identity, flush_history_windows, record_packet
+from app.telemetry_windows import NORMAL_SECONDS
 
 logger = logging.getLogger(__name__)
 SENSORS = {
@@ -85,7 +87,7 @@ class SensorPacket(BaseModel):
 def ingest_message(
     db, topic: str, payload: bytes, *, retained=False, received_at=None, live_store=None
 ) -> bool:
-    """Update each live heartbeat; persist sampled history and fault transitions."""
+    """Update one live state row; persist adaptive averages and state transitions."""
     if retained or len(payload) > 8192 or not topic.endswith("/telemetry"):
         return False
     try:
@@ -108,7 +110,7 @@ def ingest_message(
             User.is_active.is_(True),
             User.role.in_(("operator", "admin", "superadmin")),
         )
-        .with_for_update()
+        .with_for_update(of=Device)
     )
     if device is None or (
         packet.serialNumber
@@ -126,6 +128,14 @@ def ingest_message(
     message_id = packet.messageId
     if message_id is None and packet.recordedAt is not None:
         message_id = "time:" + packet.recordedAt.astimezone(timezone.utc).isoformat()
+    state = db.get(DeviceLiveState, device.id)
+    if (
+        message_id
+        and state is not None
+        and (state.history_state or {}).get("binding") == binding_identity(device)
+        and message_id in state.history_state.get("message_ids", [])
+    ):
+        return False
     if (
         message_id
         and live_store is not None
@@ -164,47 +174,23 @@ def ingest_message(
         sensor_status = "SD_ERROR"
     device.status = "online" if sensor_status in ("NONE", "OK", "NORMAL") else "fault"
     device.last_seen_at = received
-    previous = db.scalar(
-        select(TelemetryReading)
-        .where(
-            TelemetryReading.device_id == device.id,
-            TelemetryReading.aggregation == "raw",
-        )
-        .order_by(TelemetryReading.received_at.desc(), TelemetryReading.id.desc())
-        .limit(1)
+    current = {
+        "device_id": device.id,
+        **values,
+        "voltage": packet.voltage,
+        "sd_ok": packet.sdOK,
+        "sensor_status": sensor_status,
+        "recorded_at": recorded.isoformat(),
+        "received_at": received.isoformat(),
+        "aggregation": "raw",
+        "sample_count": 1,
+        "fault_count": int(device.status == "fault"),
+    }
+    status_changed, completed, bootstrap = record_packet(
+        db, device, state, current, message_id
     )
-    persist = (
-        previous is None
-        or (received - utc(previous.received_at)).total_seconds()
-        >= settings.telemetry_sample_seconds
-        or previous.sensor_status != sensor_status
-        or previous.sd_ok != packet.sdOK
-    )
-    if persist:
-        db.add(
-            TelemetryReading(
-                owner_id=device.owner_id,
-                device_id=device.id,
-                **values,
-                voltage=packet.voltage,
-                sd_ok=packet.sdOK,
-                sensor_status=sensor_status,
-                message_id=message_id,
-                recorded_at=recorded,
-                received_at=received,
-                aggregation="raw",
-                sample_count=1,
-                fault_count=int(device.status == "fault"),
-                metric_counts={
-                    column: int(values[column] is not None)
-                    for column, _, _ in SENSORS.values()
-                }
-                | {"voltage": int(packet.voltage is not None)},
-            )
-        )
     # One notification per active device fault, never one per sensor packet.
-    status_changed = previous is None or previous.sensor_status != sensor_status
-    if status_changed or (persist and device.status == "fault"):
+    if status_changed or ((completed or bootstrap) and device.status == "fault"):
         fault_alerts = db.scalars(
             select(Alert).where(
                 Alert.owner_id == device.owner_id,
@@ -254,18 +240,7 @@ def ingest_message(
     if live_store is not None:
         live_store.put(
             device,
-            {
-                "device_id": device.id,
-                **values,
-                "voltage": packet.voltage,
-                "sd_ok": packet.sdOK,
-                "sensor_status": sensor_status,
-                "recorded_at": recorded.isoformat(),
-                "received_at": received.isoformat(),
-                "aggregation": "raw",
-                "sample_count": 1,
-                "fault_count": int(device.status == "fault"),
-            },
+            current,
             message_id=message_id,
         )
     return True
@@ -391,10 +366,12 @@ class MQTTBridge:
         query = update(Device).where(
             Device.mqtt_topic_prefix.is_not(None),
             Device.status.in_(("online", "fault")),
+            Device.last_seen_at < cutoff,
         )
-        if self.connected:
-            query = query.where(Device.last_seen_at < cutoff)
+        # A different collector may have received the packet. Transport health
+        # for this process cannot override a fresh, persisted device heartbeat.
         db.execute(query.values(status="offline"))
+        flush_history_windows(db, datetime.now(timezone.utc))
         db.commit()
 
     def _run(self):
@@ -446,7 +423,9 @@ class MQTTBridge:
             "connected": self.connected,
             "broker_url": public_url,
             "stale_seconds": settings.mqtt_stale_seconds,
-            "history_sample_seconds": settings.telemetry_sample_seconds,
+            "history_sample_seconds": NORMAL_SECONDS,
+            "fault_history_seconds": 60,
+            "live_refresh_seconds": 2,
         }
 
 

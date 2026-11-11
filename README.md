@@ -72,5 +72,7 @@ the [feature guide](docs/feature-guide.md). The [MVP readiness assessment](docs/
 separates the working connected prototype from unfinished acceptance criteria.
 The [API and free-service guide](docs/api-setup-and-free-services.md) lists current
 routes, required configuration, and optional providers with their free limits.
+The [Swagger and backend deployment guide](docs/backend-api-and-deployment.md)
+explains endpoint testing, authentication, readiness and service connection checks.
 The [mobile experience guide](docs/mobile-experience.md) explains the independent
 Flutter app, its field workflows, design choices and realistic mobile roadmap.

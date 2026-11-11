@@ -91,6 +91,8 @@ import { WorkspaceSearch, type SearchResult } from "./WorkspaceSearch";
 import { SearchRecordDetails } from "./SearchRecordDetails";
 import { ChamberOverview } from "./ChamberOverview";
 import { RecordForm, localDateTime, type Field } from "./RecordForm";
+import {aggregationLabel, deviceIsConnected} from "../data/deviceHealth";
+import {measurement, ReadingSummary} from "./ReadingSummary";
 
 export function getRolePages(profile: Profile, hasGrant: boolean) {
   if (profile.role === "pending" || (!hasGrant && !isSuperAdmin(profile))) {
@@ -479,7 +481,7 @@ export default function Workspace({
   }
   async function mutate(
     action: () => PromiseLike<{ error: unknown }>,
-    success: string,
+    success: string | (() => string),
   ) {
     setBusy(true);
     setDialogError("");
@@ -487,7 +489,7 @@ export default function Workspace({
       const { error } = await action();
       if (error) throw error;
       setDialog(null);
-      setToast(success);
+      setToast(typeof success === "function" ? success() : success);
       await reload();
     } catch (error) {
       setDialogError(errorMessage(error));
@@ -496,11 +498,7 @@ export default function Workspace({
     }
   }
   const activeAlerts = data.alerts.filter((a) => a.status !== "resolved");
-  const recentStatusDevices = data.devices.filter((device) => {
-    const lastSeenAt = device.last_seen_at ? Date.parse(device.last_seen_at) : Number.NaN;
-    return !device.is_demo && !live.error && Boolean(live.mqtt?.connected) && ["online", "fault"].includes(device.status) &&
-      Number.isFinite(lastSeenAt) && Date.now() - lastSeenAt < (live.mqtt?.stale_seconds ?? 30) * 1000;
-  });
+  const recentStatusDevices = data.devices.filter((device) => deviceIsConnected(device,live.staleSeconds));
   const faultingDevices = recentStatusDevices.filter((device) => device.status === "fault");
   const deviceStatusDetail = `${data.devices.length} linked ${data.devices.length === 1 ? "device" : "devices"}${faultingDevices.length ? ` · ${faultingDevices.length} reporting ${faultingDevices.length === 1 ? "a sensor fault" : "sensor faults"}` : ""}`;
   const notificationAlerts = activeAlerts.filter((a) =>
@@ -566,7 +564,7 @@ export default function Workspace({
     : reading).filter(
     (r) => selectedDevice === "all" || r.device_id === Number(selectedDevice),
   );
-  const liveDeviceReadings = deviceReadings.filter((reading) => !reading.aggregation || reading.aggregation === "raw");
+  const liveDeviceReadings = [...deviceReadings.filter((reading) => !reading.aggregation || ["raw","event"].includes(reading.aggregation)),...live.liveTrail.filter((reading) => selectedDevice === "all" || reading.device_id === Number(selectedDevice))].sort((a,b) => Date.parse(b.received_at ?? b.recorded_at)-Date.parse(a.received_at ?? a.recorded_at));
   const telemetryExportHeaders = [
     "Chamber",
     "Aggregation",
@@ -581,7 +579,7 @@ export default function Workspace({
   ];
   const telemetryExportRows = deviceReadings.map((reading) => [
     deviceName(reading.device_id),
-    reading.aggregation === "hourly" ? "Hourly average" : reading.aggregation === "daily" ? "Daily average" : "Raw sample",
+    aggregationLabel(reading.aggregation),
     reading.sample_count ?? 1,
     reading.temperature_c ?? "",
     reading.humidity_percent ?? "",
@@ -596,10 +594,8 @@ export default function Workspace({
   const currentReading = newest && controllerOff(newest.sensor_status) ? {...newest, temperature_c: null, humidity_percent: null, water_level_percent: null, water_temperature_c: null, light_lux: null, wastewater_level_percent: null} : newest;
   const readingDevice = data.devices.find((d) => d.id === currentReading?.device_id);
   const readingStale = Boolean(currentReading && (
-    live.error ||
-    (readingDevice && !["online", "fault"].includes(readingDevice.status)) ||
-    (live.mqtt && !live.mqtt.connected) ||
-    Date.now() - Date.parse(currentReading.received_at ?? currentReading.recorded_at) > (live.mqtt?.stale_seconds ?? 30) * 1000
+    (readingDevice && !deviceIsConnected(readingDevice,live.staleSeconds)) ||
+    Date.now() - Date.parse(currentReading.received_at ?? currentReading.recorded_at) > live.staleSeconds * 1000
   ));
   const readingNotice = !currentReading ? "No reading yet. Connect a chamber to start monitoring."
     : controllerOff(currentReading.sensor_status) ? "Controller off. Measurements are unavailable until the chamber resumes reporting."
@@ -729,7 +725,7 @@ export default function Workspace({
             ] : []),
           ] : evaluator && data.batches.length ? [{key: "evaluation", title: "Evaluate batch", keywords: "assessment rate rating review stars"}] : []} accounts={superadmin ? accounts : []} onSelect={selectSearchResult} allowRecords={hasGrant} />
           <div className="topbar-actions ml-auto flex items-center gap-2">
-            <SystemStatus devices={data.devices} latest={live.latestReadings} mqtt={live.mqtt} error={live.error} retry={live.retry} />
+                  <SystemStatus devices={data.devices} latest={live.latestReadings} mqtt={live.mqtt} error={live.error} retry={live.retry} staleSeconds={live.staleSeconds} transport={live.transport} />
             <button
               className="icon-button relative"
               title="Notifications"
@@ -1273,7 +1269,7 @@ export default function Workspace({
                       />
                     </div>
                   )}
-                  <ChamberOverview devices={data.devices} readings={data.readings} latest={live.latestReadings} mqtt={live.mqtt} error={live.error} onOpen={(id) => {setSelectedDevice(String(id)); navigate("readings");}} />
+                  <ChamberOverview devices={data.devices} readings={data.readings} latest={live.latestReadings} mqtt={live.mqtt} error={live.error} staleSeconds={live.staleSeconds} onOpen={(id) => {setSelectedDevice(String(id)); navigate("readings");}} />
                   <div className="space-y-5">
                     <section className="surface">
                       <SectionTitle title="Next irrigation" />
@@ -1420,7 +1416,7 @@ export default function Workspace({
                     </div>
 
                     {readingNotice && <p className="reading-notice" role="status"><AlertTriangle size={16} />{readingNotice}</p>}
-                    <p className="telemetry-storage-note">Live measurements update as packets arrive. History saves one sample every {live.mqtt?.history_sample_seconds ?? 60} seconds, plus fault and recovery changes.</p>
+                    <p className="telemetry-storage-note">Live measurements refresh every 2 seconds. History saves 5-minute averages in fault-free windows and 1-minute averages in windows with faults. State changes are saved immediately.</p>
                     {/* 6 Detailed Sensor Telemetry Cards matching image_e0a5e9.png */}
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
                       {/* 1. Air Temperature */}
@@ -1750,20 +1746,21 @@ export default function Workspace({
                         "Wastewater %",
                         "Recorded",
                       ],
-                      deviceReadings.map((r) => [
+                      [...live.minutePreviews.filter((r) => selectedDevice === "all" || r.device_id === Number(selectedDevice)),...deviceReadings].map((r) => [
                         deviceName(r.device_id),
-                        r.aggregation === "hourly" ? "Hourly average" : r.aggregation === "daily" ? "Daily average" : "Raw sample",
+                        <ReadingSummary reading={r}/>,
                         r.sample_count ?? 1,
-                        r.temperature_c !== null ? `${r.temperature_c} °C` : "—",
-                        r.humidity_percent !== null ? `${r.humidity_percent} %` : "—",
-                        r.water_level_percent !== null ? `${r.water_level_percent} %` : "—",
-                        r.water_temperature_c !== null ? `${r.water_temperature_c} °C` : "—",
-                        r.light_lux !== null ? `${r.light_lux} lux` : "—",
-                        r.wastewater_level_percent !== null ? `${r.wastewater_level_percent} %` : "—",
+                        measurement(r.temperature_c,"°C"),
+                        measurement(r.humidity_percent,"%"),
+                        measurement(r.water_level_percent,"%"),
+                        measurement(r.water_temperature_c,"°C"),
+                        measurement(r.light_lux,"lux"),
+                        measurement(r.wastewater_level_percent,"%"),
                         date(r.recorded_at),
                       ]),
                       "No sensor readings recorded for this chamber.",
                     )}
+                    <p className="telemetry-storage-note">The current-minute row is a live preview, not another saved record. Completed windows retain per-sensor sample counts and minimum/maximum values. Missing measurements do not count as zero.</p>
                   </section>
 
                   {/* 7-Day Water Consumption Chart */}
@@ -2627,9 +2624,7 @@ export default function Workspace({
                         <Status
                           key="conn"
                           value={
-                            d.is_demo ? "Demo" : ["online", "fault"].includes(d.status) &&
-                              (live.error || !live.mqtt?.connected || !d.last_seen_at || Date.now() - Date.parse(d.last_seen_at) > (live.mqtt?.stale_seconds ?? 30) * 1000)
-                              ? "offline" : d.status
+                            d.is_demo ? "Demo" : deviceIsConnected(d,live.staleSeconds) ? d.status : d.status === "pending" ? "pending" : live.error ? "unavailable" : "offline"
                           }
                         />,
                         date(d.last_seen_at),
@@ -3901,10 +3896,13 @@ export default function Workspace({
                   }
                 }
                 if (dialog.kind === "access") {
-                  table = "evaluator_access";
-                  payload.evaluator_email = values.evaluator_email
-                    .trim()
-                    .toLowerCase();
+                  let alreadyGranted = false;
+                  await mutate(async () => {
+                    const result = await supabase.rpc("grant_evaluator_access", {target_email: values.evaluator_email.trim().toLowerCase()});
+                    alreadyGranted = Boolean(result.data?.already_granted);
+                    return result;
+                  }, () => alreadyGranted ? "This evaluator already has access." : "Evaluator access granted.");
+                  return;
                 }
                 if (dialog.kind === "maintenance") {
                   table = "maintenance_records";

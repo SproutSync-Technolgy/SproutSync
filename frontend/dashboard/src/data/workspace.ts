@@ -65,9 +65,14 @@ export type Reading = {
   sd_ok?: boolean | null;
   sensor_status?: string;
   received_at?: string;
-  aggregation?: "raw" | "hourly" | "daily";
+  aggregation?: "raw" | "hourly" | "daily" | "event" | "minute" | "five_min";
   sample_count?: number;
   fault_count?: number;
+  metric_counts?: Record<string, number>;
+  metric_stats?: Record<string, {count: number; sum: number; min: number | null; max: number | null}>;
+  window_started_at?: string | null;
+  window_ended_at?: string | null;
+  provisional?: boolean;
 };
 export type Watering = {
   id: number;
@@ -437,7 +442,9 @@ export function exportCsv(
 }
 
 export async function fetchOperatorEvaluators(): Promise<EvaluatorSummary[]> {
-  return parseJsonResponse(await apiFetch("/api/v1/operator/evaluators", { signal: AbortSignal.timeout(15000) }), "Evaluators could not be loaded. Check the API connection and retry.");
+  const {data, error} = await supabase.rpc("operator_list_evaluators").abortSignal(AbortSignal.timeout(15000));
+  if (error) throw error;
+  return (data ?? []).map((row: EvaluatorSummary & {name?: string}) => ({...row, display_name: row.display_name ?? row.name ?? row.email}));
 }
 
 export async function updateOperatorEvaluator(evaluator_id: number, payload: { first_name: string; last_name: string; email: string }): Promise<EvaluatorSummary> {
@@ -447,24 +454,27 @@ export async function updateOperatorEvaluator(evaluator_id: number, payload: { f
 }
 
 export async function fetchAccessRequests(): Promise<AccessRequest[]> {
-  return parseJsonResponse(await apiFetch("/api/v1/operator/access-requests", { signal: AbortSignal.timeout(15000) }), "Access requests could not be loaded. Check the API connection and retry.");
+  const {data,error} = await supabase.rpc("operator_list_access_requests").abortSignal(AbortSignal.timeout(15000));
+  if (error) throw error;
+  return data ?? [];
 }
 
 export async function approveAccessRequest(requestId: number): Promise<{ success: boolean; status: string; evaluator_id: number }> {
-  return parseJsonResponse(await apiFetch(`/api/v1/operator/access-requests/${requestId}/approve`, { method: "POST" }), "The request could not be approved.");
+  const {data,error} = await supabase.rpc("operator_approve_request",{request_id:requestId});
+  if (error) throw error;
+  return {success:true,status:data.status,evaluator_id:data.evaluator_id};
 }
 
 export async function declineAccessRequest(requestId: number): Promise<{ success: boolean; status: string }> {
-  return parseJsonResponse(await apiFetch(`/api/v1/operator/access-requests/${requestId}/decline`, { method: "POST" }), "The request could not be declined.");
+  const {data,error} = await supabase.rpc("operator_decline_request",{request_id:requestId});
+  if (error) throw error;
+  return {success:true,status:data.status};
 }
 
 export async function requestOperatorAccess(
   operator_email: string,
 ): Promise<AccessRequest> {
-  const res = await apiFetch("/api/v1/access-requests", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ operator_email }),
-  });
-  return parseJsonResponse<AccessRequest>(res, "Failed to request operator access");
+  const {data,error} = await supabase.rpc("request_operator_access",{operator_email});
+  if (error) throw error;
+  return data as AccessRequest;
 }

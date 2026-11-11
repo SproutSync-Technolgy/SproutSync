@@ -95,8 +95,9 @@ key, and `notification_preferences.last_alert_seen_at` for each user's read stat
 The existing preferences RLS continues to apply to the added field. A partial
 index on raw telemetry by device and receipt time supports history sampling.
 The API now returns current cached packets separately from saved samples.
-Ordinary history defaults to one sample per 60 seconds, with immediate status
-and SD-state changes. See [storage and quality acceptance](telemetry-and-usability.md).
+This originally saved one sample per 60 seconds. Migration 0023 replaces that
+collector behavior with adaptive averages; existing samples are retained.
+See [storage and quality acceptance](telemetry-and-usability.md).
 
 ## Shared workspace search (0020)
 
@@ -115,3 +116,31 @@ Access requests retain policy-filtered authenticated reads; direct client writes
 truncate and sequence grants are removed. Trusted backend operations keep their
 existing access. No application records are removed. See the
 [security review and verification commands](database-security-review.md).
+
+## Evaluator workflows (0022)
+
+The relationship is unique per `(owner_id, evaluator_email)`, with many grants
+per operator and no global uniqueness on `evaluator_id`. Retrying a grant is a
+successful no-op; approvals preserve grants from other operators. Operator RPCs
+validate active roles and ownership and deny anonymous execution. Pending
+request decisions are locked and idempotent. Existing account records remain.
+
+## Adaptive telemetry (0023)
+
+History adds `event`, `minute`, and `five_min` aggregation values, per-sensor
+`metric_stats`, and UTC window boundaries. Existing raw/hourly/daily rows stay
+unchanged. A unique partial index prevents duplicate adaptive window rows.
+
+`device_live_state` holds one durable current packet and minute preview per
+device, plus a private bounded accumulator and flush deadline. Its composite
+device/owner foreign key preserves tenant identity; a binding-change trigger
+clears transient state when ownership, topic or connection request changes.
+RLS limits visible state to permitted workspaces. Authenticated clients have
+column-level reads of public state only; no accumulator reads or direct writes.
+`workspace_live_snapshot(after_id)` applies caller RLS and returns labelled
+history separately from current packets. See the [aggregation contract](telemetry-and-usability.md).
+
+Upgrade 0022/0023 is additive and does not rewrite old sensor history. DDL uses a
+five-second lock timeout. Prefer forward fixes after activation: downgrading
+0023 refuses to discard adaptive history or live accumulators, and 0022 retains
+the compatible workflow fixes. The collector must be restarted after upgrade.

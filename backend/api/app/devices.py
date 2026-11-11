@@ -17,6 +17,7 @@ from app.models import (
     Alert,
     Batch,
     Device,
+    DeviceLiveState,
     EvaluatorAccess,
     TelemetryReading,
     User,
@@ -62,9 +63,24 @@ class ReadingResponse(BaseModel):
     aggregation: str
     sample_count: int
     fault_count: int
+    metric_counts: dict[str, int] = Field(default_factory=dict)
+    metric_stats: dict = Field(default_factory=dict)
+    window_started_at: datetime | None = None
+    window_ended_at: datetime | None = None
 
 
 class ConnectRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "serial_number": "ESP32-EXAMPLE01",
+                    "name": "Growing chamber 1",
+                    "topic_prefix": "sproutsync/example01",
+                }
+            ]
+        }
+    )
     serial_number: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=120)
     topic_prefix: str = Field(
@@ -83,10 +99,36 @@ def require_device_operator(user: User = Depends(get_current_user)):
     return user
 
 
-@router.get("/discover")
+class DiscoveredDevice(DeviceIdentity):
+    addresses: list[str]
+    transport: Literal["wifi"]
+    discovery_id: str
+    available: bool
+
+
+class DiscoveryResponse(BaseModel):
+    devices: list[DiscoveredDevice]
+
+
+@router.get(
+    "/discover",
+    response_model=DiscoveryResponse,
+    responses={
+        503: {"description": "API host cannot perform local multicast discovery."}
+    },
+)
 def discover_devices(
     user: User = Depends(require_device_operator), db: Session = Depends(get_db)
 ):
+    """Search the API host's local Wi-Fi/LAN (operator/admin/superadmin).
+
+    Scans explicitly advertised SproutSync mDNS identities, not arbitrary ESP32s.
+    Returns at most 50 identities; empty devices is a valid result. A cloud host
+    cannot discover devices on the user's home network. Select an available
+    result and submit its discovery_id to /devices/nearby within 120 seconds.
+    This GET performs discovery only; it does not register or connect a device.
+    503 means multicast/local networking is unavailable on the API host.
+    """
     try:
         found = discovery.scan()
     except (OSError, ZeroconfError) as error:
@@ -117,6 +159,17 @@ def discover_devices(
 
 
 class NearbyRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "transport": "wifi",
+                    "discovery_id": "REPLACE_WITH_CURRENT_DISCOVERY_ID",
+                    "name": "Growing chamber 1",
+                }
+            ]
+        }
+    )
     transport: str = Field(pattern=r"^(wifi|bluetooth)$")
     discovery_id: str | None = Field(default=None, min_length=1, max_length=128)
     identity: DeviceIdentity | None = None
@@ -134,12 +187,33 @@ class NearbyRequest(BaseModel):
         return self
 
 
-@router.post("/nearby", response_model=DeviceResponse, status_code=202)
+@router.post(
+    "/nearby",
+    response_model=DeviceResponse,
+    status_code=202,
+    responses={
+        409: {"description": "Serial or topic belongs to another device/workspace."},
+        410: {"description": "Wi-Fi discovery selection expired; search again."},
+        503: {
+            "description": "MQTT disabled/misconfigured, or Supabase authentication unavailable."
+        },
+    },
+)
 def register_nearby_device(
     payload: NearbyRequest,
     user: User = Depends(require_device_operator),
     db: Session = Depends(get_db),
 ):
+    """Register a discovered ESP32 and await telemetry (operator/admin/superadmin).
+
+    Wi-Fi requires a current discovery_id from this backend's discover endpoint;
+    Bluetooth requires identity read by the client using the documented GATT
+    contract. This changes the caller's saved device registration and MQTT topic
+    binding; it is not proof of physical pairing or live sensor data. A 202 leaves
+    the device pending until a fresh packet with its matching serial arrives.
+    409 means serial/topic ownership conflict; 410 means expired Wi-Fi selection;
+    503 means MQTT disabled or misconfigured. Does not publish hardware commands.
+    """
     if not settings.mqtt_enabled or bridge.state == "configuration_error":
         raise HTTPException(
             503,
@@ -198,12 +272,32 @@ def register_nearby_device(
     return device
 
 
-@router.post("/connect", response_model=DeviceResponse, status_code=202)
+@router.post(
+    "/connect",
+    response_model=DeviceResponse,
+    status_code=202,
+    responses={
+        404: {"description": "Serial is not assigned or not visible to this operator."},
+        409: {"description": "MQTT topic is already bound to another device."},
+        503: {
+            "description": "MQTT disabled/misconfigured, or Supabase authentication unavailable."
+        },
+    },
+)
 def connect_device(
     payload: ConnectRequest,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Bind an assigned serial to its MQTT topic (operator/admin/superadmin).
+
+    Use the exact serial and topic prefix configured in the sensor firmware.
+    Operators can bind only their assigned non-demo devices; elevated admins may
+    bind other assigned devices. Changes saved name/topic and resets status to
+    pending. 202 accepts the binding; verify fresh packets using devices/live.
+    404 means serial not assigned/visible; 409 means duplicate topic; 503 means
+    MQTT disabled/misconfigured. This does not provision Wi-Fi or command a pump.
+    """
     if user.role not in ("operator", "admin", "superadmin") or not user.is_active:
         raise HTTPException(403, "Operator access required")
     if not settings.mqtt_enabled or bridge.state == "configuration_error":
@@ -250,6 +344,21 @@ def connect_device(
 class IssueRequest(BaseModel):
     """A human observation, kept separately from machine telemetry."""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "request_id": "75c22829-c460-49d8-b1c8-13cf99d44eab",
+                    "situation": "Water was observed around the chamber door seal.",
+                    "component": "Door seal",
+                    "risk": "equipment",
+                    "display_message": "Not reported",
+                    "safe_action": "Operator notified.",
+                }
+            ]
+        }
+    )
+
     request_id: UUID
     batch_id: int | None = Field(default=None, gt=0)
     situation: str = Field(min_length=10, max_length=1000)
@@ -281,13 +390,32 @@ class IssueResponse(BaseModel):
     created_at: datetime
 
 
-@router.post("/{device_id}/issues", response_model=IssueResponse, status_code=201)
+@router.post(
+    "/{device_id}/issues",
+    response_model=IssueResponse,
+    status_code=201,
+    responses={
+        404: {"description": "Chamber not found in the caller's workspace."},
+        409: {"description": "Report UUID was previously used for different details."},
+    },
+)
 def report_issue(
     device_id: int,
     payload: IssueRequest,
     user: User = Depends(require_device_operator),
     db: Session = Depends(get_db),
 ):
+    """Save a chamber inspection report (operator/admin/superadmin).
+
+    Creates a persistent device alert and audit entry, not a sensor packet.
+    Choose a device in scope and, optionally, a batch owned by that device's
+    operator. Generate a new request_id UUID per new report; reuse it unchanged
+    when retrying the same report to prevent duplicates. The example UUID must
+    be replaced for a new report. A repeated identical request returns the saved
+    report with 201; changed details under the same UUID return 409. Missing or
+    unauthorized chamber returns 404; wrong batch owner returns 422. This records
+    the safe action already taken and never operates equipment.
+    """
     device = db.scalar(select(Device).where(Device.id == device_id).with_for_update())
     if device is None or (user.role == "operator" and device.owner_id != user.id):
         raise HTTPException(404, "Chamber not available in your workspace.")
@@ -362,12 +490,77 @@ def report_issue(
     return alert
 
 
-@router.get("/live")
+class LatestReadingResponse(BaseModel):
+    """Cached packet, without an invented persisted row ID."""
+
+    device_id: int
+    temperature_c: float | None
+    humidity_percent: float | None
+    water_temperature_c: float | None
+    light_lux: float | None
+    water_level_percent: float | None
+    wastewater_level_percent: float | None
+    voltage: float | None
+    sd_ok: bool | None
+    sensor_status: str
+    recorded_at: datetime
+    received_at: datetime
+    aggregation: str
+    sample_count: int
+    fault_count: int
+
+
+class BrokerResponse(BaseModel):
+    state: str
+    connected: bool
+    broker_url: str
+    stale_seconds: int
+    history_sample_seconds: int
+    fault_history_seconds: int = 60
+    live_refresh_seconds: int = 2
+
+
+class MinutePreview(LatestReadingResponse):
+    provisional: bool = True
+    window_started_at: datetime
+    window_ended_at: datetime
+    metric_counts: dict[str, int]
+    metric_stats: dict
+
+
+class LiveResponse(BaseModel):
+    devices: list[DeviceResponse]
+    readings: list[ReadingResponse]
+    mqtt: BrokerResponse
+    latest_readings: list[LatestReadingResponse]
+    minute_previews: list[MinutePreview] = Field(default_factory=list)
+    stale_seconds: int = 30
+
+
+@router.get("/live", response_model=LiveResponse)
 def live_devices(
-    after_id: int | None = Query(default=None, ge=0),
+    after_id: int | None = Query(
+        default=None,
+        ge=0,
+        description="Saved history cursor. Omit for the newest 1,000 rows; supply the largest processed ID for up to 1,000 later rows in ascending order. Does not filter latest_readings or minute_previews.",
+    ),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Read permitted chamber status and telemetry (any active signed-in user).
+
+    Operators see their own devices; evaluators see granted operators' devices;
+    admins/superadmins see the fleet; pending users receive empty lists. Returns
+    devices, this process's MQTT connection state, up to 1,000 saved history rows,
+    current packets as latest_readings, and provisional minute_previews. History
+    includes legacy raw samples, state-change events, and minute/five-minute
+    averages. Without after_id, saved rows are newest
+    first; with it, rows are ascending so clients can advance their cursor.
+    Current packets have no history row ID; a durable state row survives restart.
+    Device online/fault status becomes offline when last_seen_at is stale.
+    Inspect freshness and sensor_status even with HTTP 200.
+    Broker connectivity alone does not establish device or sensor health.
+    """
     query = select(Device).order_by(Device.id)
     if not user.is_active:
         raise HTTPException(403, "User account is inactive")
@@ -386,9 +579,8 @@ def live_devices(
     devices = db.scalars(query).all()
     readings_query = select(TelemetryReading).where(
         TelemetryReading.device_id.in_([d.id for d in devices]),
-        # Historical rollups are loaded separately by the workspace; they must
-        # never replace fresh raw readings in the live recovery stream.
-        TelemetryReading.aggregation == "raw",
+        # Averages remain labelled history, separate from current packets.
+        TelemetryReading.aggregation.in_(("raw", "event", "minute", "five_min")),
     )
     if after_id is None:
         readings_query = readings_query.order_by(TelemetryReading.id.desc())
@@ -405,14 +597,35 @@ def live_devices(
             device.mqtt_topic_prefix
             and device.status in ("online", "fault")
             and (
-                not bridge.connected
-                or device.last_seen_at is None
+                device.last_seen_at is None
                 or (now - utc(device.last_seen_at)).total_seconds()
                 > settings.mqtt_stale_seconds
             )
         ):
             result.status = "offline"
         response_devices.append(result.model_dump(mode="json"))
+    cached = {
+        row.device_id: row
+        for row in db.scalars(
+            select(DeviceLiveState).where(
+                DeviceLiveState.device_id.in_([d.id for d in devices])
+            )
+        ).all()
+    }
+
+    def current_state(device):
+        row = cached.get(device.id)
+        if (
+            row is None
+            or row.owner_id != device.owner_id
+            or (
+                device.connection_requested_at
+                and utc(row.received_at) < utc(device.connection_requested_at)
+            )
+        ):
+            return None
+        return row
+
     return {
         "devices": response_devices,
         "readings": [
@@ -422,6 +635,21 @@ def live_devices(
         "latest_readings": [
             reading
             for device in devices
-            if (reading := bridge.latest.for_device(device)) is not None
+            if (
+                reading := (
+                    current_state(device).latest if current_state(device) else None
+                )
+                or bridge.latest.for_device(device)
+            )
+            is not None
         ],
+        "minute_previews": [
+            row.minute_preview
+            for device in devices
+            if (row := current_state(device)) is not None
+            and utc(row.received_at) >= now.replace(second=0, microsecond=0)
+            and (now - utc(row.received_at)).total_seconds()
+            <= settings.mqtt_stale_seconds
+        ],
+        "stale_seconds": settings.mqtt_stale_seconds,
     }
