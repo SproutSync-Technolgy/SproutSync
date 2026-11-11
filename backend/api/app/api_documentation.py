@@ -34,7 +34,12 @@ a separate API, not a missing FastAPI route.
 202 device registration means **accepted, awaiting a fresh matching packet**.
 A connected MQTT broker does not prove that an ESP32 is online or its sensors
 are healthy. Check chamber status, last_seen_at, received_at and sensor_status.
-latest_readings are current in-memory packets; readings are sampled saved history.
+latest_readings are current packets from reusable durable state; minute_previews
+are provisional current-minute means, not additional saved rows. History retains
+five-minute averages in clean windows and one-minute averages in fault windows,
+plus immediate state-change events. Per-sensor counts exclude missing values.
+Unfinished windows survive collector restarts; packets missed while no collector
+was running cannot be reconstructed. Existing history is retained unchanged.
 
 Cloud Wi-Fi discovery scans the **backend server's LAN**, not a user's home LAN.
 Bluetooth identity reads happen in a supported client browser; the server cannot

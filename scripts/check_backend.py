@@ -143,7 +143,11 @@ class BackendChecker:
         self.request(
             "Swagger UI",
             "/docs",
-            validate=lambda body: isinstance(body, str) and "SwaggerUIBundle" in body,
+            validate=lambda body: (
+                isinstance(body, str)
+                and 'id="swagger-ui"' in body
+                and ("SwaggerUIBundle" in body or "swagger-ui-bundle.js" in body)
+            ),
         )
         self.request("OpenAPI schema", "/openapi.json", validate=self.valid_schema)
         self.request("Anonymous session denied", "/api/v1/auth/me", expected=401)

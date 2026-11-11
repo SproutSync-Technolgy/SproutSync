@@ -13,7 +13,10 @@ def test_swagger_and_canonical_openapi_contract():
     assert '"persistAuthorization": false' in response.text
     assert '"displayRequestDuration": true' in response.text
     assert '"validatorUrl": null' in response.text
-    assert "SwaggerUIBundle" in response.text
+    assert "/docs/assets/vendor/swagger-ui-bundle.js" in response.text
+    assert "SproutSync · API workspace" in response.text
+    assert 'id="endpoint-search"' in response.text
+    assert response.headers["cache-control"] == "no-store"
     assert client.get("/redoc").status_code == 200
     schema = client.get("/openapi.json").json()
     assert schema["info"]["version"] == "0.3.0"
@@ -50,6 +53,35 @@ def test_documented_request_examples_are_valid():
     for model in (BatchCreateRequest, ConnectRequest, NearbyRequest, IssueRequest):
         for example in model.model_json_schema()["examples"]:
             model.model_validate(example)
+
+
+def test_docs_assets_are_self_hosted_and_survive_a_proxy_prefix():
+    client = TestClient(app, root_path="/backend")
+    page = client.get("/docs")
+    assert 'href="/backend/docs/assets/portal.css"' in page.text
+    assert '"schemaUrl": "/backend/openapi.json"' in page.text
+    assert 'href="/backend/openapi.json"' in page.text
+    for name in (
+        "portal.css",
+        "portal.js",
+        "sprout.svg",
+        "vendor/swagger-ui.css",
+        "vendor/swagger-ui-bundle.js",
+    ):
+        assert TestClient(app).get("/docs/assets/" + name).status_code == 200
+    assert TestClient(app).get("/docs/assets/../config.py").status_code == 404
+
+
+def test_docs_do_not_embed_a_hosted_backend_or_environment_secrets():
+    page = TestClient(app).get("/docs").text
+    assert "cdn.jsdelivr.net" not in page
+    assert "onrender.com" not in page
+    assert "__CONFIG__" not in page and "__ASSETS__" not in page
+    malicious_prefix = "/edge</script><script>alert(1)</script>"
+    assert (
+        malicious_prefix
+        not in TestClient(app, root_path=malicious_prefix).get("/docs").text
+    )
 
 
 def test_schema_contains_no_environment_credentials():

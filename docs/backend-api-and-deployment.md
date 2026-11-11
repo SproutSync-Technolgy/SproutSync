@@ -90,6 +90,38 @@ assuming anonymous access to the project's OpenAPI root is enabled.
 
 ## Endpoint inventory
 
+### Interactive API workspace
+
+`/docs` is the SproutSync Swagger workspace. It includes endpoint search across
+paths, summaries and descriptions; HTTP-method filters; role requirements in endpoint
+descriptions; grouped sidebar navigation; light/dark themes; and copyable cURL,
+JavaScript and Python request examples. Ctrl/Cmd+K focuses endpoint search.
+Native Swagger continues to own authorization, schema rendering and request
+execution. Filters preserve expanded request forms and authorization state.
+
+The page checks only public health/readiness GETs on load or when **Check API**
+is selected. Those badges establish server/database readiness, not physical
+device or broker health. The connection guide links to the protected diagnostic
+operation without executing it. **Try it out** and **Execute** send real requests;
+write operations retain their normal consequences and authorization requirements.
+
+Authorize with a signed-in user's Supabase access token. The masked token stays
+in Swagger memory and clears on reload. Theme preference is the only local
+storage entry created by the documentation page. Its dialog supports keyboard
+focus containment, Escape and focus return. The setup/status guides explain
+adaptive averages, missing values, roles and common response codes.
+
+Swagger UI 5.34.1 is pinned and self-hosted under `/docs/assets/vendor`, with
+its license, provenance and verified npm SHA-512 digest. The HTML, styles and
+script ship as Python package data and in the existing Docker image; deployment
+requires no frontend build or external asset CDN. Upgrade the vendor assets
+together and repeat the Swagger browser checks. `/openapi.json` and `/redoc`
+remain available. Browser tests use an isolated backend with MQTT disabled:
+
+```powershell
+npm.cmd run test:browser --workspace frontend/dashboard -- --config playwright.docs.config.ts
+```
+
 The complete current fields and schemas are in `/docs`. This inventory explains
 how each FastAPI operation is used. `O+` means operator/admin/superadmin; `A` means
 superadmin/admin. Every authenticated request also requires a verified-email,

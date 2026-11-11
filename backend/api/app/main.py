@@ -23,6 +23,7 @@ from app.models import AccessRequest, ActivityLog, Batch, Device, EvaluatorAcces
 from app.devices import router as device_router
 from app.mqtt import bridge
 from app.api_documentation import API_DESCRIPTION, API_TAGS, install_openapi_docs
+from app.docs_portal import install_docs_portal
 from app.monitoring import ConnectionsResponse, ReadinessResponse, connection_snapshot, readiness_probe
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="SproutSync API",
     version="0.3.0",
+    docs_url=None,
     description=API_DESCRIPTION,
     openapi_tags=API_TAGS,
     swagger_ui_parameters={
@@ -1501,5 +1503,6 @@ def create_access_request(
 
 
 install_openapi_docs(app)
+install_docs_portal(app)
 
 
