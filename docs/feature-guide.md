@@ -53,7 +53,7 @@ documented in [workspace search and design](workspace-search-and-design.md).
 | MQTT ingestion | Backend subscribes to the configured broker and validates packets | Persists device evidence independently of the browser | A persistent backend process is required; authentication to the broker alone is not an end-to-end sensor test |
 | Live readings | View temperature, humidity, fresh/wastewater, water temperature, light, voltage/SD status when supplied | Supports observation of current conditions | Missing/faulty values remain unavailable; no invented sensor values are added by the sample-data script |
 | Connection and stale status | Inspect last-seen, pending/offline/fault status, and API/broker errors | Prevents old readings being mistaken for live measurements | Hardware reconnect, power-loss, and endurance evidence remain separate acceptance work |
-| Realtime plus recovery | Supabase Realtime delivers inserts; API polling recovers missed readings | Keeps updates useful when one transport fails | Requires correct Realtime publication and ownership policies |
+| Realtime plus recovery | Current packets refresh every two seconds through API or scoped Supabase snapshots; Realtime delivers saved records | Keeps current sensor values separate from averaged history | Durable partial windows survive restarts; a running MQTT collector is required |
 | Historical readings | Browse minute/five-minute means, state events, and existing raw/hourly/daily records | Keeps normal history compact while retaining fault detail and per-sensor ranges | Current cards use latest packets. Normal history averages five minutes; fault windows retain minutes. Old history is retained |
 
 ## Irrigation, evidence, and evaluation

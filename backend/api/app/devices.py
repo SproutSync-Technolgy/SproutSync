@@ -580,7 +580,9 @@ def live_devices(
     readings_query = select(TelemetryReading).where(
         TelemetryReading.device_id.in_([d.id for d in devices]),
         # Averages remain labelled history, separate from current packets.
-        TelemetryReading.aggregation.in_(("raw", "event", "minute", "five_min")),
+        TelemetryReading.aggregation.in_(
+            ("raw", "event", "minute", "five_min", "five_minute")
+        ),
     )
     if after_id is None:
         readings_query = readings_query.order_by(TelemetryReading.id.desc())

@@ -845,6 +845,31 @@ def test_rollups_never_replace_current_packets_in_live_recovery(workspace, monke
     )
 
 
+def test_incoming_five_minute_history_keeps_its_label_and_cannot_replace_live_packet(
+    workspace,
+):
+    w = workspace
+    connect(w)
+    assert ingest_message(w.db, "sproutsync/telemetry", b'{"airTemp":26}')
+    w.db.add(
+        TelemetryReading(
+            owner_id=w.owner.id,
+            device_id=w.device.id,
+            aggregation="five_minute",
+            sample_count=150,
+            temperature_c=99,
+            recorded_at=datetime.now(timezone.utc),
+        )
+    )
+    w.db.commit()
+    live = w.client.get("/api/v1/devices/live").json()
+    assert any(
+        row["aggregation"] == "five_minute" and row["sample_count"] == 150
+        for row in live["readings"]
+    )
+    assert live["latest_readings"][0]["temperature_c"] == 26
+
+
 def test_unsaved_duplicate_is_rejected_after_collector_restart(workspace):
     w = workspace
     connect(w)

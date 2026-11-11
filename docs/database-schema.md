@@ -144,3 +144,13 @@ Upgrade 0022/0023 is additive and does not rewrite old sensor history. DDL uses 
 five-second lock timeout. Prefer forward fixes after activation: downgrading
 0023 refuses to discard adaptive history or live accumulators, and 0022 retains
 the compatible workflow fixes. The collector must be restarted after upgrade.
+
+## Merged history compatibility (0024)
+
+The incoming history change introduced a second migration from 0018. Its
+unapplied schema change is reconciled as `0024_telemetry_history_compat` after
+the already deployed 0023, keeping one Alembic head. Applied migrations 0019
+through 0023 are unchanged. The column widens to 16 characters and accepts
+legacy `five_minute` records alongside adaptive `five_min`, `minute`, and
+`event` records. Legacy means remain labelled history, never current values.
+Existing records are not rewritten; the durable adaptive collector is retained.

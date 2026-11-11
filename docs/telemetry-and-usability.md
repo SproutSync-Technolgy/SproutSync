@@ -143,8 +143,9 @@ field help, explicit optional inputs, linked error summaries, preserved input,
 pending feedback, and Cancel. Irrigation duration has no automatic default:
 the operator must supply the intended duration. Saving a plan sends no hardware
 command. Dialog headings stay visible while long content scrolls, and focus is
-restored to the opener after closing. Table pagination is bounded to Previous,
-Next, and Page X of Y; the displayed count explicitly describes loaded records.
+restored to the opener after closing. Table pagination uses Previous/Next and a
+bounded set of nearby, first and last page shortcuts; ellipses replace long
+page lists. The displayed count explicitly describes loaded records.
 
 ## References and quality acceptance
 

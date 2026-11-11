@@ -4072,7 +4072,20 @@ function DataTable({
     setPage((current) => Math.min(current, pageCount));
   }, [pageCount]);
   if (!rows.length) return <Empty text={empty} />;
-  const visibleRows = rows.slice((page - 1) * pageSize, page * pageSize);
+  const firstRow = (page - 1) * pageSize;
+  const visibleRows = rows.slice(firstRow, page * pageSize);
+  const pageNumbers: (number | "start-ellipsis" | "end-ellipsis")[] = [];
+  if (pageCount <= 5) {
+    pageNumbers.push(...Array.from({length: pageCount}, (_, index) => index + 1));
+  } else {
+    const start = Math.max(2, page === pageCount ? pageCount - 2 : page - 1);
+    const end = Math.min(pageCount - 1, page === 1 ? 3 : page + 1);
+    pageNumbers.push(1);
+    if (start > 2) pageNumbers.push("start-ellipsis");
+    for (let number = start; number <= end; number++) pageNumbers.push(number);
+    if (end < pageCount - 1) pageNumbers.push("end-ellipsis");
+    pageNumbers.push(pageCount);
+  }
   return (
     <>
       <div
@@ -4103,21 +4116,25 @@ function DataTable({
           </tbody>
         </table>
       </div>
-      <p className="table-range">Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, rows.length)} of {rows.length} loaded records</p>
-      {pageCount > 1 && (
-        <nav className="table-pagination" aria-label="Table pages">
-          <button disabled={page === 1} onClick={() => setPage(page - 1)}>
+      <div className="table-pagination">
+        <p className="table-pagination-summary" aria-live="polite">Showing {firstRow + 1}-{Math.min(page * pageSize, rows.length)} of {rows.length} loaded records</p>
+        {pageCount > 1 && <nav aria-label="Table pages">
+          <span className="sr-only" aria-live="polite">Page {page} of {pageCount}</span>
+          <button type="button" disabled={page === 1} onClick={() => setPage(page - 1)}>
             Previous
           </button>
-          <span aria-live="polite">Page {page} of {pageCount}</span>
+          {pageNumbers.map((item) => typeof item === "string"
+            ? <span key={item} className="table-pagination-ellipsis" aria-hidden="true">…</span>
+            : <button key={item} type="button" aria-label={`Go to page ${item}`} aria-current={page === item ? "page" : undefined} onClick={() => setPage(item)}>{item}</button>)}
           <button
+            type="button"
             disabled={page === pageCount}
             onClick={() => setPage(page + 1)}
           >
             Next
           </button>
-        </nav>
-      )}
+        </nav>}
+      </div>
     </>
   );
 }

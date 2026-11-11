@@ -1,6 +1,7 @@
 """Verify evaluator RPCs, adaptive history and live RLS; roll back all fixtures.
 
---pending installs migrations 0022 and 0023 in the rollback-only transaction.
+--pending installs migrations 0022 through 0024 in the rollback-only transaction.
+--pending-history-compat validates only 0024 from the already deployed 0023.
 No hardware commands, emails or real-user grants are sent.
 """
 
@@ -22,12 +23,12 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 
-def verify(pending=False):
+def verify(pending=False, pending_history_compat=False):
     engine = create_engine(settings.database_url, connect_args={"connect_timeout": 10})
     with engine.connect() as connection:
         transaction = connection.begin()
         try:
-            if pending:
+            if pending or pending_history_compat:
                 current = connection.scalar(
                     text("select version_num from public.alembic_version")
                 )
@@ -35,7 +36,16 @@ def verify(pending=False):
                     Path(__file__).resolve().parents[1]
                     / "backend/api/migrations/versions"
                 )
-                for name in ("0022_evaluator_workflows", "0023_adaptive_telemetry"):
+                names = (
+                    ("0024_telemetry_history_compat",)
+                    if pending_history_compat
+                    else (
+                        "0022_evaluator_workflows",
+                        "0023_adaptive_telemetry",
+                        "0024_telemetry_history_compat",
+                    )
+                )
+                for name in names:
                     spec = importlib.util.spec_from_file_location(
                         name, root / (name + ".py")
                     )
@@ -204,9 +214,23 @@ def verify(pending=False):
                 assert history.light_lux == 0 and history.water_level_percent is None
                 assert history.metric_counts["water_level_percent"] == 0
                 assert history.metric_stats["temperature_c"]["max"] == 30
+                legacy = TelemetryReading(
+                    owner_id=owner.id,
+                    device_id=device.id,
+                    aggregation="five_minute",
+                    temperature_c=99,
+                    sample_count=150,
+                    recorded_at=start - timedelta(minutes=5),
+                )
+                db.add(legacy)
+                db.commit()
                 as_user(owner)
                 snap = connection.scalar(
                     text("select public.workspace_live_snapshot(null)")
+                )
+                assert any(
+                    row["id"] == legacy.id and row["aggregation"] == "five_minute"
+                    for row in snap["readings"]
                 )
                 assert any(
                     row["device_id"] == device.id and row["temperature_c"] == 30
@@ -254,7 +278,7 @@ def verify(pending=False):
                         {"fn": "public." + function},
                     )
                 print(
-                    "PASS: idempotent grants, multiple evaluators, isolated approval, live snapshot RLS/revocation, private state and six-sample five-minute average."
+                    "PASS: idempotent grants, multiple evaluators, isolated approval, live snapshot RLS/revocation, private state, legacy history compatibility and six-sample five-minute average."
                 )
         finally:
             transaction.rollback()
@@ -265,5 +289,8 @@ def verify(pending=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--pending", action="store_true")
-    verify(parser.parse_args().pending)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--pending", action="store_true")
+    mode.add_argument("--pending-history-compat", action="store_true")
+    args = parser.parse_args()
+    verify(args.pending, args.pending_history_compat)

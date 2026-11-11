@@ -122,11 +122,23 @@ An API failure shows an error with a retry action. For a pending device, check
 its Wi-Fi and topic prefix, then retry detection; changing a prefix preserves
 stored history.
 
-Existing hourly/daily history is labelled with its aggregation and number of
-source samples in tables and exports. Live recovery and current sensor cards use
-raw packets. Each valid incoming raw packet is still stored; this integration
-does not start an automatic compaction/retention worker. A connected controller
-reporting a sensor fault is identified separately from a healthy online device.
+The browser refreshes current packets every two seconds through the authenticated
+API or the RLS-scoped Supabase snapshot RPC. MQTT credentials never go to the
+browser. One durable state row per chamber holds its latest packet, provisional
+minute average and private bounded accumulator. Completed clean windows save
+five-minute averages; windows containing a fault save populated minute averages.
+Initial/state-change events save immediately, including recovery.
+
+Each metric uses its own non-null sum/count and retains minimum/maximum values.
+Current cards use actual packets, not saved averages. Existing raw, hourly/daily
+and legacy `five_minute` history remains unchanged and explicitly labelled.
+The history footer provides bounded page shortcuts and one loaded-record count.
+
+Partial windows survive a process restart; packets missed while no collector ran
+cannot be reconstructed. Automatic retention/deletion and hourly/daily compaction
+are not enabled. A fresh faulting chamber is connected and needs attention;
+the API process's broker connection is a separate status. See the complete
+[storage and aggregation contract](telemetry-and-usability.md).
 
 Devices with recorded telemetry cannot be reassigned through the API because
 their readings retain the original ownership. This avoids exposing history to a

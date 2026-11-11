@@ -51,7 +51,8 @@ fault-minute transitions, gap handling, restart state, bounded accumulators and
 duplicate message rejection. `scripts/verify_adaptive_workflows.py` verifies
 multiple evaluator grants, safe approval retries, snapshot RLS and private-state
 restrictions with synthetic PostgreSQL fixtures in an outer rollback. Apply
-0023 first; `--pending` can instead validate 0022/0023 transactionally from 0021.
+0024 first; `--pending` can instead validate 0022–0024 transactionally from 0021,
+or `--pending-history-compat` validates only 0024 from an existing 0023 database.
 It never publishes MQTT commands or changes real-user grants. Browser checks
 cover hosted RPC fallback, API timeouts, six-sensor mobile cards, fresh faulting
 devices, current-minute previews and labelled five-minute history.

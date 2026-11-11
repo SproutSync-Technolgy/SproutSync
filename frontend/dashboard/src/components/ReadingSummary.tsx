@@ -16,7 +16,7 @@ const metrics = [
 
 /** Native disclosure keeps sample provenance available to keyboard and touch. */
 export function ReadingSummary({reading}: {reading: LatestReading}) {
-  const averaged = ["minute","five_min","hourly","daily"].includes(reading.aggregation ?? "");
+  const averaged = ["minute","five_min","five_minute","hourly","daily"].includes(reading.aggregation ?? "");
   if (!averaged) return <span>{aggregationLabel(reading.aggregation)}</span>;
   return <details className="reading-summary">
     <summary>{aggregationLabel(reading.aggregation,reading.provisional)}</summary>

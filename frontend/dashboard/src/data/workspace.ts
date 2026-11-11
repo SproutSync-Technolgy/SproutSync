@@ -65,7 +65,7 @@ export type Reading = {
   sd_ok?: boolean | null;
   sensor_status?: string;
   received_at?: string;
-  aggregation?: "raw" | "hourly" | "daily" | "event" | "minute" | "five_min";
+  aggregation?: "raw" | "hourly" | "daily" | "event" | "minute" | "five_min" | "five_minute";
   sample_count?: number;
   fault_count?: number;
   metric_counts?: Record<string, number>;

@@ -675,13 +675,14 @@ test("header status works by keyboard and touch, and off measurements are unavai
 });
 
 test("history pagination stays compact with thousands of readings", async ({ page }) => {
+  await page.emulateMedia({reducedMotion:"reduce"});
   await mock(page);
   const readings = Array.from({length: 2000}, (_, index) => ({id: index + 1, device_id: 1, temperature_c: 25, humidity_percent: 85, water_temperature_c: null, light_lux: 0, water_level_percent: null, wastewater_level_percent: null, aggregation: "raw", recorded_at: new Date(Date.now() - index * 60000).toISOString()}));
   await page.route(`https://${authHost}/rest/v1/telemetry_readings*`, (route) => route.fulfill({json: readings}));
   await page.goto("/operator");
   await page.getByRole("navigation", {name: "Main navigation"}).getByRole("button", {name: "Readings", exact: true}).click();
   const pages = page.getByRole("navigation", {name: "Table pages"}).first();
-  await expect(pages.getByRole("button")).toHaveCount(2);
+  await expect(pages.getByRole("button")).toHaveCount(6);
   await expect(pages).toContainText("Page 1 of 200");
   await pages.getByRole("button", {name: "Next", exact: true}).click();
   await expect(pages).toContainText("Page 2 of 200");
@@ -919,6 +920,50 @@ test("Amaro telemetry exports respect Josh's chamber filter and preserve zero re
   await expect(page.getByRole("button", { name: "Download CSV", exact: true })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Branded report", exact: true })).toBeDisabled();
   await expect(page.getByText("No sensor readings available for this chamber selection.")).toBeVisible();
+});
+
+test("telemetry history pagination stays compact, readable, and usable on mobile", async ({ page }) => {
+  await page.emulateMedia({reducedMotion:"reduce"});
+  await mock(page);
+  const now = Date.now();
+  const device = { id: 1, owner_id: 1, name: "Test chamber", serial_number: "TEST-001", status: "online", is_demo: false, last_seen_at: new Date(now).toISOString() };
+  const readings = Array.from({ length: 180 }, (_, index) => {
+    const recordedAt = new Date(now - index * 300_000).toISOString();
+    return {
+      id: 180 - index, device_id: 1, temperature_c: 20 + index / 10,
+      humidity_percent: 55, water_temperature_c: null, light_lux: 12.5,
+      water_level_percent: null, wastewater_level_percent: null,
+      sensor_status: "NONE", aggregation: "five_minute", sample_count: 150,
+      recorded_at: recordedAt, received_at: recordedAt,
+    };
+  });
+  await page.route(`https://${authHost}/rest/v1/devices*`, (route) => route.fulfill({ json: [device] }));
+  await page.route(`https://${authHost}/rest/v1/telemetry_readings*`, (route) => route.fulfill({ json: readings }));
+  await page.route("**/api/v1/devices/live*", (route) => route.fulfill({ json: {
+    devices: [device], readings: readings.slice(0, 1),
+    mqtt: { state: "connected", connected: true, stale_seconds: 30 },
+  } }));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/operator");
+  await page.getByRole("navigation", { name: "Mobile navigation" }).getByRole("button", { name: "Readings", exact: true }).click();
+
+  const pagination = page.getByRole("navigation", { name: "Table pages" });
+  await expect(page.getByText("Showing 1-10 of 180 loaded records", { exact: true })).toBeVisible();
+  await expect(pagination.getByRole("button")).toHaveCount(6);
+  await expect(pagination.getByText("…")).toHaveCount(1);
+  await pagination.getByRole("button", { name: "Go to page 18" }).click();
+  await pagination.getByRole("button", { name: "Go to page 16" }).click();
+  await pagination.getByRole("button", { name: "Go to page 15" }).click();
+  await expect(page.getByText("Showing 141-150 of 180 loaded records", { exact: true })).toBeVisible();
+  await expect(pagination.getByRole("button")).toHaveCount(7);
+  await expect(pagination.getByRole("button",{name:"Go to page 15"})).toHaveAttribute("aria-current","page");
+  await expect(page.getByRole("row").filter({hasText:"5-min average"})).toHaveCount(10);
+
+  const table = page.locator(".record-table-wrap").last();
+  const tableBox = await table.boundingBox();
+  const paginationBox = await page.locator(".table-pagination").boundingBox();
+  expect(paginationBox!.y).toBeGreaterThanOrEqual(tableBox!.y + tableBox!.height);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
 test("Amaro notification details and Help FAQ work on a narrow screen", async ({ page }) => {
