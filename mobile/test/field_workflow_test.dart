@@ -83,6 +83,25 @@ class _MemoryFieldSource implements FieldDataSource {
   }
 
   @override
+  Future<List<FieldRecord>> search(String query) async {
+    if (failLoad) throw StateError('Offline');
+    final kinds = {'batches': 'batch', 'devices': 'device', 'alerts': 'alert'};
+    return [
+      for (final entry in kinds.entries)
+        for (final row in records[entry.key]!)
+          if (row.values.join(' ').toLowerCase().contains(query.toLowerCase()))
+            {
+              'kind': entry.value,
+              'record_id': row['id'],
+              'title': row['code'] ?? row['name'] ?? row['title'],
+              'subtitle':
+                  row['notes'] ?? row['serial_number'] ?? row['message'],
+              'payload': Map<String, dynamic>.from(row)
+            }
+    ];
+  }
+
+  @override
   Future<FieldRecord> insert(String table, FieldRecord values) async {
     if (failWrite) throw StateError('Denied');
     savedTable = table;
@@ -269,6 +288,71 @@ void main() {
     expect(find.text('Sample records included'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await _screenshot(tester, 'today');
+  });
+
+  testWidgets('field search finds saved batches and opens their actual details',
+      (tester) async {
+    final source = _MemoryFieldSource();
+    await _launch(tester, source);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Search workspace'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.byKey(const ValueKey('global-field-query')), 'MB-011');
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+    expect(find.text('1 saved matches'), findsOneWidget);
+    await _screenshot(tester, 'workspace-search');
+    await tester.tap(find.widgetWithText(ListTile, 'MB-011'));
+    await tester.pumpAndSettle();
+    expect(find.text('Inspect before harvest'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'field search recovers from failure and page shortcuts remain available',
+      (tester) async {
+    final source = _MemoryFieldSource();
+    await _launch(tester, source);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Search workspace'));
+    await tester.pumpAndSettle();
+    source.failLoad = true;
+    await tester.enterText(
+        find.byKey(const ValueKey('global-field-query')), 'Growing');
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+    expect(find.text('Search unavailable'), findsOneWidget);
+    source.failLoad = false;
+    await tester.tap(find.text('Try again'));
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+    expect(find.text('Growing chamber'), findsOneWidget);
+    await tester.tap(find.byTooltip('Clear search'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Batches'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('batch-search')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'controller off never presents placeholder zeroes as measurements',
+      (tester) async {
+    final source = _MemoryFieldSource();
+    source.records['devices']!.single['status'] = 'fault';
+    source.records['telemetry_readings']!.single.addAll({
+      'sensor_status': 'SYSTEM OFF',
+      'temperature_c': 0,
+      'humidity_percent': 0
+    });
+    await _launch(tester, source);
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.byType(ChamberCard), 250);
+    expect(find.text('Controller off'), findsOneWidget);
+    expect(find.text('0.0°C'), findsNothing);
+    expect(find.text('0.0%'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('batch search and archive filters work without scanning',

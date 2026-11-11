@@ -37,6 +37,9 @@ abstract class FieldDataSource {
   /// Loads authorized records for the signed-in profile.
   Future<FieldSnapshot> load(int userId);
 
+  /// Searches all permitted saved records using the shared server contract.
+  Future<List<FieldRecord>> search(String query);
+
   /// Inserts a record and returns only after the server confirms persistence.
   Future<FieldRecord> insert(String table, FieldRecord values);
 
@@ -62,6 +65,16 @@ class SupabaseFieldDataSource implements FieldDataSource {
   final SupabaseClient client;
   RealtimeChannel? _channel;
   final _events = StreamController<void>.broadcast();
+
+  @override
+  Future<List<FieldRecord>> search(String query) async {
+    final rows = await client.rpc('search_workspace', params: {
+      'query_text': query.trim()
+    }).timeout(const Duration(seconds: 10));
+    return (rows as List)
+        .map((row) => Map<String, dynamic>.from(row as Map))
+        .toList();
+  }
 
   @override
   Future<FieldRecord> insert(String table, FieldRecord values) async =>

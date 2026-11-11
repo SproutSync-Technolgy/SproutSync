@@ -98,6 +98,12 @@ added for this redesign.
 
 ## Review and release
 
+The GreenGenie/agriculture-reference update adds shared workspace search, a
+quieter greeting and labelled field shortcuts in Android preview 0.2.1+4. Search
+is available from every tab and queries all permitted saved records through the
+same RLS-protected function as web, rather than only filtering the current list.
+See [search, references and verification](workspace-search-and-design.md).
+
 Use `flutter analyze`, `flutter test` and the existing Android build helper.
 Workflow tests use isolated records and verify search/filter behavior, selected
 stars and batch context, failed-save recovery, confirmed alert updates, retained

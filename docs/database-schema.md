@@ -86,3 +86,32 @@ represents. New packets remain raw samples, with faulty/missing sensor counts
 recorded accurately. The live API returns raw rows; the workspace's authorized
 history queries retain the stored rollups and label them explicitly. No automatic
 retention or compaction worker is enabled by this integration.
+
+## Field workflows (0019)
+
+Migration `0019_field_workflows` adds `alerts.report_key` with per-owner uniqueness
+for idempotent reporting, `alerts.batch_id` with a composite batch/owner foreign
+key, and `notification_preferences.last_alert_seen_at` for each user's read state.
+The existing preferences RLS continues to apply to the added field. A partial
+index on raw telemetry by device and receipt time supports history sampling.
+The API now returns current cached packets separately from saved samples.
+Ordinary history defaults to one sample per 60 seconds, with immediate status
+and SD-state changes. See [storage and quality acceptance](telemetry-and-usability.md).
+
+## Shared workspace search (0020)
+
+`public.search_workspace(query_text text)` returns bounded, typed search results
+and the RLS-visible record payload for web and native mobile. It runs as the
+authenticated caller, uses existing policies, denies anonymous execution and
+does not change table data. Literal matching spans operational records, while
+historical telemetry stays outside the search scans. See
+[the search contract and limits](workspace-search-and-design.md).
+
+## Internal table security (0021)
+
+Migration `0021_internal_table_security` enables RLS on Alembic's internal version
+table and revokes anonymous and authenticated access to its migration stamp.
+Access requests retain policy-filtered authenticated reads; direct client writes,
+truncate and sequence grants are removed. Trusted backend operations keep their
+existing access. No application records are removed. See the
+[security review and verification commands](database-security-review.md).

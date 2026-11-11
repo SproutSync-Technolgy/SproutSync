@@ -28,6 +28,50 @@ abstract final class FieldColors {
   static const muted = Color(0xFF52665B);
 }
 
+/// One direct field action, inspired by the reference's compact category row.
+class FieldShortcut extends StatelessWidget {
+  /// Creates a labelled shortcut with a generous touch target.
+  const FieldShortcut(
+      {super.key,
+      required this.label,
+      required this.icon,
+      required this.onTap,
+      this.attention = false});
+
+  /// Visible action name.
+  final String label;
+
+  /// Familiar icon supplementing the action name.
+  final IconData icon;
+
+  /// Opens the implemented field workflow.
+  final VoidCallback onTap;
+
+  /// Uses the attention palette when the destination needs review.
+  final bool attention;
+  @override
+  Widget build(BuildContext context) => Material(
+        color: attention ? const Color(0xFFFFF4DD) : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(16),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
+              child: Column(children: [
+                Icon(icon,
+                    color: attention ? FieldColors.amber : FieldColors.forest,
+                    size: 25),
+                const SizedBox(height: 8),
+                Text(label,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        fontSize: 11, fontWeight: FontWeight.w600))
+              ]),
+            )),
+      );
+}
+
 /// A compact status label that does not depend on color perception.
 class FieldTag extends StatelessWidget {
   /// Creates a status chip without introducing an extra tap target.
@@ -150,6 +194,12 @@ class ChamberCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
+    final off = ['SYSTEM OFF', 'POWER OFF', 'OFF'].contains(
+        '${reading?['sensor_status'] ?? ''}'
+            .replaceAll('_', ' ')
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .trim()
+            .toUpperCase());
     final demo = device['is_demo'] == true;
     final online = !sourceUnavailable &&
         !demo &&
@@ -162,11 +212,13 @@ class ChamberCard extends StatelessWidget {
         ? 'Sample'
         : sourceUnavailable
             ? 'Unavailable'
-            : device['status'] == 'fault'
-                ? 'Device fault'
-                : online
-                    ? 'Recent heartbeat'
-                    : 'No recent heartbeat';
+            : off
+                ? 'Controller off'
+                : device['status'] == 'fault'
+                    ? 'Device fault'
+                    : online
+                        ? 'Recent heartbeat'
+                        : 'No recent heartbeat';
     final readingLabel = sourceUnavailable
         ? 'Last known reading'
         : device['status'] == 'fault'
@@ -176,10 +228,11 @@ class ChamberCard extends StatelessWidget {
                 : isRecent(reading?['recorded_at'], now)
                     ? 'Check connection'
                     : 'Older reading';
-    String metric(String key, String suffix) => reading?[key] is num
+    String metric(String key, String suffix) => !off && reading?[key] is num
         ? '${(reading![key] as num).toStringAsFixed(1)}$suffix'
         : '—';
     return Card(
+        color: const Color(0xFFF0F6EE),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
             onTap: onTap,

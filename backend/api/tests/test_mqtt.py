@@ -19,6 +19,9 @@ from app.main import app
 from app.models import Device, EvaluatorAccess, TelemetryReading, User
 from app.discovery import Advertisement, DeviceIdentity, discovery
 from app.mqtt import MQTTBridge, bridge, ingest_message, utc
+from app.live_readings import LiveReadings
+from app.models import ActivityLog, Alert, Batch
+from uuid import uuid4
 
 
 @pytest.fixture
@@ -88,6 +91,198 @@ def connect(workspace, prefix="sproutsync"):
 
 def count(db):
     return db.scalar(select(func.count()).select_from(TelemetryReading))
+
+
+def test_live_packets_are_fresh_while_history_is_sampled(workspace, monkeypatch):
+    w = workspace
+    monkeypatch.setattr(settings, "telemetry_sample_seconds", 60)
+    cache = LiveReadings()
+    monkeypatch.setattr(bridge, "latest", cache)
+    connect(w)
+    start = datetime.now(timezone.utc)
+    for second in range(62):
+        assert ingest_message(
+            w.db,
+            "sproutsync/telemetry",
+            json.dumps({"airTemp": 20 + second / 100}).encode(),
+            received_at=start + timedelta(seconds=second),
+            live_store=cache,
+        )
+    assert count(w.db) == 2
+    latest = cache.for_device(w.device)
+    assert latest["temperature_c"] == 20.61
+    assert "id" not in latest
+    assert utc(w.device.last_seen_at) == start + timedelta(seconds=61)
+    live = w.client.get("/api/v1/devices/live").json()
+    assert live["latest_readings"][0]["temperature_c"] == 20.61
+    app.dependency_overrides[get_current_user] = lambda: w.evaluator
+    assert w.client.get("/api/v1/devices/live").json()["latest_readings"] == []
+
+
+def test_faults_recovery_and_real_zeroes_are_preserved_without_notification_flood(
+    workspace, monkeypatch
+):
+    w = workspace
+    monkeypatch.setattr(settings, "telemetry_sample_seconds", 60)
+    connect(w)
+    start = datetime.now(timezone.utc)
+    packets = [
+        {"airTemp": 25, "lux": 0},
+        {"airTemp": 0, "lux": 0, "status": "SYSTEM OFF"},
+        {"airTemp": 0, "lux": 0, "status": "SYSTEM OFF"},
+        {"airTemp": 24, "lux": 0},
+    ]
+    for second, packet in enumerate(packets):
+        assert ingest_message(
+            w.db,
+            "sproutsync/telemetry",
+            json.dumps(packet).encode(),
+            received_at=start + timedelta(seconds=second),
+        )
+    rows = w.db.scalars(select(TelemetryReading).order_by(TelemetryReading.id)).all()
+    assert len(rows) == 3
+    assert rows[0].light_lux == 0
+    assert rows[1].temperature_c is None and rows[1].light_lux is None
+    assert rows[2].temperature_c == 24 and rows[2].light_lux == 0
+    alerts = w.db.scalars(select(Alert)).all()
+    assert len(alerts) == 1 and alerts[0].status == "resolved"
+
+
+def test_unsaved_packet_duplicates_do_not_extend_heartbeat(workspace):
+    w = workspace
+    connect(w)
+    cache = LiveReadings()
+    start = datetime.now(timezone.utc)
+    for second, message_id in [(0, "first"), (1, "second")]:
+        assert ingest_message(
+            w.db,
+            "sproutsync/telemetry",
+            json.dumps({"airTemp": 25, "messageId": message_id}).encode(),
+            received_at=start + timedelta(seconds=second),
+            live_store=cache,
+        )
+    assert not ingest_message(
+        w.db,
+        "sproutsync/telemetry",
+        b'{"airTemp":25,"messageId":"second"}',
+        received_at=start + timedelta(seconds=10),
+        live_store=cache,
+    )
+    assert count(w.db) == 1
+    assert utc(w.device.last_seen_at) == start + timedelta(seconds=1)
+    assert not ingest_message(
+        w.db, "sproutsync/telemetry", b'{"airTemp":26}', retained=True, live_store=cache
+    )
+    assert cache.for_device(w.device)["temperature_c"] == 25
+
+
+def test_existing_unnotified_fault_is_bootstrapped_without_reopening_resolved_alerts(
+    workspace,
+):
+    w = workspace
+    connect(w)
+    start = datetime.now(timezone.utc)
+    legacy = TelemetryReading(
+        owner_id=w.owner.id,
+        device_id=w.device.id,
+        temperature_c=None,
+        sensor_status="SYSTEM OFF",
+        aggregation="raw",
+        recorded_at=start - timedelta(seconds=61),
+        received_at=start - timedelta(seconds=61),
+    )
+    w.db.add(legacy)
+    w.db.commit()
+    packet = b'{"airTemp":0,"status":"SYSTEM OFF"}'
+    assert ingest_message(w.db, "sproutsync/telemetry", packet, received_at=start)
+    alert = w.db.scalar(select(Alert))
+    assert alert is not None and alert.status == "open"
+    alert.status = "resolved"
+    w.db.commit()
+    assert ingest_message(
+        w.db, "sproutsync/telemetry", packet, received_at=start + timedelta(seconds=61)
+    )
+    assert w.db.scalar(select(func.count()).select_from(Alert)) == 1
+    assert w.db.get(Alert, alert.id).status == "resolved"
+
+
+def test_live_cache_is_bounded_and_cannot_cross_owner_binding_or_reconnect(workspace):
+    w = workspace
+    cache = LiveReadings(capacity=1)
+    now = datetime.now(timezone.utc)
+    cache.put(w.device, {"received_at": now.isoformat()})
+    owner = w.device.owner_id
+    w.device.owner_id = w.admin.id
+    assert cache.for_device(w.device) is None
+    w.device.owner_id = owner
+    w.device.connection_requested_at = now + timedelta(seconds=1)
+    assert cache.for_device(w.device) is None
+    w.device.connection_requested_at = None
+    w.device.mqtt_topic_prefix = "new/binding"
+    assert cache.for_device(w.device) is None
+    cache.put(w.other, {"received_at": now.isoformat()})
+    w.device.mqtt_topic_prefix = None
+    assert cache.for_device(w.device) is None
+
+
+def issue_payload():
+    return {
+        "request_id": str(uuid4()),
+        "situation": "Water is leaking near the chamber door.",
+        "component": "Door seal",
+        "risk": "equipment",
+        "safe_action": "Notified the operator.",
+    }
+
+
+def test_issue_report_is_persistent_idempotent_and_audited(workspace):
+    w = workspace
+    payload = issue_payload()
+    url = f"/api/v1/devices/{w.device.id}/issues"
+    first = w.client.post(url, json=payload)
+    assert first.status_code == 201, first.text
+    assert first.json()["owner_id"] == w.owner.id
+    assert first.json()["status"] == "open"
+    assert "Action already taken: Notified the operator." in first.json()["message"]
+    assert (
+        first.json()["recommended_action"]
+        == "Review the reported issue and record its resolution after inspection."
+    )
+    assert w.client.post(url, json=payload).json()["id"] == first.json()["id"]
+    assert w.db.scalar(select(func.count()).select_from(Alert)) == 1
+    assert (
+        w.db.scalar(
+            select(ActivityLog).where(ActivityLog.action == "report_issue")
+        ).actor_id
+        == w.owner.id
+    )
+    changed = w.client.post(url, json={**payload, "component": "Reservoir"})
+    assert changed.status_code == 409
+
+
+def test_issue_report_rejects_unauthorized_chambers_batches_roles_and_invalid_input(
+    workspace,
+):
+    w = workspace
+    payload = issue_payload()
+    assert (
+        w.client.post(f"/api/v1/devices/{w.other.id}/issues", json=payload).status_code
+        == 404
+    )
+    private_batch = Batch(
+        owner_id=w.admin.id, code="OTHER", started_at=datetime.now(timezone.utc)
+    )
+    w.db.add(private_batch)
+    w.db.commit()
+    url = f"/api/v1/devices/{w.device.id}/issues"
+    assert (
+        w.client.post(url, json={**payload, "batch_id": private_batch.id}).status_code
+        == 422
+    )
+    assert w.client.post(url, json={**payload, "situation": " "}).status_code == 422
+    app.dependency_overrides[get_current_user] = lambda: w.evaluator
+    assert w.client.post(url, json=payload).status_code == 403
+    assert w.db.scalar(select(func.count()).select_from(Alert)) == 0
 
 
 def test_connect_waits_for_packet_then_persists_real_readings(workspace):
@@ -190,7 +385,7 @@ def test_duplicate_ids_do_not_refresh_heartbeat(workspace):
     assert utc(w.db.get(Device, w.device.id).last_seen_at) == now
 
 
-def test_live_delta_snapshots_return_only_new_visible_readings(workspace):
+def test_live_delta_snapshots_return_only_new_visible_readings(workspace, monkeypatch):
     w = workspace
     connect(w)
     assert ingest_message(w.db, "sproutsync/telemetry", b'{"airTemp":25}')
@@ -199,7 +394,10 @@ def test_live_delta_snapshots_return_only_new_visible_readings(workspace):
         w.client.get(f"/api/v1/devices/live?after_id={first_id}").json()["readings"]
         == []
     )
-    assert ingest_message(w.db, "sproutsync/telemetry", b'{"airTemp":26}')
+    # A fault transition is saved immediately, independently of the sampling interval.
+    assert ingest_message(
+        w.db, "sproutsync/telemetry", b'{"airTemp":26,"status":"SD_ERROR"}'
+    )
     delta = w.client.get(f"/api/v1/devices/live?after_id={first_id}").json()["readings"]
     assert len(delta) == 1 and delta[0]["temperature_c"] == 26
     assert w.client.get("/api/v1/devices/live?after_id=-1").status_code == 422

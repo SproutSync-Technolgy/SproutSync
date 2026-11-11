@@ -12,7 +12,17 @@ from zeroconf import Error as ZeroconfError
 from app.auth import get_current_user
 from app.config import settings
 from app.db import get_db
-from app.models import ActivityLog, Device, EvaluatorAccess, TelemetryReading, User
+from app.models import (
+    ActivityLog,
+    Alert,
+    Batch,
+    Device,
+    EvaluatorAccess,
+    TelemetryReading,
+    User,
+)
+from typing import Literal
+from uuid import UUID
 from app.mqtt import bridge, utc
 from app.discovery import DeviceIdentity, discovery
 
@@ -237,6 +247,121 @@ def connect_device(
     return device
 
 
+class IssueRequest(BaseModel):
+    """A human observation, kept separately from machine telemetry."""
+
+    request_id: UUID
+    batch_id: int | None = Field(default=None, gt=0)
+    situation: str = Field(min_length=10, max_length=1000)
+    component: str = Field(min_length=2, max_length=120)
+    risk: Literal["pests", "water", "compliance", "light", "equipment"]
+    display_message: str = Field(default="", max_length=200)
+    safe_action: str = Field(min_length=2, max_length=400)
+
+    @field_validator(
+        "situation", "component", "display_message", "safe_action", mode="before"
+    )
+    @classmethod
+    def trim_text(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
+class IssueResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    owner_id: int
+    device_id: int | None
+    batch_id: int | None
+    title: str
+    message: str
+    recommended_action: str
+    severity: str
+    status: str
+    category: str
+    created_at: datetime
+
+
+@router.post("/{device_id}/issues", response_model=IssueResponse, status_code=201)
+def report_issue(
+    device_id: int,
+    payload: IssueRequest,
+    user: User = Depends(require_device_operator),
+    db: Session = Depends(get_db),
+):
+    device = db.scalar(select(Device).where(Device.id == device_id).with_for_update())
+    if device is None or (user.role == "operator" and device.owner_id != user.id):
+        raise HTTPException(404, "Chamber not available in your workspace.")
+    if (
+        payload.batch_id is not None
+        and db.scalar(
+            select(Batch.id).where(
+                Batch.id == payload.batch_id, Batch.owner_id == device.owner_id
+            )
+        )
+        is None
+    ):
+        raise HTTPException(422, "Choose a batch belonging to this chamber's operator.")
+    title = f"Inspection needed: {payload.component}"
+    message = (
+        f"Risk: {payload.risk.replace('_', ' ')}\n"
+        f"Situation: {payload.situation}\n"
+        f"Display message: {payload.display_message or 'Not reported'}\n"
+        f"Action already taken: {payload.safe_action}"
+    )
+    recommendation = (
+        "Review the reported issue and record its resolution after inspection."
+    )
+    existing = db.scalar(
+        select(Alert).where(
+            Alert.owner_id == device.owner_id, Alert.report_key == payload.request_id
+        )
+    )
+    if existing is not None:
+        if (
+            existing.device_id,
+            existing.batch_id,
+            existing.message,
+            existing.recommended_action,
+            existing.title,
+        ) != (device.id, payload.batch_id, message, recommendation, title):
+            raise HTTPException(
+                409,
+                "This report was already saved with different details. Review Alerts before starting a new report.",
+            )
+        return existing
+    alert = Alert(
+        owner_id=device.owner_id,
+        device_id=device.id,
+        batch_id=payload.batch_id,
+        title=title,
+        message=message,
+        recommended_action=recommendation,
+        severity="warning",
+        status="open",
+        category="device",
+        report_key=payload.request_id,
+    )
+    db.add(alert)
+    db.add(
+        ActivityLog(
+            owner_id=device.owner_id,
+            actor_id=user.id,
+            action="report_issue",
+            resource=f"devices:{device.id}",
+        )
+    )
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            409,
+            "This report could not be saved because its identifier was already used. Review Alerts before retrying.",
+        ) from None
+    db.refresh(alert)
+    return alert
+
+
 @router.get("/live")
 def live_devices(
     after_id: int | None = Query(default=None, ge=0),
@@ -294,4 +419,9 @@ def live_devices(
             ReadingResponse.model_validate(r).model_dump(mode="json") for r in readings
         ],
         "mqtt": bridge.snapshot(),
+        "latest_readings": [
+            reading
+            for device in devices
+            if (reading := bridge.latest.for_device(device)) is not None
+        ],
     }

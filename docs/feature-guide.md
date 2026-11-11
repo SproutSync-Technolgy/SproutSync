@@ -1,6 +1,6 @@
 # SproutSync feature guide
 
-Reviewed 10 November 2026. This is a description of the implemented repository,
+Reviewed 11 November 2026. This is a description of the implemented repository,
 its limitations, and proposed work. A working screen does not establish hardware
 operation or production readiness. See [MVP acceptance](mvp-readiness.md) and
 [API setup and free services](api-setup-and-free-services.md).
@@ -30,6 +30,12 @@ operation or production readiness. See [MVP acceptance](mvp-readiness.md) and
 | Sign-out confirmation | Open the top-right account menu and confirm sign-out | Prevents accidental loss of the working session | Does not represent device shutdown |
 
 ## Daily production and monitoring
+
+The web header and native field app now share an authenticated search over
+permitted saved records, with page shortcuts and direct record opening. Web
+operators can also find existing task forms such as Create batch and Add device.
+The GreenGenie/agriculture-reference layout update and search limits are
+documented in [workspace search and design](workspace-search-and-design.md).
 
 | Feature | How it is used | Why it exists | Current limit |
 | --- | --- | --- | --- |
@@ -62,8 +68,8 @@ operation or production readiness. See [MVP acceptance](mvp-readiness.md) and
 | Clickable five-star assessment | Select a batch star, review its preselected rating in the form, add comments, and Save | Removes an extra rating step while keeping an intentional submission | Clicking a star does not save a review; only an authorized evaluator may submit |
 | Rating guide | Expand the compact 1 Poor to 5 Excellent guide | Keeps human assessments consistent | A rating is a human observation, not a device value or proof of food safety |
 | Evaluation history | Review stars, comments, batch context, and submission time | Preserves independent human judgement | Corrections/deletion and evaluator qualification policies remain future work |
-| Alerts and history | Review severity, source, related context, and recorded status | Keeps unresolved problems visible | A complete rule engine, deduplicated incident lifecycle, and external delivery need acceptance testing |
-| Notification preferences | Enable/disable supported in-app alert categories | Reduces irrelevant interruptions | Preferences do not configure push/email delivery by themselves |
+| Alerts and history | Review severity, source, related context, and recorded status | Keeps unresolved problems visible | Device faults create one active automatic alert and resolve on healthy recovery; operator reports are persisted and retried idempotently. A general threshold rule engine and external delivery remain future work |
+| Notification preferences | Enable/disable supported in-app alert categories | Reduces irrelevant interruptions | Unread state is saved per user; reading does not resolve issues. Push/email delivery is not configured |
 
 ## Administration and outputs
 
@@ -77,7 +83,7 @@ operation or production readiness. See [MVP acceptance](mvp-readiness.md) and
 | Audit log | Search recorded actions, targets, and times | Makes changes attributable and reviewable | Administrative maintenance still needs retention/export/incident-response policies |
 | CSV export | Export the authorized filtered rows | Supports external analysis with units and provenance | CSV does not grant new access; formula-like text is escaped |
 | Printable report/PDF | Open a branded report and use the browser print dialog | Produces readable assessment/telemetry evidence | It is a snapshot, not a signed certificate |
-| Help and FAQ | Open the account menu and find role/workflow guidance | Gives users a recovery path | Support/current-situation forms are drafts where delivery/persistence is not implemented |
+| Help and FAQ | Open the account menu and find role/workflow guidance | Gives users a recovery path | Current-situation reports save to Alerts; external support delivery remains unavailable |
 | Android preview download | Download the locally built development APK | Allows native mobile review | Development signing, store release, iOS distribution, push, and device validation remain separate work |
 
 For the independent Flutter application's Today, Batches, Alerts and Account

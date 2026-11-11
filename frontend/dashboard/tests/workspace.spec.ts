@@ -129,6 +129,91 @@ async function mockFirstDevice(page: Page) {
   return devices;
 }
 
+test("header search navigates pages by keyboard and finds an older permitted batch", async ({page}) => {
+  await mock(page);
+  await page.route(`https://${authHost}/rest/v1/rpc/search_workspace`, (route) => route.fulfill({json: route.request().postDataJSON().query_text.includes("older") ? [{kind:"batch",record_id:90,title:"MB-OLDER-090",subtitle:"Mung beans · growing · active",destination:"production",payload:{id:90,owner_id:1,code:"MB-OLDER-090",seed_type:"Mung beans",status:"active",stage:"growing",started_at:"2026-09-01T08:00:00Z",notes:"Older permitted batch"}}] : []}));
+  await page.goto("/operator");
+  const search=page.getByRole("combobox",{name:"Search workspace",exact:true});
+  await expect(search).toBeVisible();
+  await page.keyboard.press("Control+k");
+  await expect(search).toBeFocused();
+  await search.fill("sensors");
+  await search.press("ArrowDown");
+  await search.press("Enter");
+  await expect(page.getByRole("heading",{level:1,name:"Readings",exact:true})).toBeFocused();
+  await search.fill("older");
+  const result=page.getByRole("option").filter({hasText:"MB-OLDER-090"});
+  await expect(result).toBeVisible();
+  await result.click();
+  await expect(page.getByRole("dialog",{name:"Inspect Batch · MB-OLDER-090",exact:true})).toBeVisible();
+  await expect(page.getByText("Older permitted batch",{exact:true})).toBeVisible();
+  await page.getByRole("button", {name:"Close dialog",exact:true}).click();
+  await search.fill("create batch");
+  await page.getByRole("option").filter({hasText:"Create batch"}).click();
+  await expect(page.getByRole("dialog",{name:"Create batch",exact:true})).toBeVisible();
+  await expect(page.getByLabel("Batch code")).not.toHaveValue("");
+});
+
+test("global search handles retries, literal text, empty results and mobile dismissal", async ({page}) => {
+  await mock(page);
+  let failing=true;
+  await page.route(`https://${authHost}/rest/v1/rpc/search_workspace`, async (route) => {
+    if (failing) return route.fulfill({status:503,json:{message:"Unavailable"}});
+    const query=route.request().postDataJSON().query_text;
+    return route.fulfill({json:query === "seal" ? [{kind:"maintenance",record_id:70,title:"Maintenance · Test chamber",subtitle:"Door seal inspected",destination:"system",payload:{id:70,device_id:1,owner_id:1,notes:"Door seal inspected",performed_at:"2026-11-11T08:00:00Z"}}] : []});
+  });
+  await page.setViewportSize({width:390,height:844});
+  await page.goto("/operator");
+  const search=page.getByRole("combobox",{name:"Search workspace",exact:true});
+  await search.fill("seal");
+  await expect(page.getByText("Records could not be searched. Page shortcuts still work.")).toBeVisible();
+  failing=false;
+  await page.locator(".workspace-search-panel").getByRole("button",{name:"Retry",exact:true}).click();
+  await page.getByRole("option").filter({hasText:"Maintenance · Test chamber"}).click();
+  await expect(page.getByRole("dialog")).toContainText("Door seal inspected");
+  await page.getByRole("button",{name:"Close dialog",exact:true}).click();
+  await search.fill("<script>window.searchInjected=true</script>");
+  await expect(page.getByText("No matches. Try a batch code, chamber name, or a different word.")).toBeVisible();
+  expect(await page.evaluate(() => 'searchInjected' in window)).toBe(false);
+  await page.getByRole("button",{name:"Clear workspace search"}).click();
+  await search.fill("chamber");
+  await expect(page.getByRole("option").filter({hasText:"Chamber & Access"})).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({path:"test-results/global-search-mobile.png",fullPage:true});
+  await search.press("Escape");
+  await expect(page.getByRole("listbox",{name:"Workspace search results"})).toBeHidden();
+});
+
+test("evaluator search offers permitted pages and an actionable saved alert", async ({page}) => {
+  await mock(page,"evaluator");
+  await page.route(`https://${authHost}/rest/v1/rpc/search_workspace`, (route) => route.fulfill({json:[{kind:"alert",record_id:88,title:"Inspect shared reservoir",subtitle:"warning · open",destination:"alerts",payload:{id:88,owner_id:20,title:"Inspect shared reservoir",message:"Shared operator observation",recommended_action:"Inspect before relying on the supply",status:"open",severity:"warning",category:"device",created_at:new Date().toISOString()}}]}));
+  await page.goto("/dashboard");
+  const search=page.getByRole("combobox",{name:"Search workspace",exact:true});
+  await search.focus();
+  await expect(page.getByRole("option").filter({hasText:"Accounts"})).toHaveCount(0);
+  await expect(page.getByRole("option").filter({hasText:"Chamber & Access"})).toHaveCount(0);
+  await search.fill("reservoir");
+  await page.getByRole("option").filter({hasText:"Inspect shared reservoir"}).click();
+  const dialog=page.getByRole("dialog",{name:"Inspect shared reservoir",exact:true});
+  await expect(dialog).toContainText("Shared operator observation");
+  await expect(dialog.getByRole("button",{name:"Resolve",exact:true})).toHaveCount(0);
+});
+
+test("reference chamber cards open that chamber's readings without invented conditions", async ({page}) => {
+  await mock(page);
+  const device={id:1,owner_id:1,name:"Propagation chamber",serial_number:"ESP32-001",status:"pending",is_demo:false,last_seen_at:null};
+  await page.route(`https://${authHost}/rest/v1/devices*`, (route) => route.fulfill({json:[device]}));
+  await page.route("**/api/v1/devices/live*", (route) => route.fulfill({json:{devices:[device],readings:[],latest_readings:[],mqtt:{connected:true,state:"connected",stale_seconds:30}}}));
+  await page.goto("/operator");
+  const card=page.getByRole("button",{name:"View chamber Propagation chamber",exact:true});
+  await expect(card).toContainText("Awaiting first packet");
+  await expect(card).not.toContainText("0°C");
+  await page.screenshot({path:"test-results/reference-chamber-overview.png",fullPage:true});
+  await card.click();
+  await expect(page.getByLabel("Filter readings by chamber")).toHaveValue("1");
+  await expect(page.getByRole("heading",{level:1,name:"Readings",exact:true})).toBeVisible();
+});
+
 test("first device is discovered over Wi-Fi and registered without an administrator grant", async ({ page }) => {
   const devices = await mockFirstDevice(page);
   await page.route("**/api/v1/devices/discover", (route) => route.fulfill({ json: { devices: [{
@@ -156,7 +241,9 @@ test("first device is discovered over Wi-Fi and registered without an administra
   await expect(dialog.getByRole("status")).toContainText("Waiting for a fresh sensor packet");
   await expect(dialog.getByRole("status")).not.toContainText("Device detected");
   await dialog.getByRole("button", { name: "Keep listening in background" }).click();
-  await expect(page.getByLabel("Select device")).toContainText("My ESP32");
+  const connectedCard = page.getByRole("button", {name:"View chamber My ESP32",exact:true});
+  await expect(connectedCard).toBeVisible();
+  await expect(connectedCard).toContainText("Awaiting first packet");
   await page.getByRole("button", { name: "Open navigation", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Explore SproutSync" }).getByRole("button", { name: "Chamber & Access", exact: true })).toBeVisible();
 });
@@ -303,7 +390,7 @@ test("operator connects a granted device, waits for telemetry, and sees saved li
   await page.getByLabel("Filter readings by chamber").selectOption("1");
   mqttConnected = false;
   device = { ...device, status: "offline" };
-  await expect(page.getByText("Showing the last known reading. Waiting for fresh sensor data.")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("Last known reading. The chamber has not supplied fresh data. Check its power and connection.")).toBeVisible({ timeout: 10000 });
   // Saved readings remain visible after the operator reloads.
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.reload();
@@ -319,6 +406,7 @@ test("evaluator cannot enter operator route or see operational controls", async 
     page.getByRole("heading", { name: "Operator access required" }),
   ).toBeVisible();
   await page.getByRole("link", { name: "Open my dashboard" }).click();
+  await page.locator("summary").filter({hasText: "How this workspace works"}).click();
   await expect(
     page.getByText("Review evidence independently; never rewrite machine data"),
   ).toBeVisible();
@@ -368,12 +456,12 @@ test("operator real batch form and minimal signout", async ({
   await page.getByRole("button", { name: "New batch", exact: true }).click();
   await page.getByLabel("Batch code").fill("MB-002");
   await page.getByRole("dialog").getByLabel("Start date", { exact: true }).fill("2026-10-26T10:00");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.getByRole("button", { name: "Create batch", exact: true }).click();
   await expect(page.getByText("MB-002", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "New batch", exact: true }).click();
   await page.getByLabel("Batch code").fill("mb-002");
   await page.getByRole("dialog").getByLabel("Start date", { exact: true }).fill("2026-10-26T11:00");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.getByRole("button", { name: "Create batch", exact: true }).click();
   await expect(
     page.getByText(
       "That batch code already exists. Use a unique code before saving.",
@@ -391,11 +479,11 @@ test("operator real batch form and minimal signout", async ({
     name: "Report current situation",
   });
   await expect(
-    incidentDialog.getByRole("textbox", { name: "Current situation" }),
+    incidentDialog.getByRole("textbox", { name: "What is happening?" }),
   ).toBeEditable();
   await expect(
-    incidentDialog.getByRole("button", { name: "Submit incident report" }),
-  ).toBeDisabled();
+    incidentDialog.getByRole("button", { name: "Save issue" }),
+  ).toBeEnabled();
   await page.getByRole("button", { name: "Close dialog" }).click();
   await expect(
     page.getByRole("button", { name: "Sign out", exact: true }),
@@ -424,6 +512,125 @@ test("operator real batch form and minimal signout", async ({
     path: "test-results/operator-desktop.png",
     fullPage: true,
   });
+});
+
+test("task forms supply defaults, explain errors and preserve input on retry", async ({ page }) => {
+  await mock(page);
+  await page.goto("/operator");
+  const nav = page.getByRole("navigation", {name: "Main navigation"});
+  await nav.getByRole("button", {name: "Batch Production", exact: true}).click();
+  await page.getByRole("button", {name: "New batch", exact: true}).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel("Batch code")).toHaveValue("MB-002");
+  await expect(dialog.getByLabel("Batch code")).toBeFocused();
+  await expect(dialog.getByLabel("Start date", {exact: true})).not.toHaveValue("");
+  await dialog.getByLabel("Batch code").fill("  ");
+  await dialog.getByRole("button", {name: "Create batch", exact: true}).click();
+  await expect(dialog.getByRole("alert")).toBeFocused();
+  await dialog.getByRole("link", {name: "Enter batch code."}).click();
+  await expect(dialog.getByLabel("Batch code")).toBeFocused();
+  await dialog.getByLabel("Batch code").fill("MB-002");
+  await dialog.getByLabel("Start date", {exact: true}).fill("2026-11-11T10:00");
+  await dialog.getByLabel("Target harvest").fill("2026-11-10T10:00");
+  await dialog.getByRole("button", {name: "Create batch", exact: true}).click();
+  await expect(dialog.getByRole("alert")).toContainText("Choose a harvest date after the batch starts.");
+  await expect(dialog.getByLabel("Batch code")).toHaveValue("MB-002");
+  await dialog.getByRole("button", {name: "Cancel", exact: true}).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("button", {name: "New batch", exact: true})).toBeFocused();
+  await nav.getByRole("button", {name: "Irrigation & Water", exact: true}).click();
+  await page.getByRole("button", {name: "Add schedule", exact: true}).click();
+  await expect(dialog.getByLabel("Chamber", {exact: true})).toHaveValue("1");
+  await expect(dialog.getByText("Save a plan for the operator. This does not send a pump command.")).toBeVisible();
+  await dialog.getByLabel("Duration (seconds)").fill("0");
+  await dialog.getByRole("button", {name: "Save irrigation plan"}).click();
+  await expect(dialog.getByLabel("Duration (seconds)")).toHaveAttribute("aria-invalid", "true");
+  await page.setViewportSize({width: 390, height: 844});
+  await page.screenshot({path: "test-results/field-form-mobile.png", fullPage: true});
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test("header status works by keyboard and touch, and off measurements are unavailable", async ({ page }) => {
+  await mock(page);
+  const now = new Date().toISOString();
+  const devices = [{id: 1, owner_id: 1, name: "Growing chamber", serial_number: "ESP32-001", is_demo: false, status: "fault", last_seen_at: now}];
+  const reading = {device_id: 1, temperature_c: 0, humidity_percent: 0, water_temperature_c: 0, light_lux: 0, water_level_percent: null, wastewater_level_percent: null, sensor_status: "SYSTEM OFF", recorded_at: now, received_at: now};
+  await page.route(`https://${authHost}/rest/v1/devices*`, (route) => route.fulfill({json: devices}));
+  await page.route("**/api/v1/devices/live*", (route) => route.fulfill({json: {devices, readings: [], latest_readings: [reading], mqtt: {state: "connected", connected: true, stale_seconds: 30, history_sample_seconds: 60}}}));
+  await page.goto("/operator");
+  const status = page.getByRole("button", {name: "System status: Chamber needs attention"});
+  await status.focus();
+  const details = page.getByRole("region", {name: "System status details"});
+  await expect(details.getByText("Controller off", {exact: true})).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(details.getByRole("button", {name: "Check connection"})).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(details).toBeHidden();
+  await expect(status).toBeFocused();
+  await status.click();
+  await expect(details).toBeVisible();
+  await page.setViewportSize({width: 390, height: 844});
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({path: "test-results/chamber-status-mobile.png", fullPage: true});
+  await page.getByRole("heading", {level: 1}).click();
+  await expect(page.locator(".chamber-card-conditions")).not.toContainText("0°C");
+  await expect(page.getByText("Controller off. Measurements are unavailable until the chamber resumes reporting.")).toBeVisible();
+  await expect(page.getByText(/recovery checks run/)).toHaveCount(0);
+});
+
+test("history pagination stays compact with thousands of readings", async ({ page }) => {
+  await mock(page);
+  const readings = Array.from({length: 2000}, (_, index) => ({id: index + 1, device_id: 1, temperature_c: 25, humidity_percent: 85, water_temperature_c: null, light_lux: 0, water_level_percent: null, wastewater_level_percent: null, aggregation: "raw", recorded_at: new Date(Date.now() - index * 60000).toISOString()}));
+  await page.route(`https://${authHost}/rest/v1/telemetry_readings*`, (route) => route.fulfill({json: readings}));
+  await page.goto("/operator");
+  await page.getByRole("navigation", {name: "Main navigation"}).getByRole("button", {name: "Readings", exact: true}).click();
+  const pages = page.getByRole("navigation", {name: "Table pages"}).first();
+  await expect(pages.getByRole("button")).toHaveCount(2);
+  await expect(pages).toContainText("Page 1 of 200");
+  await pages.getByRole("button", {name: "Next", exact: true}).click();
+  await expect(pages).toContainText("Page 2 of 200");
+  await expect(page.getByText("Showing 11-20 of 2000 loaded records")).toBeVisible();
+});
+
+test("issue reports retry with the same identifier and notifications keep a saved read state", async ({ page }) => {
+  await mock(page);
+  let saved: Record<string, unknown> | null = null;
+  let requestId: string | undefined;
+  let seenAt: string | null = null;
+  let attempts = 0;
+  await page.route(`https://${authHost}/rest/v1/alerts*`, (route) => route.fulfill({json: saved ? [saved] : []}));
+  await page.route(`https://${authHost}/rest/v1/notification_preferences*`, async (route) => {
+    if (route.request().method() === "POST") seenAt = route.request().postDataJSON().last_alert_seen_at;
+    await route.fulfill({json: {alerts_enabled: true, harvest_enabled: true, last_alert_seen_at: seenAt}});
+  });
+  await page.route("**/api/v1/devices/1/issues", async (route) => {
+    const body = route.request().postDataJSON();
+    if (!requestId) requestId = body.request_id;
+    expect(body.request_id).toBe(requestId);
+    if (++attempts === 1) return route.fulfill({status: 503, json: {detail: "Could not save. Try again."}});
+    saved = {id: 75, owner_id: 1, device_id: 1, title: "Inspection needed: Door seal", message: body.situation, recommended_action: body.safe_action, severity: "warning", status: "open", category: "device", created_at: new Date().toISOString()};
+    return route.fulfill({status: 201, json: saved});
+  });
+  await page.goto("/operator");
+  await page.getByRole("navigation", {name: "Main navigation"}).getByRole("button", {name: "Alerts", exact: true}).click();
+  await page.getByRole("button", {name: "Report current situation"}).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("What is happening?").fill("Water is leaking near the door.");
+  await dialog.getByLabel("Affected part or location").fill("Door seal");
+  await dialog.getByLabel("Type of issue").selectOption("equipment");
+  await dialog.getByLabel("Action already taken").fill("Notified the operator.");
+  await dialog.getByRole("button", {name: "Save issue", exact: true}).click();
+  await expect(dialog.getByRole("alert")).toContainText("Could not save. Try again.");
+  await expect(dialog.getByLabel("What is happening?")).toHaveValue("Water is leaking near the door.");
+  await dialog.getByRole("button", {name: "Save issue", exact: true}).click();
+  await expect(dialog).toBeHidden();
+  await page.getByRole("button", {name: "Notifications, 1 unread alerts"}).click();
+  await dialog.getByRole("button", {name: "Mark all as read"}).click();
+  await expect(page.getByRole("button", {name: "Notifications, 0 unread alerts"})).toBeVisible();
+  expect(seenAt).toBeTruthy();
+  await expect(dialog.getByText("Reading a notification does not resolve the issue.", {exact: false})).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("button", {name: "Notifications, 0 unread alerts"})).toBeVisible();
 });
 test("mobile bottom navigation and records fit 390px without overflow", async ({
   page,
@@ -626,7 +833,7 @@ test("Amaro notification details and Help FAQ work on a narrow screen", async ({
     acknowledged_at: null, resolved_at: null, created_at: new Date().toISOString(),
   }] }));
   await page.goto("/operator");
-  await page.getByRole("button", { name: "Notifications, 1 active alerts", exact: true }).click();
+  await page.getByRole("button", { name: "Notifications, 1 unread alerts", exact: true }).click();
   const notifications = page.getByRole("dialog");
   await expect(notifications.getByText("Operator noted a blocked outlet.")).toBeVisible();
   await expect(notifications.getByText("Critical", { exact: true })).toBeVisible();
@@ -711,7 +918,7 @@ test("IoT fault status and aggregated history stay distinct from live sensor val
   const temperature = page.locator("div.rounded-2xl").filter({ has: page.getByText("Air Temperature", { exact: true }) }).first();
   await expect(temperature.getByText("26.2 °C", { exact: true })).toBeVisible();
   await expect(temperature.getByText("99 °C", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("Device reported: SENSOR_FAULT. Faulty sensor values are unavailable.")).toBeVisible();
+  await expect(page.getByText("The chamber reports SENSOR_FAULT. Unavailable measurements appear as a dash.")).toBeVisible();
   await page.screenshot({ path: "test-results/iot-archive-live-history.png", fullPage: true });
 });
 
@@ -731,6 +938,7 @@ test("reference sidebar supports keyboard sections and keeps shortcut navigation
   await production.click();
   await expect(nav.getByLabel("Contains current page")).toBeVisible();
   await nav.getByRole("button", { name: "Overview", exact: true }).click();
+  await page.locator("summary").filter({hasText: "How this workspace works"}).click();
   await page.getByRole("button", { name: /^Step 1: Batch / }).click();
   await expect(production).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByText("MB-001", { exact: true })).toBeVisible();
@@ -787,7 +995,7 @@ test("clicking a batch star opens a preselected rating and saves comments only o
   expect(evaluations).toHaveLength(0);
   await dialog.getByLabel("Observations or disagreement with machine data").fill("Fresh, even sprouts with no visible discoloration.");
   await page.screenshot({ path: "test-results/rating-comments-form.png", fullPage: true });
-  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await dialog.getByRole("button", { name: "Save assessment", exact: true }).click();
   await expect(dialog).toBeHidden();
   expect(evaluations).toHaveLength(1);
 });

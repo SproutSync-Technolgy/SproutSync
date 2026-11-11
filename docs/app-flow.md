@@ -86,9 +86,11 @@ flowchart LR
   E --> F[Record safe action and escalate]
 ```
 
-The UI includes this flow as a non-persisted draft until an incident contract,
-owner, notification destination, and audit policy are implemented. It must not
-claim that a report was submitted or that physical equipment was made safe.
+The web form saves an owner-scoped, optionally batch-linked issue to Alerts
+through the authenticated API and records its actor in the audit log. Retrying
+a request keeps its identifier to avoid duplicates. Saving does not stop physical
+equipment or automatically deliver an external escalation. See
+[telemetry and usability](telemetry-and-usability.md) for the verified contract.
 
 ## 7. Record tracking map
 

@@ -4,59 +4,6 @@ import { bluetoothSupported, registerNearby, scanBluetooth, scanWifi, type Nearb
 import { errorMessage, type Device } from "../data/workspace";
 import { Btn } from "./ProtoPrimitives";
 
-export function LiveConnectionStatus({
-  mqtt,
-  realtime,
-  error,
-  retry,
-}: {
-  mqtt: MQTTStatus | null;
-  realtime?: boolean;
-  error: string;
-  retry: () => void;
-}) {
-  const states: Record<string, string> = {
-    disabled: "Live MQTT is disabled on the server.",
-    configuration_error: "The server MQTT configuration needs attention.",
-    connecting: "Connecting to the MQTT broker…",
-    reconnecting: "MQTT disconnected. Reconnecting…",
-    connection_error: "The MQTT broker rejected the connection. Check server settings.",
-    subscription_error: "The MQTT broker rejected a topic subscription. Check topic permissions.",
-    connected: "MQTT connected. Sensor packets update this view automatically; recovery checks run every 2 seconds.",
-  };
-
-  if (mqtt?.connected) {
-    return (
-      <div className="mb-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-800 dark:text-emerald-300">
-        <p role="status">{states[mqtt.state] ?? "MQTT connected."}</p>
-      </div>
-    );
-  }
-
-  if (realtime) {
-    return (
-      <div className="mb-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-800 dark:text-emerald-300">
-        <p role="status">Live telemetry connected via Supabase Realtime. Sensor readings update automatically.</p>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="mb-4 rounded-xl border border-border p-3 text-sm">
-        <p role="status">Live updates unavailable: {error}</p>
-        <Btn variant="ghost" onClick={retry}>Retry live connection</Btn>
-      </div>
-    );
-  }
-
-  return (
-    <div className="mb-4 rounded-xl border border-border p-3 text-sm">
-      <p role="status">Connecting to live telemetry…</p>
-    </div>
-  );
-}
-
 export function DeviceConnectionForm({ devices, mqtt, liveError, onSaved, onDone }: {
   devices: Device[]; mqtt: MQTTStatus | null; liveError: string;
   onSaved: (device: Device) => void; onDone: (deviceId?: number) => void;

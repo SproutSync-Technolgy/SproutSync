@@ -2,7 +2,8 @@
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint, func, text
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint, Uuid, func, text
+from uuid import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -146,6 +147,26 @@ class TelemetryReading(Base):
     metric_counts: Mapped[dict[str, int]] = mapped_column(
         JSON, default=dict, server_default="{}"
     )
+
+
+class Alert(Base):
+    """A chamber issue or device alert with an optional idempotent report key."""
+
+    __tablename__ = "alerts"
+    __table_args__ = (UniqueConstraint("owner_id", "report_key", name="alerts_report_key_unique"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id"))
+    batch_id: Mapped[int | None] = mapped_column(ForeignKey("batches.id"))
+    title: Mapped[str] = mapped_column(String)
+    message: Mapped[str] = mapped_column(String)
+    recommended_action: Mapped[str] = mapped_column(String, default="")
+    severity: Mapped[str] = mapped_column(String, default="warning")
+    status: Mapped[str] = mapped_column(String, default="open")
+    category: Mapped[str] = mapped_column(String, default="device")
+    report_key: Mapped[UUID | None] = mapped_column(Uuid)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class EvaluatorAccess(Base):

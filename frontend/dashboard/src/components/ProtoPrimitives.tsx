@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useDialog } from './useDialog';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import {
   X,
   ChevronDown,
@@ -158,6 +158,7 @@ export function Modal({
 }) {
   const dialogRef = useDialog(open, onClose);
   const titleId = React.useId();
+  const reduceMotion = useReducedMotion();
 
   return (
     <AnimatePresence>
@@ -167,23 +168,24 @@ export function Modal({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
+          transition={{duration: reduceMotion ? 0 : 0.15}}
           onClick={onClose}
           role="presentation"
         >
           <motion.div
             ref={dialogRef}
             tabIndex={-1}
-            className={`max-h-[90vh] w-full overflow-y-auto overscroll-contain rounded-t-3xl border border-border bg-card p-6 sm:max-w-lg sm:rounded-2xl ${className}`}
-            initial={{ y: 40, opacity: 0 }}
+            className={`workspace-dialog flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-3xl border border-border bg-card sm:max-w-lg sm:rounded-2xl ${className}`}
+            initial={reduceMotion ? {opacity: 0} : { y: 40, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 40, opacity: 0 }}
-            transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+            exit={reduceMotion ? {opacity: 0} : { y: 40, opacity: 0 }}
+            transition={reduceMotion ? {duration: 0} : { type: 'spring', stiffness: 320, damping: 30 }}
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
             aria-labelledby={titleId}
           >
-            <div className="mb-4 flex items-start gap-3">
+            <div className="dialog-heading flex shrink-0 items-start gap-3 border-b border-border px-6 py-4">
               <h3
                 id={titleId}
                 className="min-w-0 flex-1 break-words py-1 text-lg font-bold leading-snug text-foreground"
@@ -198,7 +200,7 @@ export function Modal({
                 <X className="h-5 w-5" />
               </button>
             </div>
-            {children}
+            <div className="dialog-content overflow-y-auto overscroll-contain px-6 pb-6 pt-4">{children}</div>
           </motion.div>
         </motion.div>
       )}

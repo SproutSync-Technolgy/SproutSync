@@ -16,7 +16,7 @@ export function useDialog(open: boolean, onClose: () => void) {
         ) ?? [],
       ).filter((el) => el.getClientRects().length > 0);
     const frame = requestAnimationFrame(() =>
-      (focusables()[0] ?? ref.current)?.focus(),
+      (focusables().find((element) => element.matches('input:not([type="hidden"]), select, textarea, [data-autofocus]')) ?? focusables()[0] ?? ref.current)?.focus(),
     );
     const keydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {

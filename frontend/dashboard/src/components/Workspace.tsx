@@ -3,7 +3,6 @@ import {
   useEffect,
   useRef,
   useState,
-  type FormEvent,
   type ReactNode,
 } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
@@ -45,7 +44,7 @@ import {
   Trash2,
   AlertTriangle,
 } from "lucide-react";
-import { supabase } from "../supabase";
+import { apiFetch, supabase } from "../supabase";
 import {
   emptyWorkspace,
   loadWorkspace,
@@ -82,11 +81,16 @@ import { PersonalDetails } from "./PersonalDetails";
 import { WaterUseChart, Spark, QualityGradeChart } from "./ProtoCharts";
 import { CalendarDatePicker } from "./CalendarDatePicker";
 import { mergeReadings, useLiveTelemetry } from "../data/liveTelemetry";
-import { DeviceConnectionForm, LiveConnectionStatus } from "./DeviceConnection";
+import { DeviceConnectionForm } from "./DeviceConnection";
 import { WorkspaceNavigation } from "./WorkspaceNavigation";
 import logoUrl from "../assets/logo.png";
-import { BatchRatingPicker, StarRatingField } from "./StarRating";
+import { BatchRatingPicker } from "./StarRating";
 import { AdminOverview } from "./AdminOverview";
+import { SystemStatus, controllerOff } from "./SystemStatus";
+import { WorkspaceSearch, type SearchResult } from "./WorkspaceSearch";
+import { SearchRecordDetails } from "./SearchRecordDetails";
+import { ChamberOverview } from "./ChamberOverview";
+import { RecordForm, localDateTime, type Field } from "./RecordForm";
 
 export function getRolePages(profile: Profile, hasGrant: boolean) {
   if (profile.role === "pending" || (!hasGrant && !isSuperAdmin(profile))) {
@@ -230,6 +234,7 @@ type Dialog = {
   evaluator_id?: number;
   batch_id?: number;
   initial_rating?: number;
+  searchResult?: SearchResult;
 } | null;
 
 export default function Workspace({
@@ -274,6 +279,8 @@ export default function Workspace({
   const [dialog, setDialog] = useState<Dialog>(null);
   const [busy, setBusy] = useState(false);
   const [dialogError, setDialogError] = useState("");
+  const dialogErrorRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => { if (dialogError) dialogErrorRef.current?.focus(); }, [dialogError]);
   const [toast, setToast] = useState("");
   const [showWelcome, setShowWelcome] = useState(
     () => sessionStorage.getItem(`sproutsync-welcome-${profile.id}`) !== "seen",
@@ -296,6 +303,7 @@ export default function Workspace({
   const [evaluationBatch, setEvaluationBatch] = useState("all");
   const [auditQuery, setAuditQuery] = useState("");
   const [selectedDevice, setSelectedDevice] = useState("all");
+  const [lastAlertSeenAt, setLastAlertSeenAt] = useState<string | null>(null);
   const [preferences, setPreferences] = useState({
     alerts_enabled: true,
     harvest_enabled: true,
@@ -304,13 +312,13 @@ export default function Workspace({
     let active = true;
     supabase
       .from("notification_preferences")
-      .select("alerts_enabled,harvest_enabled")
+      .select("alerts_enabled,harvest_enabled,last_alert_seen_at")
       .eq("user_id", profile.id)
       .maybeSingle()
       .then(({ data, error }) => {
         if (!active) return;
         if (error) setToast("Notification preferences could not be loaded.");
-        else if (data) setPreferences(data);
+        else if (data) {setPreferences({alerts_enabled: data.alerts_enabled, harvest_enabled: data.harvest_enabled}); setLastAlertSeenAt(data.last_alert_seen_at);}
       });
     return () => {
       active = false;
@@ -443,6 +451,26 @@ export default function Workspace({
     setDialogError("");
     setDialog(next);
   }
+  function selectSearchResult(result: SearchResult) {
+    if (result.kind === "action") {open({kind: result.destination}); return;}
+    if (result.kind === "page") {
+      if (result.destination === "help") open({kind: "help"});
+      else navigate(result.destination);
+      return;
+    }
+    if (result.kind === "account") {
+      setAccountRoleFilter("all"); setAccountSearchQuery(String(result.payload.email)); navigate("accounts"); return;
+    }
+    if (result.kind === "batch") {
+      const batch = result.payload as unknown as Batch;
+      setData((current) => ({...current, batches: [batch, ...current.batches.filter((item) => item.id !== batch.id)]}));
+      navigate("production"); open({kind: "batch-details", batch}); return;
+    }
+    if (result.kind === "device") {setSelectedDevice(String(result.record_id)); navigate("readings"); return;}
+    if (result.kind === "alert") {navigate("alerts"); open({kind: "alert", alert: result.payload as unknown as Alert}); return;}
+    if (nav.some((item) => item.key === result.destination)) navigate(result.destination);
+    open({kind: "search-record", searchResult: result});
+  }
   function close() {
     if (!busy) {
       setDialog(null);
@@ -470,10 +498,9 @@ export default function Workspace({
   const activeAlerts = data.alerts.filter((a) => a.status !== "resolved");
   const recentStatusDevices = data.devices.filter((device) => {
     const lastSeenAt = device.last_seen_at ? Date.parse(device.last_seen_at) : Number.NaN;
-    return ["online", "fault"].includes(device.status) &&
-      (device.is_demo || (Number.isFinite(lastSeenAt) && Date.now() - lastSeenAt < (live.mqtt?.stale_seconds ?? 30) * 1000));
+    return !device.is_demo && !live.error && Boolean(live.mqtt?.connected) && ["online", "fault"].includes(device.status) &&
+      Number.isFinite(lastSeenAt) && Date.now() - lastSeenAt < (live.mqtt?.stale_seconds ?? 30) * 1000;
   });
-  const onlineDevices = recentStatusDevices.filter((device) => device.status === "online");
   const faultingDevices = recentStatusDevices.filter((device) => device.status === "fault");
   const deviceStatusDetail = `${data.devices.length} linked ${data.devices.length === 1 ? "device" : "devices"}${faultingDevices.length ? ` · ${faultingDevices.length} reporting ${faultingDevices.length === 1 ? "a sensor fault" : "sensor faults"}` : ""}`;
   const notificationAlerts = activeAlerts.filter((a) =>
@@ -481,6 +508,17 @@ export default function Workspace({
       ? preferences.harvest_enabled
       : preferences.alerts_enabled,
   );
+  const unreadAlerts = notificationAlerts.filter((alert) => !lastAlertSeenAt || Date.parse(alert.created_at) > Date.parse(lastAlertSeenAt));
+  async function markNotificationsRead() {
+    setBusy(true); setDialogError("");
+    const seenAt = notificationAlerts.reduce((latest, alert) => alert.created_at > latest ? alert.created_at : latest, lastAlertSeenAt ?? "1970-01-01T00:00:00Z");
+    try {
+      const {error} = await supabase.from("notification_preferences").upsert({user_id: profile.id, ...preferences, last_alert_seen_at: seenAt});
+      if (error) throw error;
+      setLastAlertSeenAt(seenAt); setToast("Notifications marked as read.");
+    } catch (err) {setDialogError(errorMessage(err));}
+    finally {setBusy(false);}
+  }
   const batches = data.batches.filter((b) => {
     const matchesFilter =
       batchFilter === "all"
@@ -523,7 +561,9 @@ export default function Workspace({
         .includes(evaluationQuery.toLowerCase())
     );
   });
-  const deviceReadings = data.readings.filter(
+  const deviceReadings = data.readings.map((reading) => controllerOff(reading.sensor_status)
+    ? {...reading, temperature_c: null, humidity_percent: null, water_level_percent: null, water_temperature_c: null, light_lux: null, wastewater_level_percent: null}
+    : reading).filter(
     (r) => selectedDevice === "all" || r.device_id === Number(selectedDevice),
   );
   const liveDeviceReadings = deviceReadings.filter((reading) => !reading.aggregation || reading.aggregation === "raw");
@@ -551,14 +591,21 @@ export default function Workspace({
     reading.wastewater_level_percent ?? "",
     reading.recorded_at,
   ]);
-  const currentReading = liveDeviceReadings[0];
+  const newest = [...liveDeviceReadings, ...live.latestReadings.filter((reading) => selectedDevice === "all" || reading.device_id === Number(selectedDevice))]
+    .sort((a, b) => Date.parse(b.received_at ?? b.recorded_at) - Date.parse(a.received_at ?? a.recorded_at))[0];
+  const currentReading = newest && controllerOff(newest.sensor_status) ? {...newest, temperature_c: null, humidity_percent: null, water_level_percent: null, water_temperature_c: null, light_lux: null, wastewater_level_percent: null} : newest;
   const readingDevice = data.devices.find((d) => d.id === currentReading?.device_id);
   const readingStale = Boolean(currentReading && (
     live.error ||
     (readingDevice && !["online", "fault"].includes(readingDevice.status)) ||
     (live.mqtt && !live.mqtt.connected) ||
-    Date.now() - Date.parse(currentReading.received_at ?? currentReading.recorded_at) > (live.mqtt?.stale_seconds ?? 120) * 1000
+    Date.now() - Date.parse(currentReading.received_at ?? currentReading.recorded_at) > (live.mqtt?.stale_seconds ?? 30) * 1000
   ));
+  const readingNotice = !currentReading ? "No reading yet. Connect a chamber to start monitoring."
+    : controllerOff(currentReading.sensor_status) ? "Controller off. Measurements are unavailable until the chamber resumes reporting."
+    : readingStale ? "Last known reading. The chamber has not supplied fresh data. Check its power and connection."
+    : currentReading.sd_ok === false ? "The chamber is connected, but its SD card reports an error. Sensor measurements below remain available."
+    : !["NONE", "OK", "NORMAL"].includes(currentReading.sensor_status ?? "NONE") ? `The chamber reports ${currentReading.sensor_status}. Unavailable measurements appear as a dash.` : "";
   const initials = (profile.first_name || profile.display_name || profile.email)
     .trim()
     .split(/\s+/)
@@ -668,18 +715,29 @@ export default function Workspace({
           >
             <Menu size={22} />
           </button>
-          <div>
+          <div className="topbar-page-title">
             <p className="text-xs text-muted-foreground">Workspace / {title}</p>
             <h1 ref={pageHeading} tabIndex={-1} className="workspace-page-heading text-lg font-bold">{title}</h1>
           </div>
-          <div className="ml-auto flex items-center gap-2">
+          <WorkspaceSearch key={profile.id} pages={[...nav, {key: "settings", title: "Profile & settings"}, {key: "help", title: "Help & role guide"}]} actions={strictOperator ? [
+            {key: "device", title: "Add device", keywords: "connect chamber register ESP32"},
+            ...(hasGrant ? [
+              {key: "batch-create", title: "Create batch", keywords: "add new production crop"},
+              {key: "schedule", title: "Add irrigation plan", keywords: "schedule water rinse"},
+              {key: "maintenance", title: "Record maintenance", keywords: "add new equipment service note"},
+              {key: "incident-report", title: "Report current situation", keywords: "issue problem incident fault"},
+            ] : []),
+          ] : evaluator && data.batches.length ? [{key: "evaluation", title: "Evaluate batch", keywords: "assessment rate rating review stars"}] : []} accounts={superadmin ? accounts : []} onSelect={selectSearchResult} allowRecords={hasGrant} />
+          <div className="topbar-actions ml-auto flex items-center gap-2">
+            <SystemStatus devices={data.devices} latest={live.latestReadings} mqtt={live.mqtt} error={live.error} retry={live.retry} />
             <button
               className="icon-button relative"
-              aria-label={`Notifications, ${notificationAlerts.length} active alerts`}
+              title="Notifications"
+              aria-label={`Notifications, ${unreadAlerts.length} unread alerts`}
               onClick={() => open({ kind: "notifications" })}
             >
               <Bell size={20} />
-              {notificationAlerts.length > 0 && (
+              {unreadAlerts.length > 0 && (
                 <span className="notification-dot" />
               )}
             </button>
@@ -998,6 +1056,7 @@ export default function Workspace({
                       </button>
                     </section>
                   )}
+                  <details className="workspace-guide"><summary><HelpCircle size={16} /> How this workspace works</summary>
                   <section className="role-brief" aria-labelledby="role-scope-title">
                     <span className="role-brief-icon" aria-hidden="true">
                       <ShieldCheck size={22} />
@@ -1095,6 +1154,7 @@ export default function Workspace({
                       )}
                     </ol>
                   </section>
+                  </details>
                   {evaluator && (
                     <>
                       <div className="summary-grid">
@@ -1131,10 +1191,10 @@ export default function Workspace({
                         />
                         <Metric
                           icon={<Cpu />}
-                          label="Granted chambers online"
+                          label="Shared chamber connections"
                           value={
                             data.devices.length
-                              ? `${onlineDevices.length} / ${data.devices.length} online`
+                              ? `${recentStatusDevices.length} / ${data.devices.filter((device) => !device.is_demo).length} connected`
                               : "No chambers"
                           }
                           detail="Monitored growth chambers"
@@ -1165,10 +1225,10 @@ export default function Workspace({
                     <div className="summary-grid">
                       <Metric
                         icon={<Cpu />}
-                        label="Machine status"
+                        label="Chamber connections"
                         value={
                           data.devices.length
-                            ? `${onlineDevices.length} online`
+                            ? `${recentStatusDevices.length} connected`
                             : "No devices"
                         }
                         detail={deviceStatusDetail}
@@ -1204,30 +1264,6 @@ export default function Workspace({
                         targetLabel="Batch Production"
                       />
                       <Metric
-                        icon={<Droplets />}
-                        label="Fresh-water & tank status"
-                        value={
-                          currentReading
-                            ? `${currentReading.water_level_percent ?? "—"}%`
-                            : "No reading"
-                        }
-                        detail="Fresh-water level"
-                        onClick={() => navigate("readings")}
-                        targetLabel="Readings"
-                      />
-                      <Metric
-                        icon={<Droplets />}
-                        label="Next irrigation run"
-                        value={
-                          nextSchedule
-                            ? date(nextSchedule.next_run_at)
-                            : "No upcoming run"
-                        }
-                        detail={`${data.watering.length} watering events`}
-                        onClick={() => navigate("irrigation")}
-                        targetLabel="Irrigation & Water"
-                      />
-                      <Metric
                         icon={<Bell />}
                         label="Open alerts"
                         value={String(activeAlerts.length)}
@@ -1237,87 +1273,8 @@ export default function Workspace({
                       />
                     </div>
                   )}
-                  <div className="grid gap-5 xl:grid-cols-2">
-                    <section className="surface">
-                      <SectionTitle
-                        title="Current conditions"
-                        action={
-                          <Btn
-                            variant="ghost"
-                            onClick={() => open({ kind: "readings" })}
-                          >
-                            View readings
-                          </Btn>
-                        }
-                      />
-                      <LiveConnectionStatus {...live} />
-                      <label className="field mb-4">
-                        <span className="sr-only">Select device</span>
-                        <select
-                          value={selectedDevice}
-                          onChange={(e) => setSelectedDevice(e.target.value)}
-                        >
-                          <option value="all">Latest available reading</option>
-                          {data.devices.map((d) => (
-                            <option key={d.id} value={d.id}>
-                              {d.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      {currentReading ? (
-                        <>
-                          <div className="condition-grid">
-                            <div>
-                              <strong>
-                                {currentReading.temperature_c ?? "—"}°C
-                              </strong>
-                              <span>Temperature</span>
-                            </div>
-                            <div>
-                              <strong>
-                                {currentReading.humidity_percent ?? "—"}%
-                              </strong>
-                              <span>Humidity</span>
-                            </div>
-                            <div>
-                              <strong>
-                                {currentReading.water_level_percent ?? "—"}%
-                              </strong>
-                              <span>Water level</span>
-                            </div>
-                            <div>
-                              <strong>
-                                {currentReading.water_temperature_c ?? "—"}°C
-                              </strong>
-                              <span>Water temperature</span>
-                            </div>
-                            <div>
-                              <strong>
-                                {currentReading.light_lux ?? "—"} lux
-                              </strong>
-                              <span>Light level</span>
-                            </div>
-                            <div>
-                              <strong>
-                                {currentReading.wastewater_level_percent ?? "—"}
-                                %
-                              </strong>
-                              <span>Wastewater</span>
-                            </div>
-                          </div>
-                          <p className="mt-4 text-xs text-muted-foreground">
-                            {deviceName(currentReading.device_id)} ·{" "}
-                            {date(currentReading.recorded_at)}
-                            {readingStale
-                              ? " · Last known reading — live data unavailable"
-                              : ""}
-                          </p>
-                        </>
-                      ) : (
-                        <Empty text="Waiting for your first device reading." />
-                      )}
-                    </section>
+                  <ChamberOverview devices={data.devices} readings={data.readings} latest={live.latestReadings} mqtt={live.mqtt} error={live.error} onOpen={(id) => {setSelectedDevice(String(id)); navigate("readings");}} />
+                  <div className="space-y-5">
                     <section className="surface">
                       <SectionTitle title="Next irrigation" />
                       <p className="text-2xl font-bold">
@@ -1462,12 +1419,8 @@ export default function Workspace({
                       </div>
                     </div>
 
-                    <LiveConnectionStatus {...live} />
-                    {currentReading && <p className="mb-4 text-sm text-muted-foreground">
-                      Supply voltage: {currentReading.voltage == null ? "Not reported" : `${currentReading.voltage} V`} · SD card: {currentReading.sd_ok == null ? "Not reported" : currentReading.sd_ok ? "OK" : "Error"}
-                    </p>}
-                    {readingStale && <p role="status" className="feedback-error mb-4">Showing the last known reading. Waiting for fresh sensor data.</p>}
-                    {currentReading?.sensor_status && !["NONE", "OK", "NORMAL"].includes(currentReading.sensor_status) && <p role="status" className="feedback-error mb-4">Device reported: {currentReading.sensor_status}. Faulty sensor values are unavailable.</p>}
+                    {readingNotice && <p className="reading-notice" role="status"><AlertTriangle size={16} />{readingNotice}</p>}
+                    <p className="telemetry-storage-note">Live measurements update as packets arrive. History saves one sample every {live.mqtt?.history_sample_seconds ?? 60} seconds, plus fault and recovery changes.</p>
                     {/* 6 Detailed Sensor Telemetry Cards matching image_e0a5e9.png */}
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
                       {/* 1. Air Temperature */}
@@ -1485,7 +1438,7 @@ export default function Workspace({
                                 : "bg-amber-500/10 text-amber-600"
                               }`}
                           >
-                            {currentReading?.temperature_c == null ? "No reading" :
+                            {readingStale ? "Last known" : currentReading?.temperature_c == null ? "No reading" :
                               currentReading.temperature_c >= 21 &&
                               currentReading.temperature_c <= 27
                               ? "Within range"
@@ -1528,7 +1481,7 @@ export default function Workspace({
                                 : "bg-amber-500/10 text-amber-600"
                               }`}
                           >
-                            {currentReading?.humidity_percent == null ? "No reading" :
+                            {readingStale ? "Last known" : currentReading?.humidity_percent == null ? "No reading" :
                               currentReading.humidity_percent >= 80 &&
                               currentReading.humidity_percent <= 90
                               ? "Within range"
@@ -1570,7 +1523,7 @@ export default function Workspace({
                                 : "bg-amber-500/10 text-amber-600"
                               }`}
                           >
-                            {currentReading?.water_level_percent == null ? "No reading" :
+                            {readingStale ? "Last known" : currentReading?.water_level_percent == null ? "No reading" :
                               currentReading.water_level_percent > 40
                               ? "Within range"
                               : "Getting low"}
@@ -1612,7 +1565,7 @@ export default function Workspace({
                                 : "bg-amber-500/10 text-amber-600"
                               }`}
                           >
-                            {currentReading?.water_temperature_c == null ? "No reading" :
+                            {readingStale ? "Last known" : currentReading?.water_temperature_c == null ? "No reading" :
                               currentReading.water_temperature_c >= 18 &&
                               currentReading.water_temperature_c <= 22
                               ? "Within range"
@@ -1655,7 +1608,7 @@ export default function Workspace({
                                 : "bg-rose-500/10 text-rose-600"
                               }`}
                           >
-                            {currentReading?.light_lux == null ? "No reading" :
+                            {readingStale ? "Last known" : currentReading?.light_lux == null ? "No reading" :
                               currentReading.light_lux < 5
                               ? "Nice & dark"
                               : "Light detected"}
@@ -1697,7 +1650,7 @@ export default function Workspace({
                                 : "bg-rose-500/10 text-rose-600"
                               }`}
                           >
-                            {currentReading?.wastewater_level_percent == null ? "No reading" :
+                            {readingStale ? "Last known" : currentReading?.wastewater_level_percent == null ? "No reading" :
                               currentReading.wastewater_level_percent < 85
                               ? "Room available"
                               : "Near full"}
@@ -2622,7 +2575,7 @@ export default function Workspace({
                   ) : (
                     <Empty text="No alerts have been recorded." />
                   )}
-                  <div className="mt-6 border-t border-border pt-5">
+                  <details className="mt-6 border-t border-border pt-5"><summary className="cursor-pointer text-sm font-semibold">Issue reporting guide</summary>
                     <SectionTitle
                       title="Risk & incident categories"
                       subtitle="Use the alert message to state the current problem, location, and recommended response."
@@ -2655,7 +2608,7 @@ export default function Workspace({
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </details>
                 </section>
               )}
               {page === "system" && operator && (
@@ -2666,7 +2619,6 @@ export default function Workspace({
                       subtitle="Identify every chamber by its printed serial number and latest heartbeat."
                       action={<Btn onClick={() => open({ kind: "device" })}><Plus size={16} /> Add device</Btn>}
                     />
-                    <LiveConnectionStatus {...live} />
                     {table(
                       ["Equipment", "Serial number", "Connection", "Last seen", "MQTT topic"],
                       data.devices.map((d) => [
@@ -2675,14 +2627,9 @@ export default function Workspace({
                         <Status
                           key="conn"
                           value={
-                            d.status === "online" &&
-                              !d.is_demo &&
-                              (!d.last_seen_at ||
-                                Date.now() -
-                                new Date(d.last_seen_at).getTime() >
-                                300000)
-                              ? "offline"
-                              : d.status
+                            d.is_demo ? "Demo" : ["online", "fault"].includes(d.status) &&
+                              (live.error || !live.mqtt?.connected || !d.last_seen_at || Date.now() - Date.parse(d.last_seen_at) > (live.mqtt?.stale_seconds ?? 30) * 1000)
+                              ? "offline" : d.status
                           }
                         />,
                         date(d.last_seen_at),
@@ -2955,6 +2902,7 @@ export default function Workspace({
         title={
           dialog?.kind === "signout"
             ? "Are you sure you want to sign out?"
+            : dialog?.kind === "search-record" ? dialog.searchResult!.title
             : dialog?.kind === "batch-details"
               ? `Inspect Batch · ${dialog.batch!.code}`
               : dialog?.kind === "evaluation-details"
@@ -2987,11 +2935,13 @@ export default function Workspace({
                             }[dialog?.kind ?? ""] ?? "")
         }
       >
+        {dialog?.kind === "search-record" && <SearchRecordDetails result={dialog.searchResult!} chamber={dialog.searchResult!.payload.device_id ? deviceName(Number(dialog.searchResult!.payload.device_id)) : undefined} batch={dialog.searchResult!.payload.batch_id ? data.batches.find((item) => item.id === Number(dialog.searchResult!.payload.batch_id))?.code ?? `Batch #${dialog.searchResult!.payload.batch_id}` : undefined} />}
         {dialogError && (
-          <p role="alert" className="feedback-error mb-4">
+          <p ref={dialogErrorRef} tabIndex={-1} role="alert" className="feedback-error mb-4">
             {dialogError}
           </p>
         )}
+        {dialog?.kind === "notifications" && live.notificationError && <div className="reading-notice" role="alert"><span>{live.notificationError}</span><button onClick={live.retry}>Retry</button></div>}
         {dialog?.kind === "device" && operator && <DeviceConnectionForm
           devices={data.devices} mqtt={live.mqtt} liveError={live.error}
           onSaved={(device) => setData((current) => ({ ...current, devices: current.devices.some((d) => d.id === device.id) ? current.devices.map((d) => d.id === device.id ? { ...d, ...device } : d) : [device, ...current.devices] }))}
@@ -3160,82 +3110,21 @@ export default function Workspace({
             <Btn disabled className="w-full">Send support request</Btn>
           </div>
         )}
-        {dialog?.kind === "incident-report" && (
-          <div className="space-y-5">
-            <div className="unavailable-action">
-              <ShieldCheck size={22} />
-              <span>
-                <strong>UI draft only</strong>
-                <small>
-                  Incident submission is not connected yet. You can review the
-                  required information, but no report will be saved.
-                </small>
-              </span>
-            </div>
-            <ol className="sop-steps" aria-label="Incident response SOP">
-              <li><strong>1. Describe</strong><span>State the current problem.</span></li>
-              <li><strong>2. Locate</strong><span>Specify the chamber, fan, seal, tray, or water source.</span></li>
-              <li><strong>3. Link</strong><span>Connect the affected batch and equipment serial number.</span></li>
-              <li><strong>4. Escalate</strong><span>Record the safe response and notify the responsible role.</span></li>
-            </ol>
-            <label className="field">
-              Current situation
-              <textarea rows={3} placeholder="What is happening now?" />
-            </label>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="field">
-                Affected location or component
-                <input
-                  list="incident-components"
-                  placeholder="Type or select, for example 3D fan"
-                />
-                <datalist id="incident-components">
-                  <option value="3D fan" />
-                  <option value="Chamber door or seal" />
-                  <option value="Water reservoir" />
-                  <option value="Pump" />
-                  <option value="Room" />
-                  <option value="Tray" />
-                </datalist>
-              </label>
-              <label className="field">
-                Affected batch
-                <input
-                  list="incident-batches"
-                  placeholder="Type a batch code or leave unlinked"
-                />
-                <datalist id="incident-batches">
-                  {data.batches.map((batch) => (
-                    <option key={batch.id} value={batch.code} />
-                  ))}
-                </datalist>
-              </label>
-            </div>
-            <label className="field">
-              Risk category
-              <select defaultValue="">
-                <option value="" disabled>Select a risk…</option>
-                <option>Pests or external contamination</option>
-                <option>Water contamination</option>
-                <option>Compliance risk</option>
-                <option>Light leak</option>
-                <option>Equipment problem</option>
-              </select>
-            </label>
-            <label className="field">
-              Screen or LCD message
-              <input placeholder="Copy the exact message, or write None" />
-            </label>
-            <label className="field">
-              Immediate safe action taken
-              <textarea rows={3} placeholder="What was checked, isolated, or escalated?" />
-            </label>
-            <Btn disabled className="w-full">Submit incident report</Btn>
-          </div>
-        )}
+        {dialog?.kind === "incident-report" && <IncidentForm data={data} busy={busy} onCancel={close} onSave={async (values) => {
+          await mutate(async () => {
+            const response = await apiFetch(`/api/v1/devices/${values.device_id}/issues`, {
+              method: "POST", headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({...values, device_id: undefined, batch_id: values.batch_id ? Number(values.batch_id) : null}), signal: AbortSignal.timeout(15000),
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "Issue could not be saved. Check the fields and try again.");
+            return {error: null};
+          }, "Issue saved in Alerts.");
+        }} />}
         {dialog?.kind === "notifications" &&
           (notificationAlerts.length ? (
             <div className="space-y-3">
+              <div className="notification-toolbar"><p>{unreadAlerts.length} unread. Reading a notification does not resolve the issue.</p><Btn variant="ghost" disabled={busy || !unreadAlerts.length} onClick={() => void markNotificationsRead()}>Mark all as read</Btn></div>
               {notificationAlerts.map((a) => (
                 <button
                   key={a.id}
@@ -3286,7 +3175,7 @@ export default function Workspace({
                 <dd>{dialog.alert!.severity}</dd>
               </div>
             </dl>
-            <p>{dialog.alert!.message}</p>
+            <p className="whitespace-pre-line">{dialog.alert!.message}</p>
             <section className="rounded-xl bg-secondary p-4">
               <h3 className="font-semibold">Recommended action</h3>
               <p className="mt-1 text-sm">
@@ -3652,7 +3541,7 @@ export default function Workspace({
                 <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">
                   Update Batch Lifecycle
                 </h4>
-                <RecordForm
+                <RecordForm onCancel={close}
                   busy={busy}
                   submitLabel="Save batch changes"
                   fields={[
@@ -3697,7 +3586,7 @@ export default function Workspace({
           </div>
         )}
         {dialog?.kind === "superadmin-account-edit" && dialog.account && (
-          <RecordForm
+          <RecordForm onCancel={close}
             busy={busy}
             submitLabel="Update Account"
             fields={[
@@ -3828,7 +3717,7 @@ export default function Workspace({
           );
         })()}
         {dialog?.kind === "superadmin-grant-serial" && (
-          <RecordForm
+          <RecordForm onCancel={close}
             busy={busy}
             submitLabel="Grant Serial ID"
             fields={[
@@ -3874,7 +3763,7 @@ export default function Workspace({
           />
         )}
         {dialog?.kind === "superadmin-assign-evaluator" && (
-          <RecordForm
+          <RecordForm onCancel={close}
             busy={busy}
             submitLabel="Assign Evaluator"
             fields={[
@@ -3920,7 +3809,7 @@ export default function Workspace({
           />
         )}
         {dialog?.kind === "operator-evaluator-edit" && dialog.evaluator && (
-          <RecordForm
+          <RecordForm onCancel={close}
             busy={busy}
             submitLabel="Update Evaluator"
             fields={[
@@ -3973,6 +3862,8 @@ export default function Workspace({
               key={`${dialog.kind}-${dialog.batch_id ?? "all"}-${dialog.initial_rating ?? 0}`}
               busy={busy}
               fields={formFields(dialog.kind, data, dialog.batch_id, dialog.initial_rating)}
+              onCancel={close}
+              submitLabel={dialog.kind === "batch-create" ? "Create batch" : dialog.kind === "schedule" ? "Save irrigation plan" : dialog.kind === "maintenance" ? "Save maintenance record" : dialog.kind === "evaluation" ? "Save assessment" : dialog.kind === "evidence" ? "Save check" : "Grant access"}
               onSubmit={async (values) => {
                 const payload: Record<string, unknown> = {
                   ...values,
@@ -4176,7 +4067,7 @@ function DataTable({
   rows: ReactNode[][];
   empty: string;
 }) {
-  const pageSize = 6;
+  const pageSize = 10;
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
   const [page, setPage] = useState(1);
   useEffect(() => {
@@ -4214,22 +4105,13 @@ function DataTable({
           </tbody>
         </table>
       </div>
+      <p className="table-range">Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, rows.length)} of {rows.length} loaded records</p>
       {pageCount > 1 && (
         <nav className="table-pagination" aria-label="Table pages">
           <button disabled={page === 1} onClick={() => setPage(page - 1)}>
             Previous
           </button>
-          {Array.from({ length: pageCount }, (_, index) => index + 1).map(
-            (number) => (
-              <button
-                key={number}
-                aria-current={page === number ? "page" : undefined}
-                onClick={() => setPage(number)}
-              >
-                {number}
-              </button>
-            ),
-          )}
+          <span aria-live="polite">Page {page} of {pageCount}</span>
           <button
             disabled={page === pageCount}
             onClick={() => setPage(page + 1)}
@@ -4241,103 +4123,32 @@ function DataTable({
     </>
   );
 }
-type Field = {
-  name: string;
-  label: string;
-  type?: string;
-  required?: boolean;
-  options?: string[][];
-  value?: string;
-  placeholder?: string;
-  min?: number;
-  max?: number;
-};
-function RecordForm({
-  fields,
-  busy,
-  onSubmit,
-  submitLabel = "Save",
-}: {
-  fields: Field[];
-  busy: boolean;
-  onSubmit: (values: Record<string, string>) => Promise<void>;
-  submitLabel?: string;
-}) {
-  const [error, setError] = useState("");
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError("");
-    const values = Object.fromEntries(
-      new FormData(event.currentTarget),
-    ) as Record<string, string>;
-    try {
-      await onSubmit(values);
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  }
-  return (
-    <form onSubmit={submit}>
-      <fieldset disabled={busy} className="space-y-4">
-        {fields.map((f) =>
-          f.type === "rating" ? (
-            <fieldset className="field" key={f.name}>
-              <legend>{f.label}</legend>
-              <StarRatingField name={f.name} initialValue={Number(f.value ?? 0)} required={f.required !== false} />
-            </fieldset>
-          ) : (
-            <label className="field" key={f.name}>
-              {f.label}
-              {f.options ? (
-                <select
-                  name={f.name}
-                  required={f.required !== false}
-                  defaultValue={f.value ?? ""}
-                >
-                  <option value="" disabled={f.required !== false}>
-                    Select…
-                  </option>
-                  {f.options.map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              ) : f.type === "textarea" ? (
-                <textarea
-                  name={f.name}
-                  rows={3}
-                  maxLength={2000}
-                  required={f.required !== false}
-                  defaultValue={f.value}
-                />
-              ) : (
-                <input
-                  name={f.name}
-                  type={f.type ?? "text"}
-                  required={f.required !== false}
-                  defaultValue={f.value}
-                  placeholder={f.placeholder}
-                  min={f.min}
-                  max={f.max}
-                  maxLength={f.name === "code" ? 64 : 120}
-                />
-              )}
-            </label>
-          ),
-        )}
-        {error && (
-          <p role="alert" className="feedback-error">
-            {error}
-          </p>
-        )}
-        <Btn className="w-full" disabled={busy} type="submit">
-          {busy ? "Saving…" : submitLabel}
-        </Btn>
-      </fieldset>
-    </form>
-  );
+function nextBatchCode(data: WorkspaceData) {
+  const used = new Set(data.batches.map((batch) => batch.code.toLowerCase()));
+  let number = 1;
+  while (used.has(`mb-${String(number).padStart(3, "0")}`)) number++;
+  return `MB-${String(number).padStart(3, "0")}`;
 }
+
+function IncidentForm({data, busy, onCancel, onSave}: {data: WorkspaceData; busy: boolean; onCancel: () => void; onSave: (values: Record<string, string>) => Promise<void>}) {
+  const [requestId] = useState(() => crypto.randomUUID());
+  const [deviceId, setDeviceId] = useState(data.devices.length === 1 ? String(data.devices[0].id) : "");
+  const device = data.devices.find((item) => item.id === Number(deviceId));
+  // Keep the batch list scoped to the chosen chamber's owner for admin workspaces.
+  return <div onChange={(event) => {if (event.target instanceof HTMLSelectElement && event.target.name === "device_id") setDeviceId(event.target.value);}}>
+    <RecordForm busy={busy} onCancel={onCancel} onSubmit={onSave} submitLabel="Save issue" description="Save an issue in Alerts so your team can follow up. This does not stop equipment or contact emergency services." fields={[
+      {name: "request_id", label: "Report identifier", type: "hidden", value: requestId},
+      {name: "device_id", label: "Chamber", value: deviceId, options: data.devices.filter((d) => !d.is_demo).map((d) => [String(d.id), d.name])},
+      {name: "batch_id", label: "Affected batch", required: false, options: data.batches.filter((batch) => device && batch.owner_id === device.owner_id).map((batch) => [String(batch.id), batch.code])},
+      {name: "situation", label: "What is happening?", type: "textarea", minLength: 10, maxLength: 1000, help: "Describe what you observed, using at least 10 characters."},
+      {name: "component", label: "Affected part or location", placeholder: "For example, chamber door or water reservoir", minLength: 2, maxLength: 120},
+      {name: "risk", label: "Type of issue", options: [["equipment", "Equipment problem"], ["water", "Water contamination"], ["pests", "Pests or contamination"], ["light", "Light leak"], ["compliance", "Procedure or compliance"]]},
+      {name: "display_message", label: "Message on the device display", required: false, maxLength: 200},
+      {name: "safe_action", label: "Action already taken", type: "textarea", minLength: 2, maxLength: 400, help: "Record only what was done. Write ‘None yet’ if no action has been taken."},
+    ]} />
+  </div>;
+}
+
 function formFields(
   kind: string,
   data: WorkspaceData,
@@ -4346,23 +4157,24 @@ function formFields(
 ): Field[] {
   const device: Field = {
     name: "device_id",
-    label: "Device",
+    label: "Chamber",
+    value: data.devices.length === 1 ? String(data.devices[0].id) : undefined,
     options: data.devices.map((d) => [String(d.id), d.name]),
   };
   const batch: Field = {
     name: "batch_id",
     label: "Batch",
     options: data.batches.map((b) => [String(b.id), b.code]),
-    value: defaultBatchId ? String(defaultBatchId) : undefined,
+    value: defaultBatchId ? String(defaultBatchId) : data.batches.length === 1 ? String(data.batches[0].id) : undefined,
   };
   const notes: Field = { name: "notes", label: "Notes", type: "textarea" };
   return (
     (
       {
         "batch-create": [
-          { name: "code", label: "Batch code" },
+          { name: "code", label: "Batch code", value: nextBatchCode(data), help: "A unique code for this growing cycle. You can change the suggested code." },
           { name: "seed_type", label: "Crop", value: "Mung beans" },
-          { name: "started_at", label: "Start date", type: "datetime-local" },
+          { name: "started_at", label: "Start date", type: "datetime-local", value: localDateTime(), help: "Dates and times use your local time zone." },
           {
             name: "target_harvest_at",
             label: "Target harvest (optional)",
@@ -4381,13 +4193,14 @@ function formFields(
         maintenance: [device, notes],
         schedule: [
           device,
-          { name: "next_run_at", label: "Next run", type: "datetime-local" },
+          { name: "next_run_at", label: "Planned time", type: "datetime-local", value: localDateTime(new Date(Date.now() + 3600000)), help: "Save a plan for the operator. This does not send a pump command." },
           {
             name: "duration_seconds",
             label: "Duration (seconds)",
             type: "number",
             min: 1,
             max: 600,
+            help: "Enter 1 to 600 seconds. Confirm the duration using your approved irrigation procedure.",
           },
         ],
         evidence: [

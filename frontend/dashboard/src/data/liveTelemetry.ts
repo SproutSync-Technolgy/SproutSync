@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { apiFetch, supabase } from "../supabase";
 import { apiUrl } from "../config";
-import { errorMessage, type Device, type Reading, type WorkspaceData } from "./workspace";
+import { errorMessage, type Alert, type Device, type Reading, type WorkspaceData } from "./workspace";
 
 export type MQTTStatus = {
   state: string;
   connected: boolean;
   broker_url: string;
   stale_seconds: number;
+  history_sample_seconds?: number;
 };
-type LiveSnapshot = { devices: Device[]; readings: Reading[]; mqtt: MQTTStatus };
+export type LatestReading = Omit<Reading, "id">;
+type LiveSnapshot = { devices: Device[]; readings: Reading[]; latest_readings?: LatestReading[]; mqtt: MQTTStatus };
 
 async function checkedJson<T>(response: Response): Promise<T> {
   const contentType = response.headers.get("content-type") || "";
@@ -53,6 +55,8 @@ export function useLiveTelemetry(profileId: number, setData: Dispatch<SetStateAc
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   const realtimeRef = useRef(false);
+  const [latestReadings, setLatestReadings] = useState<LatestReading[]>([]);
+  const [notificationError, setNotificationError] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -60,6 +64,7 @@ export function useLiveTelemetry(profileId: number, setData: Dispatch<SetStateAc
     let controller: AbortController | null = null;
     let cursor: number | undefined;
     let deviceIds: string | undefined;
+    let lastAlertCheck = 0;
 
     const isLocal = typeof window !== "undefined" && ["localhost", "127.0.0.1"].includes(window.location.hostname);
     const hasBackendApi = Boolean(apiUrl) || isLocal;
@@ -67,6 +72,15 @@ export function useLiveTelemetry(profileId: number, setData: Dispatch<SetStateAc
     const refresh = async () => {
       if (!active) return;
       if (document.visibilityState === "visible") {
+        if (Date.now() - lastAlertCheck >= 30000) {
+          lastAlertCheck = Date.now();
+          // Reconcile missed notifications even when the realtime socket drops.
+          void supabase.from("alerts").select("*").order("created_at", {ascending: false}).limit(100).then(({data, error: alertError}) => {
+            if (!active) return;
+            setNotificationError(alertError ? "Notifications could not be refreshed. Your last saved alerts are shown." : "");
+            if (!alertError && data) setData((current) => ({...current, alerts: data as Alert[]}));
+          });
+        }
         controller = new AbortController();
         const timeout = setTimeout(() => controller?.abort(), 8000);
         try {
@@ -76,6 +90,7 @@ export function useLiveTelemetry(profileId: number, setData: Dispatch<SetStateAc
           cursor = deviceIds !== undefined && deviceIds !== nextIds ? undefined : Math.max(cursor ?? 0, ...next.readings.map((r) => r.id));
           deviceIds = nextIds;
           setMqtt(next.mqtt);
+          setLatestReadings((next.latest_readings ?? []).filter((r) => next.devices.some((d) => d.id === r.device_id)));
           setError("");
           setData((current) => ({
             ...current, devices: next.devices,
@@ -83,17 +98,14 @@ export function useLiveTelemetry(profileId: number, setData: Dispatch<SetStateAc
           }));
         } catch (err) {
           if (!active) return;
-          // If Supabase Realtime is actively connected, don't scream with a breaking error banner
-          if (realtimeRef.current) {
-            console.warn("Backend live snapshot poll skipped, relying on Supabase Realtime:", err);
-          } else {
-            setError(errorMessage(err));
-          }
+          // Realtime delivers saved history; it cannot replace the live cache.
+          setLatestReadings([]);
+          setError(errorMessage(err));
         } finally {
           clearTimeout(timeout);
         }
       }
-      if (active) timer = setTimeout(refresh, realtimeRef.current ? 10000 : 2000);
+      if (active) timer = setTimeout(refresh, 2000);
     };
 
     // Database push updates provide immediate readings; snapshots recover missed packets
@@ -111,12 +123,24 @@ export function useLiveTelemetry(profileId: number, setData: Dispatch<SetStateAc
         if (!Number.isFinite(id)) return;
         setData((current) => ({ ...current, readings: current.readings.filter((reading) => reading.id !== id) }));
       })
+      .on("postgres_changes", { event: "*", schema: "public", table: "alerts" }, (event) => {
+        if (!active) return;
+        if (event.eventType === "DELETE") {
+          setData((current) => ({ ...current, alerts: current.alerts.filter((alert) => alert.id !== Number(event.old.id)) }));
+          return;
+        }
+        const alert = event.new as Alert;
+        if (!Number.isSafeInteger(alert.id)) return;
+        setData((current) => alert.owner_id === profileId || current.devices.some((d) => d.owner_id === alert.owner_id) || current.batches.some((b) => b.owner_id === alert.owner_id)
+          ? { ...current, alerts: [alert, ...current.alerts.filter((item) => item.id !== alert.id)].sort((a,b) => b.created_at.localeCompare(a.created_at)) }
+          : current);
+      })
       .subscribe((status) => {
         if (!active) return;
         if (status === "SUBSCRIBED") {
           realtimeRef.current = true;
           setRealtime(true);
-          setError("");
+          // Transport subscription alone does not prove fresh chamber data.
         } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
           realtimeRef.current = false;
           setRealtime(false);
@@ -137,5 +161,5 @@ export function useLiveTelemetry(profileId: number, setData: Dispatch<SetStateAc
     };
   }, [profileId, retry, setData]);
 
-  return { mqtt, realtime, error, liveError: error, retry: () => setRetry((value) => value + 1) };
+  return { mqtt, realtime, latestReadings, notificationError, error, liveError: error, retry: () => setRetry((value) => value + 1) };
 }

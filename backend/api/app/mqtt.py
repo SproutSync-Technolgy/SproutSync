@@ -23,7 +23,8 @@ from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import Device, TelemetryReading, User
+from app.models import Alert, Device, TelemetryReading, User
+from app.live_readings import LiveReadings
 
 logger = logging.getLogger(__name__)
 SENSORS = {
@@ -82,9 +83,9 @@ class SensorPacket(BaseModel):
 
 
 def ingest_message(
-    db, topic: str, payload: bytes, *, retained=False, received_at=None
+    db, topic: str, payload: bytes, *, retained=False, received_at=None, live_store=None
 ) -> bool:
-    """Persist a fresh packet atomically with its device heartbeat."""
+    """Update each live heartbeat; persist sampled history and fault transitions."""
     if retained or len(payload) > 8192 or not topic.endswith("/telemetry"):
         return False
     try:
@@ -127,6 +128,12 @@ def ingest_message(
         message_id = "time:" + packet.recordedAt.astimezone(timezone.utc).isoformat()
     if (
         message_id
+        and live_store is not None
+        and live_store.has_message(device, message_id)
+    ):
+        return False
+    if (
+        message_id
         and db.scalar(
             select(TelemetryReading.id).where(
                 TelemetryReading.device_id == device.id,
@@ -144,38 +151,123 @@ def ingest_message(
         invalid_sensor |= invalid
         values[column] = None if invalid else value
     sensor_status = packet.status.strip().upper()[:120] or "NONE"
+    if " ".join(sensor_status.replace("_", " ").split()) in (
+        "SYSTEM OFF",
+        "POWER OFF",
+        "OFF",
+    ):
+        # Firmware emits placeholder zeroes when its measuring system is off.
+        values = {column: None for column in values}
     if invalid_sensor and sensor_status in ("NONE", "OK", "NORMAL"):
         sensor_status = "SENSOR_FAULT"
     if packet.sdOK is False and sensor_status in ("NONE", "OK", "NORMAL"):
         sensor_status = "SD_ERROR"
     device.status = "online" if sensor_status in ("NONE", "OK", "NORMAL") else "fault"
     device.last_seen_at = received
-    db.add(
-        TelemetryReading(
-            owner_id=device.owner_id,
-            device_id=device.id,
-            **values,
-            voltage=packet.voltage,
-            sd_ok=packet.sdOK,
-            sensor_status=sensor_status,
-            message_id=message_id,
-            recorded_at=recorded,
-            received_at=received,
-            aggregation="raw",
-            sample_count=1,
-            fault_count=int(device.status == "fault"),
-            metric_counts={
-                column: int(values[column] is not None)
-                for column, _, _ in SENSORS.values()
-            }
-            | {"voltage": int(packet.voltage is not None)},
+    previous = db.scalar(
+        select(TelemetryReading)
+        .where(
+            TelemetryReading.device_id == device.id,
+            TelemetryReading.aggregation == "raw",
         )
+        .order_by(TelemetryReading.received_at.desc(), TelemetryReading.id.desc())
+        .limit(1)
     )
+    persist = (
+        previous is None
+        or (received - utc(previous.received_at)).total_seconds()
+        >= settings.telemetry_sample_seconds
+        or previous.sensor_status != sensor_status
+        or previous.sd_ok != packet.sdOK
+    )
+    if persist:
+        db.add(
+            TelemetryReading(
+                owner_id=device.owner_id,
+                device_id=device.id,
+                **values,
+                voltage=packet.voltage,
+                sd_ok=packet.sdOK,
+                sensor_status=sensor_status,
+                message_id=message_id,
+                recorded_at=recorded,
+                received_at=received,
+                aggregation="raw",
+                sample_count=1,
+                fault_count=int(device.status == "fault"),
+                metric_counts={
+                    column: int(values[column] is not None)
+                    for column, _, _ in SENSORS.values()
+                }
+                | {"voltage": int(packet.voltage is not None)},
+            )
+        )
+    # One notification per active device fault, never one per sensor packet.
+    status_changed = previous is None or previous.sensor_status != sensor_status
+    if status_changed or (persist and device.status == "fault"):
+        fault_alerts = db.scalars(
+            select(Alert).where(
+                Alert.owner_id == device.owner_id,
+                Alert.device_id == device.id,
+                Alert.category == "device",
+                Alert.title == "Device reported a fault",
+                Alert.report_key.is_(None),
+                Alert.status.in_(("open", "acknowledged")),
+            )
+        ).all()
+        has_previous_alert = (
+            not status_changed
+            and db.scalar(
+                select(Alert.id)
+                .where(
+                    Alert.owner_id == device.owner_id,
+                    Alert.device_id == device.id,
+                    Alert.title == "Device reported a fault",
+                    Alert.category == "device",
+                    Alert.report_key.is_(None),
+                )
+                .limit(1)
+            )
+            is not None
+        )
+        if device.status == "fault" and not fault_alerts and not has_previous_alert:
+            db.add(
+                Alert(
+                    owner_id=device.owner_id,
+                    device_id=device.id,
+                    title="Device reported a fault",
+                    message=f"{device.name}: {sensor_status}",
+                    recommended_action="Check the chamber and its display before relying on these measurements.",
+                    severity="warning",
+                    status="open",
+                    category="device",
+                )
+            )
+        elif device.status == "online":
+            for alert in fault_alerts:
+                alert.status = "resolved"
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
         raise
+    if live_store is not None:
+        live_store.put(
+            device,
+            {
+                "device_id": device.id,
+                **values,
+                "voltage": packet.voltage,
+                "sd_ok": packet.sdOK,
+                "sensor_status": sensor_status,
+                "recorded_at": recorded.isoformat(),
+                "received_at": received.isoformat(),
+                "aggregation": "raw",
+                "sample_count": 1,
+                "fault_count": int(device.status == "fault"),
+            },
+            message_id=message_id,
+        )
     return True
 
 
@@ -191,6 +283,7 @@ class MQTTBridge:
         self._thread = None
         self._messages = queue.Queue(maxsize=1000)
         self._subscriptions = set()
+        self.latest = LiveReadings()
 
     def start(self):
         if not settings.mqtt_enabled:
@@ -239,6 +332,7 @@ class MQTTBridge:
         if self._thread:
             self._thread.join(timeout=5)
         self.connected = False
+        self.latest.clear()
 
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         self.connected = not reason_code.is_failure
@@ -317,7 +411,13 @@ class MQTTBridge:
                     continue
                 with self.session_factory() as db:
                     if topic.endswith("/telemetry"):
-                        ingest_message(db, topic, payload, received_at=received)
+                        ingest_message(
+                            db,
+                            topic,
+                            payload,
+                            received_at=received,
+                            live_store=self.latest,
+                        )
                     elif topic.endswith("/status") and payload.decode(
                         "utf-8", errors="replace"
                     ).strip().upper() in ("OFFLINE", "DISCONNECTED"):
@@ -346,6 +446,7 @@ class MQTTBridge:
             "connected": self.connected,
             "broker_url": public_url,
             "stale_seconds": settings.mqtt_stale_seconds,
+            "history_sample_seconds": settings.telemetry_sample_seconds,
         }
 
 

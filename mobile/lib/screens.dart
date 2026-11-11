@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'main.dart';
 import 'field_data.dart';
 import 'field_widgets.dart';
+import 'field_search.dart';
 
 /// A row returned by the Supabase REST API.
 typedef Record = Map<String, dynamic>;
@@ -170,6 +171,105 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
           .map((b) => b['code'].toString())
           .firstOrNull ??
       'All batches';
+  Future<void> searchWorkspace() async {
+    final result = await Navigator.push<Record>(
+        context,
+        MaterialPageRoute(
+            builder: (_) => FieldSearchPage(search: source.search)));
+    if (!mounted || result == null) return;
+    if (result['kind'] == 'page') {
+      setState(() => tab = result['destination'] as int);
+      return;
+    }
+    final payload = Map<String, dynamic>.from(result['payload'] as Map);
+    final table = {
+      'batch': 'batches',
+      'device': 'devices',
+      'alert': 'alerts',
+      'evaluation': 'evaluations',
+      'maintenance': 'maintenance_records',
+      'evidence': 'evidence_records',
+      'schedule': 'irrigation_schedules'
+    }[result['kind']];
+    if (table != null) {
+      setState(() {
+        data[table] = [
+          payload,
+          ...data[table]!.where((row) => row['id'] != payload['id'])
+        ];
+      });
+    }
+    if (result['kind'] == 'batch') {
+      await showBatch(payload);
+      return;
+    }
+    if (result['kind'] == 'device') {
+      await showDeviceSnapshot(payload);
+      return;
+    }
+    if (result['kind'] == 'alert') {
+      await showAlert(payload);
+      return;
+    }
+    const labels = {
+      'notes': 'Notes',
+      'comments': 'Observations',
+      'rating': 'Rating out of 5',
+      'result': 'Result',
+      'category': 'Category',
+      'duration_seconds': 'Duration (seconds)',
+      'volume_ml': 'Water delivered (ml)',
+      'next_run_at': 'Planned time',
+      'performed_at': 'Performed',
+      'occurred_at': 'Event time',
+      'recorded_at': 'Recorded',
+      'created_at': 'Created',
+      'evaluator_email': 'Evaluator email',
+      'action': 'Action',
+      'resource': 'Record'
+    };
+    await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        showDragHandle: true,
+        builder: (sheet) => SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
+            child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('${result['title']}',
+                      style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: 8),
+                  const Text('Saved workspace record',
+                      style: TextStyle(color: FieldColors.muted)),
+                  for (final entry in labels.entries)
+                    if (payload[entry.key] != null &&
+                        '${payload[entry.key]}'.isNotEmpty)
+                      Padding(
+                          padding: const EdgeInsets.only(top: 18),
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(entry.value,
+                                    style: const TextStyle(
+                                        fontSize: 12,
+                                        color: FieldColors.muted)),
+                                const SizedBox(height: 4),
+                                Text(entry.key.endsWith('_at')
+                                    ? displayDate(payload[entry.key])
+                                    : '${payload[entry.key]}')
+                              ])),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                          onPressed: () => Navigator.pop(sheet),
+                          child: const Text('Close'))),
+                ])));
+  }
+
   Future<void> signOut() async {
     final yes = await showDialog<bool>(
         context: context,
@@ -622,54 +722,72 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
       ..sort((a, b) => '${a['next_run_at']}'.compareTo('${b['next_run_at']}'));
     return [
       Container(
-          padding: const EdgeInsets.all(22),
-          decoration: BoxDecoration(
-              color: FieldColors.forest,
-              borderRadius: BorderRadius.circular(24)),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Row(children: [
-              Icon(Icons.eco_outlined, color: Color(0xFFD5EAD4), size: 20),
-              SizedBox(width: 8),
-              Expanded(
-                  child: Text('SPROUTSYNC / FIELD',
-                      style: TextStyle(
-                          color: Color(0xFFD5EAD4),
-                          letterSpacing: 1.4,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700)))
-            ]),
-            const SizedBox(height: 18),
-            Text('Hello, $firstName.',
-                style: Theme.of(context)
-                    .textTheme
-                    .headlineMedium
-                    ?.copyWith(color: Colors.white)),
-            const SizedBox(height: 8),
-            Text(
-                evaluator
-                    ? 'Observe, compare and capture your assessment.'
-                    : 'A quick check before your next round.',
-                style: const TextStyle(color: Color(0xFFE0EDE3))),
-            const SizedBox(height: 18),
-            FilledButton.icon(
-                style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFFE5F2DE),
-                    foregroundColor: FieldColors.forest),
-                onPressed: scanWorkspace,
-                icon: const Icon(Icons.qr_code_scanner),
-                label: const Text('Scan a batch or chamber')),
-          ])),
+        padding: const EdgeInsets.all(22),
+        decoration: BoxDecoration(
+            color: FieldColors.mint, borderRadius: BorderRadius.circular(24)),
+        child: Row(children: [
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                const Text('YOUR GROWING SPACE',
+                    style: TextStyle(
+                        fontSize: 10,
+                        letterSpacing: 1.4,
+                        color: FieldColors.forest,
+                        fontWeight: FontWeight.w700)),
+                const SizedBox(height: 12),
+                Text('Hello, $firstName.',
+                    style: Theme.of(context).textTheme.headlineMedium),
+                const SizedBox(height: 8),
+                Text(
+                    evaluator
+                        ? 'Your next observation starts here.'
+                        : 'A clear start to your next round.',
+                    style: const TextStyle(color: FieldColors.muted)),
+                const SizedBox(height: 14),
+                Wrap(spacing: 8, runSpacing: 8, children: [
+                  FieldTag(
+                      '${active.length} active ${active.length == 1 ? 'batch' : 'batches'}'),
+                  FieldTag(
+                      '${openAlerts.length} open ${openAlerts.length == 1 ? 'alert' : 'alerts'}',
+                      color: openAlerts.isEmpty
+                          ? FieldColors.forest
+                          : FieldColors.amber)
+                ]),
+              ])),
+          const SizedBox(width: 8),
+          const Icon(Icons.spa_outlined, size: 64, color: Color(0xFF6E9C68))
+        ]),
+      ),
       const SizedBox(height: 16),
-      Wrap(spacing: 8, runSpacing: 8, children: [
-        FieldTag(
-            '${active.length} active ${active.length == 1 ? 'batch' : 'batches'}'),
-        FieldTag(
-            '${data['devices']!.length} ${data['devices']!.length == 1 ? 'chamber' : 'chambers'}',
-            color: FieldColors.water),
-        FieldTag(
-            '${openAlerts.length} open ${openAlerts.length == 1 ? 'alert' : 'alerts'}',
-            color: openAlerts.isEmpty ? FieldColors.forest : FieldColors.amber)
+      OutlinedButton.icon(
+          key: const ValueKey('field-workspace-search'),
+          onPressed: searchWorkspace,
+          icon: const Icon(Icons.search),
+          label: const Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Find a batch, chamber or record'))),
+      const SizedBox(height: 16),
+      Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Expanded(
+            child: FieldShortcut(
+                label: 'Scan label',
+                icon: Icons.qr_code_scanner,
+                onTap: scanWorkspace)),
+        const SizedBox(width: 10),
+        Expanded(
+            child: FieldShortcut(
+                label: 'Track batches',
+                icon: Icons.spa_outlined,
+                onTap: () => setState(() => tab = 1))),
+        const SizedBox(width: 10),
+        Expanded(
+            child: FieldShortcut(
+                label: 'Open alerts',
+                icon: Icons.notifications_outlined,
+                onTap: () => setState(() => tab = 2),
+                attention: openAlerts.isNotEmpty)),
       ]),
       if (openAlerts.isNotEmpty)
         section('Needs attention',
@@ -939,6 +1057,10 @@ class _MobileWorkspaceState extends State<MobileWorkspace>
                 style: const TextStyle(fontSize: 11, color: FieldColors.muted)),
           ]),
           actions: [
+            IconButton(
+                tooltip: 'Search workspace',
+                onPressed: searchWorkspace,
+                icon: const Icon(Icons.search)),
             IconButton(
                 tooltip: 'Scan label',
                 onPressed: loading ? null : scanWorkspace,

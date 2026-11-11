@@ -20,6 +20,13 @@ Run **`.\verify.bat`** to list required libraries, installed versions, missing
 packages, and configuration problems. Verification installs nothing and starts
 no services. Use **`.\verify.bat -Online`** to also check database connectivity.
 
+The API saves ordinary sensor history every 60 seconds by default while keeping
+the latest live packet available to the dashboard. Fault and recovery changes
+save immediately. Set `TELEMETRY_SAMPLE_SECONDS` in `.env` to change the interval
+(1–3600 seconds), then restart. Existing history is retained. See
+[telemetry, notifications and usability](docs/telemetry-and-usability.md) for
+storage limits, quality checks and the proposed retention policy.
+
 ## Linux quick start
 
 Install Node.js 22.12+ with npm, Python 3.12+ with its venv/pip support, and

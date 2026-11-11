@@ -24,7 +24,7 @@ not silently redefine the original scope or mark its acceptance complete.
 | Real sensor-to-dashboard chain | MQTT validation, persistence, broker login and recovery tests | Partial; capture a real timestamped ESP32 packet, database row and authorized web/mobile display |
 | Physical irrigation | Saved schedule records and watering history | Partial; no validated dispatch/acknowledgement or demonstrated pump execution |
 | Water-use correctness | Stored ml values and litre totals/charts | Partial; finish event-entry/source rules and compare against calibrated flow measurement |
-| Alerts | Stored records, display, preferences and status handling | Partial; complete rule creation/deduplication and test acknowledge/resolve ownership and delivery |
+| Alerts | Device-fault deduplication/recovery, persisted issue reports, unread preferences and status handling | In-app software path verified; general threshold rules, real-device acceptance and external delivery remain |
 | Evaluator assessment | Shared batches, star selection, prefilled form, comments and persisted evaluation | Software path implemented; evaluator UAT and independent-review acceptance remain |
 | Superadmin operations | Persisted account/grant APIs, corrected overview actions, visible errors and safe deletion conflicts | Software path implemented; test the exact deployed roles/configuration and operational account lifecycle |
 | Offline safety and replay | UI exposes unavailable/stale state | Incomplete; durable queue, replay, power-loss, controller-local automation and no-data-loss tests |
