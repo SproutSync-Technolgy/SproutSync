@@ -4,6 +4,13 @@ export const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY ?? '').tr
 export const apiUrl = (import.meta.env.VITE_API_URL ?? '').trim().replace(/\/$/, '');
 
 export function configurationError(): string | null {
+  if (import.meta.env.PROD && apiUrl) {
+    try {
+      if (new URL(apiUrl).protocol !== 'https:') throw new Error();
+    } catch {
+      return 'VITE_API_URL must be the HTTPS origin of the deployed API (for example, https://your-service.onrender.com), without /api/v1.';
+    }
+  }
   if (!supabaseUrl || !supabaseAnonKey) {
     return 'Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in the root .env file, then restart the dashboard.';
   }

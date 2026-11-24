@@ -292,9 +292,11 @@ Use one persistent MQTT collector process, with one Uvicorn worker. The shared
 snapshots; it is not a queue and cannot replay packets lost while no collector
 was running. Running only the Vercel frontend does not keep IoT ingestion alive.
 
-In Vercel set `VITE_API_URL=https://YOUR-BACKEND-HOST` and the matching public
-`VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY`, then rebuild/redeploy the frontend.
-Keep `/api/v1` out of `VITE_API_URL`; callers already supply it. Native builds
+The dashboard's `vercel.json` proxies `/api/*` to the configured Render API,
+so the Vercel project root must be `frontend/dashboard`. Set the matching public
+`VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` in Vercel and redeploy. If using a
+different hosting setup without this proxy, set `VITE_API_URL` to the HTTPS API
+origin; keep `/api/v1` out because callers already supply it. Native builds
 currently access Supabase directly using their compiled Supabase configuration;
 `VITE_API_URL` changes do not update an installed Android app. Keep Supabase Auth redirect allowlists aligned with actual web
 and mobile callbacks. Check CORS using the real frontend origin after deployment.

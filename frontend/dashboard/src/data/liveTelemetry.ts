@@ -60,7 +60,7 @@ export function useLiveTelemetry(profileId: number, setData: Dispatch<SetStateAc
     let lastAlertCheck = 0;
     let apiRetryAt = 0;
     const isLocal = ["localhost","127.0.0.1"].includes(window.location.hostname);
-    const hasBackend = Boolean(apiUrl) || isLocal;
+    const hasBackend = Boolean(apiUrl) || isLocal || import.meta.env.PROD;
 
     const refresh = async () => {
       if (!active) return;
