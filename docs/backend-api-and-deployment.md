@@ -277,7 +277,7 @@ public browser variables:
 | `SUPABASE_URL`, `SUPABASE_ANON_KEY` | Same Supabase project as frontend/native; server uses public key to verify user sessions |
 | `FRONTEND_URL` | Actual HTTPS Vercel frontend origin for CORS |
 | `MQTT_ENABLED` | `true` when IoT ingestion is required; false is an explicit disabled state |
-| `SPROUTSYNC_MQTT_BROKER_URL` | `wss://k11f016c.ala.asia-southeast1.emqxsl.com:8084/mqtt`; no embedded credentials. The legacy `MQTT_BROKER_URL` is ignored. |
+| `MQTT_BROKER_URL` | Actual firmware broker's `wss://.../mqtt` URL; no embedded credentials |
 | `MQTT_USERNAME`, `MQTT_PASSWORD` | Backend broker account with subscription ACLs; never browser secrets |
 | `MQTT_STALE_SECONDS` | Optional device freshness threshold, default 30 seconds; separate from this process's broker status |
 | `DEVICE_ID` | Optional logging/client-ID label; does not assign ownership |

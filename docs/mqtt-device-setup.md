@@ -1,15 +1,14 @@
 # Connect an operator's device
 
-The operator workspace uses the configured EMQX WebSocket endpoint
-`wss://k11f016c.ala.asia-southeast1.emqxsl.com:8084/mqtt`. The FastAPI process
-subscribes and saves telemetry; the browser receives authorized Supabase Realtime
-inserts and checks the API every two seconds to recover missed updates and refresh
-connection state.
+The operator workspace accepts the test page's MQTT contract and defaults to
+`wss://broker.hivemq.com:8884/mqtt`. The FastAPI process subscribes and saves
+telemetry; the browser receives authorized Supabase Realtime inserts and checks
+the API every two seconds to recover missed updates and refresh connection state.
 
 ## Authenticated EMQX connection
 
 The working ZIP uses an EMQX TLS WebSocket endpoint on port 8084. Configure
-`SPROUTSYNC_MQTT_BROKER_URL=wss://<cluster-host>:8084/mqtt`, `MQTT_USERNAME`, and
+`MQTT_BROKER_URL=wss://<cluster-host>:8084/mqtt`, `MQTT_USERNAME`, and
 `MQTT_PASSWORD` in the backend's local `.env` or hosting environment. Never put
 MQTT credentials in `VITE_` variables or browser code. Keep the existing
 Supabase/database settings when changing only the broker connection.
@@ -110,8 +109,8 @@ Optional server-only `.env` settings:
 | Setting | Default |
 | --- | --- |
 | `MQTT_ENABLED` | `true` |
-| `SPROUTSYNC_MQTT_BROKER_URL` | `wss://k11f016c.ala.asia-southeast1.emqxsl.com:8084/mqtt` |
-| `MQTT_USERNAME`, `MQTT_PASSWORD` | EMQX account credentials; required for authenticated broker access |
+| `MQTT_BROKER_URL` | `wss://broker.hivemq.com:8884/mqtt` |
+| `MQTT_USERNAME`, `MQTT_PASSWORD` | Empty for the shared test broker |
 | `DEVICE_ID` | Empty; optional firmware label for a distinct backend client ID |
 | `MQTT_STALE_SECONDS` | `30` |
 
