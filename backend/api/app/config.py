@@ -31,7 +31,11 @@ class Settings(BaseSettings):
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
     mqtt_enabled: bool = True
-    mqtt_broker_url: str = "wss://k11f016c.ala.asia-southeast1.emqxsl.com:8084/mqtt"
+    # Ignore stale generic Render overrides; this project uses the EMQX broker below.
+    mqtt_broker_url: str = Field(
+        default="wss://k11f016c.ala.asia-southeast1.emqxsl.com:8084/mqtt",
+        validation_alias="SPROUTSYNC_MQTT_BROKER_URL",
+    )
     mqtt_username: str = ""
     mqtt_password: str = ""
     # Firmware label; the backend uses a distinct, suffixed MQTT client ID.

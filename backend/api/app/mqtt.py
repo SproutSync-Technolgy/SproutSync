@@ -268,7 +268,7 @@ class MQTTBridge:
         except ValueError:
             self.state = "configuration_error"
             logger.error(
-                "MQTT_BROKER_URL must be a wss URL without credentials or query parameters"
+                "SPROUTSYNC_MQTT_BROKER_URL must be a wss URL without credentials or query parameters"
             )
             return
         self._stop.clear()

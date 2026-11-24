@@ -220,7 +220,7 @@ async function mockFirstDevice(page: Page) {
   const devices: Record<string, unknown>[] = [];
   await page.route(`https://${authHost}/rest/v1/devices*`, (route) => route.fulfill({ json: devices }));
   await page.route("**/api/v1/devices/live*", (route) => route.fulfill({ json: {
-    devices, readings: [], mqtt: { state: "connected", connected: true, broker_url: "wss://broker.hivemq.com:8884/mqtt", stale_seconds: 30 },
+    devices, readings: [], mqtt: { state: "connected", connected: true, broker_url: "wss://k11f016c.ala.asia-southeast1.emqxsl.com:8084/mqtt", stale_seconds: 30 },
   } }));
   return devices;
 }
@@ -449,7 +449,7 @@ test("operator connects a granted device, waits for telemetry, and sees saved li
   const emptyChamber = { ...device, id: 2, serial_number: "TEST-002", name: "Waiting chamber" };
   await page.route("**/api/v1/devices/live*", (route) => {
     const after = Number(new URL(route.request().url()).searchParams.get("after_id") ?? 0);
-    return route.fulfill({ json: { devices: [device, emptyChamber], readings: readings.filter((r) => Number(r.id) > after), mqtt: { state: mqttConnected ? "connected" : "reconnecting", connected: mqttConnected, broker_url: "wss://broker.hivemq.com:8884/mqtt", stale_seconds: 30 } } });
+    return route.fulfill({ json: { devices: [device, emptyChamber], readings: readings.filter((r) => Number(r.id) > after), mqtt: { state: mqttConnected ? "connected" : "reconnecting", connected: mqttConnected, broker_url: "wss://k11f016c.ala.asia-southeast1.emqxsl.com:8084/mqtt", stale_seconds: 30 } } });
   });
   await page.route("**/api/v1/devices/connect", async (route) => {
     if (rejected) return route.fulfill({ status: 409, json: { detail: "This MQTT topic prefix is already connected to another device. Use a unique prefix." } });
@@ -463,7 +463,7 @@ test("operator connects a granted device, waits for telemetry, and sees saved li
   const dialog = page.getByRole("dialog", { name: "Add device", exact: true });
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await expect(dialog.getByLabel("MQTT broker")).toHaveValue("wss://broker.hivemq.com:8884/mqtt");
+  await expect(dialog.getByLabel("MQTT broker")).toHaveValue("wss://k11f016c.ala.asia-southeast1.emqxsl.com:8084/mqtt");
   await dialog.getByRole("button", { name: "Connect device", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText("already connected to another device");
   rejected = false;

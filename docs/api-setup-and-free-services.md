@@ -14,7 +14,7 @@ automatically connected or enabled by this change.
 | Supabase Realtime | Publish the relevant telemetry/device tables and retain RLS | Authorized live updates; API polling also handles missed readings |
 | Backend URL | `VITE_API_URL` for hosted frontend; local Vite proxy in development | Account, device, and recovery API requests must reach the actual backend |
 | Browser origin | `FRONTEND_URL`, matching allowed Auth redirects | Correct CORS and login return paths |
-| MQTT broker | `MQTT_ENABLED`, `MQTT_BROKER_URL`, `MQTT_USERNAME`, `MQTT_PASSWORD`, `MQTT_STALE_SECONDS` | TLS broker connection from the persistent backend; credentials stay server-side |
+| MQTT broker | `MQTT_ENABLED`, `SPROUTSYNC_MQTT_BROKER_URL`, `MQTT_USERNAME`, `MQTT_PASSWORD`, `MQTT_STALE_SECONDS` | TLS broker connection from the persistent backend; credentials stay server-side |
 | Firmware identity | Optional backend `DEVICE_ID`; actual registered serial/topic in the firmware and database | The API generates a separate client ID so it cannot disconnect the ESP32 by reusing its MQTT client ID |
 | Google OAuth, if enabled | OAuth client ID/secret in Supabase's provider settings; consent/test users and callback | Optional sign-in provider. Do not put the client secret in `VITE_` variables |
 | Email delivery | Supabase Auth sender/templates/SMTP; optional API `GOOGLE_SMTP_EMAIL`, `GOOGLE_APP_PASSWORD`, SMTP host/port | Hosted Auth email delivery and the API's SMTP routes are separate configurations |

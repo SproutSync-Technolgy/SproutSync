@@ -34,7 +34,7 @@ services:
       SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
       SMTP_PORT: ${SMTP_PORT:-587}
       MQTT_ENABLED: ${MQTT_ENABLED:-true}
-      MQTT_BROKER_URL: ${MQTT_BROKER_URL:-wss://k11f016c.ala.asia-southeast1.emqxsl.com:8084/mqtt}
+      SPROUTSYNC_MQTT_BROKER_URL: ${SPROUTSYNC_MQTT_BROKER_URL:-wss://k11f016c.ala.asia-southeast1.emqxsl.com:8084/mqtt}
       MQTT_USERNAME: ${MQTT_USERNAME:-}
       MQTT_PASSWORD: ${MQTT_PASSWORD:-}
       DEVICE_ID: ${DEVICE_ID:-}
