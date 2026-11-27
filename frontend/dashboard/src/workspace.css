@@ -2036,6 +2036,54 @@ button:disabled {
 .reading-summary dl > div { margin-top: 6px; }
 .reading-summary dt { font-weight: 600; }
 .reading-summary dd { color: var(--muted-foreground); }
+
+.telemetry-metric-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; margin: 18px 0 12px; }
+.telemetry-metric-card { --metric-color: #247d4e; --metric-tint: #eef7f1; min-width: 0; overflow: hidden; padding: 16px 17px 12px; border: 1px solid color-mix(in srgb,var(--metric-color) 17%,var(--border)); border-radius: 16px; background: linear-gradient(145deg,color-mix(in srgb,var(--metric-color) 5%,var(--card)) 0%,var(--card) 52%); box-shadow: 0 2px 7px rgba(13,51,36,.035); transition: border-color .18s ease,box-shadow .18s ease,transform .18s ease; }
+.telemetry-metric-card:hover { border-color: color-mix(in srgb,var(--metric-color) 34%,var(--border)); box-shadow: 0 10px 24px rgba(13,51,36,.08); transform: translateY(-2px); }
+.telemetry-card-heading { display: flex; align-items: center; gap: 8px; min-height: 28px; }
+.telemetry-card-icon { display: inline-flex; align-items: center; justify-content: center; width: 29px; height: 29px; flex: 0 0 auto; border-radius: 9px; color: var(--metric-color); background: var(--metric-tint); }
+.telemetry-card-label { min-width: 0; overflow: hidden; color: var(--muted-foreground); font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.telemetry-status-chip { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; margin-left: auto; padding: 4px 7px; border: 1px solid transparent; border-radius: 999px; font-size: 10px; font-weight: 700; line-height: 1.1; }
+.telemetry-status-chip > span { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.telemetry-status-good { color: #176b43; background: #eaf6ee; border-color: #d2ead9; }
+.telemetry-status-attention { color: #965313; background: #fff4e5; border-color: #f1dfc5; }
+.telemetry-status-stale { color: #765b18; background: #fff8e8; border-color: #eedfb5; }
+.telemetry-status-empty { color: #657168; background: #f0f3f0; border-color: #e1e7e2; }
+.telemetry-card-reading { display: flex; align-items: baseline; gap: 6px; min-height: 45px; margin-top: 8px; font-variant-numeric: tabular-nums; }
+.telemetry-reading-value { color: var(--foreground); font-size: clamp(24px,2.2vw,30px); font-weight: 720; letter-spacing: -.045em; line-height: 1.15; }
+.telemetry-reading-unit { color: var(--muted-foreground); font-size: 13px; font-weight: 550; }
+.telemetry-chart-heading { display: flex; justify-content: space-between; gap: 8px; margin-top: 7px; color: var(--muted-foreground); font-size: 10px; }
+.telemetry-chart-heading span:first-child { font-weight: 650; }
+.telemetry-sparkline { display: block; width: 100%; height: 68px; margin-top: 2px; overflow: visible; }
+.telemetry-target-band { fill: var(--metric-tint); }
+.telemetry-target-edge { stroke: color-mix(in srgb,var(--metric-color) 38%,transparent); stroke-width: 1; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
+.telemetry-trend-area { fill: var(--metric-tint); opacity: .7; }
+.telemetry-trend-line { fill: none; stroke: var(--metric-color); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.telemetry-point { fill: var(--card); stroke: var(--metric-color); stroke-width: 1.8; vector-effect: non-scaling-stroke; }
+.telemetry-point-current { fill: var(--metric-color); stroke: var(--card); stroke-width: 2.2; vector-effect: non-scaling-stroke; }
+.telemetry-chart-empty { display: grid; height: 68px; margin-top: 2px; place-items: center; color: var(--muted-foreground); font-size: 11px; }
+.telemetry-card-footer { display: flex; justify-content: space-between; gap: 8px; padding-top: 8px; border-top: 1px solid color-mix(in srgb,var(--metric-color) 13%,var(--border)); color: var(--muted-foreground); font-size: 10px; }
+.telemetry-card-footer strong { color: var(--foreground); font-weight: 650; }
+.reading-current-banner { display: flex; align-items: center; gap: 11px; margin: 0 0 20px; padding: 13px 15px; border: 1px solid var(--border); border-radius: 13px; background: linear-gradient(100deg,var(--secondary),var(--card) 72%); }
+.reading-live-indicator { position: relative; width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; background: #269663; }
+.reading-live-fresh { box-shadow: 0 0 0 4px rgba(38,150,99,.12); }
+.reading-live-fresh::after { position: absolute; inset: -4px; border: 1px solid rgba(38,150,99,.34); border-radius: 50%; content: ""; animation: reading-pulse 2s ease-out infinite; }
+.reading-live-stale { background: #c58a26; box-shadow: 0 0 0 4px rgba(197,138,38,.13); }
+.reading-live-empty { background: #89958c; box-shadow: 0 0 0 4px rgba(137,149,140,.13); }
+.reading-current-copy { display: grid; min-width: 0; gap: 2px; }
+.reading-current-copy strong,.reading-chart-note strong { color: var(--foreground); font-size: 12px; font-weight: 700; }
+.reading-current-copy span,.reading-chart-note span { color: var(--muted-foreground); font-size: 11px; line-height: 1.45; }
+.reading-chart-note { display: grid; gap: 2px; margin-left: auto; padding-left: 16px; border-left: 1px solid var(--border); max-width: 420px; }
+@keyframes reading-pulse { 0% { transform: scale(.75); opacity: .8; } 100% { transform: scale(1.5); opacity: 0; } }
+
+@media (max-width: 960px) { .telemetry-metric-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (max-width: 620px) {
+  .telemetry-metric-grid { grid-template-columns: 1fr; gap: 10px; }
+  .telemetry-metric-card { padding: 14px 15px 11px; }
+  .reading-current-banner { align-items: flex-start; }
+  .reading-chart-note { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .telemetry-metric-card { transition: none; } .reading-live-fresh::after { animation: none; } }
 .chamber-card-footer { flex-wrap: wrap; padding-top: 10px; border-top: 1px solid #dce7de; }
 @media(max-width:600px) { .chamber-overview-grid:has(> :only-child) .chamber-card-conditions { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 .welcome-panel .text-emerald-200 { color: var(--brand-700); }

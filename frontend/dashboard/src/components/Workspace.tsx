@@ -78,7 +78,8 @@ import {
 } from "../data/workspace";
 import { Logo, Btn, Modal, NotebookInspectIcon } from "./ProtoPrimitives";
 import { PersonalDetails } from "./PersonalDetails";
-import { WaterUseChart, Spark, QualityGradeChart } from "./ProtoCharts";
+import { WaterUseChart, QualityGradeChart } from "./ProtoCharts";
+import {TelemetryMetricCard, type TelemetryPoint} from "./TelemetryMetricCard";
 import { CalendarDatePicker } from "./CalendarDatePicker";
 import { mergeReadings, useLiveTelemetry } from "../data/liveTelemetry";
 import { DeviceConnectionForm } from "./DeviceConnection";
@@ -225,6 +226,18 @@ function printBrandedReport(
   return true;
 }
 const stages = ["soaking", "rinsing", "growing", "ready", "harvested"];
+function telemetryStatus(
+  value: number | null | undefined,
+  range: {min: number; max: number},
+  stale: boolean,
+  labels: {low: string; high: string; good: string},
+) {
+  if (value == null || !Number.isFinite(value)) return {status: "No reading", statusTone: "empty" as const};
+  const condition = value < range.min ? labels.low : value > range.max ? labels.high : labels.good;
+  if (stale) return {status: `Last known · ${condition}`, statusTone: "stale" as const};
+  return {status: condition, statusTone: condition === labels.good ? "good" as const : "attention" as const};
+}
+
 type Dialog = {
   kind: string;
   batch?: Batch;
@@ -564,7 +577,6 @@ export default function Workspace({
     : reading).filter(
     (r) => selectedDevice === "all" || r.device_id === Number(selectedDevice),
   );
-  const liveDeviceReadings = [...deviceReadings.filter((reading) => !reading.aggregation || ["raw","event"].includes(reading.aggregation)),...live.liveTrail.filter((reading) => selectedDevice === "all" || reading.device_id === Number(selectedDevice))].sort((a,b) => Date.parse(b.received_at ?? b.recorded_at)-Date.parse(a.received_at ?? a.recorded_at));
   const telemetryExportHeaders = [
     "Chamber",
     "Aggregation",
@@ -589,7 +601,11 @@ export default function Workspace({
     reading.wastewater_level_percent ?? "",
     reading.recorded_at,
   ]);
-  const newest = [...liveDeviceReadings, ...live.latestReadings.filter((reading) => selectedDevice === "all" || reading.device_id === Number(selectedDevice))]
+  const newest = [
+    ...deviceReadings.filter((reading) => !reading.aggregation || reading.aggregation === "raw"),
+    ...live.liveTrail.filter((reading) => selectedDevice === "all" || reading.device_id === Number(selectedDevice)).filter((reading) => !reading.aggregation || reading.aggregation === "raw"),
+    ...live.latestReadings.filter((reading) => selectedDevice === "all" || reading.device_id === Number(selectedDevice)).filter((reading) => !reading.aggregation || reading.aggregation === "raw"),
+  ]
     .sort((a, b) => Date.parse(b.received_at ?? b.recorded_at) - Date.parse(a.received_at ?? a.recorded_at))[0];
   const currentReading = newest && controllerOff(newest.sensor_status) ? {...newest, temperature_c: null, humidity_percent: null, water_level_percent: null, water_temperature_c: null, light_lux: null, wastewater_level_percent: null} : newest;
   const readingDevice = data.devices.find((d) => d.id === currentReading?.device_id);
@@ -597,6 +613,36 @@ export default function Workspace({
     (readingDevice && !deviceIsConnected(readingDevice,live.staleSeconds)) ||
     Date.now() - Date.parse(currentReading.received_at ?? currentReading.recorded_at) > live.staleSeconds * 1000
   ));
+  const readingTrend = (() => {
+    if (!currentReading) return [];
+    const candidates = [
+      ...deviceReadings.filter((reading) => reading.device_id === currentReading.device_id && (!reading.aggregation || reading.aggregation === "raw")),
+      ...live.liveTrail.filter((reading) => reading.device_id === currentReading.device_id && (!reading.aggregation || reading.aggregation === "raw")),
+    ];
+    const byTimestamp = new Map<number, Reading | (typeof live.liveTrail)[number]>();
+    for (const candidate of candidates) {
+      const timestamp = Date.parse(candidate.received_at ?? candidate.recorded_at);
+      if (!Number.isFinite(timestamp)) continue;
+      byTimestamp.set(timestamp, controllerOff(candidate.sensor_status)
+        ? {...candidate, temperature_c: null, humidity_percent: null, water_level_percent: null, water_temperature_c: null, light_lux: null, wastewater_level_percent: null}
+        : candidate);
+    }
+    if (!currentReading.aggregation || currentReading.aggregation === "raw") {
+      const timestamp = Date.parse(currentReading.received_at ?? currentReading.recorded_at);
+      if (Number.isFinite(timestamp)) byTimestamp.set(timestamp, currentReading);
+    }
+    return [...byTimestamp.values()]
+      .sort((a,b) => Date.parse(a.received_at ?? a.recorded_at)-Date.parse(b.received_at ?? b.recorded_at))
+      .slice(-12);
+  })();
+  const readingTrendPoints = (metric: "temperature_c" | "humidity_percent" | "water_level_percent" | "water_temperature_c" | "light_lux" | "wastewater_level_percent"): TelemetryPoint[] =>
+    readingTrend.map((reading) => ({value: reading[metric], timestamp: reading.received_at ?? reading.recorded_at}));
+  const readingMetricStatus = (
+    value: number | null | undefined,
+    min: number,
+    max: number,
+    labels: {low: string; high: string; good: string},
+  ) => telemetryStatus(value,{min,max},readingStale,labels);
   const readingNotice = !currentReading ? "No reading yet. Connect a chamber to start monitoring."
     : controllerOff(currentReading.sensor_status) ? "Controller off. Measurements are unavailable until the chamber resumes reporting."
     : readingStale ? "Last known reading. The chamber has not supplied fresh data. Check its power and connection."
@@ -1417,276 +1463,54 @@ export default function Workspace({
 
                     {readingNotice && <p className="reading-notice" role="status"><AlertTriangle size={16} />{readingNotice}</p>}
                     <p className="telemetry-storage-note">Live measurements refresh every 2 seconds. History saves 5-minute averages in fault-free windows and 1-minute averages in windows with faults. State changes are saved immediately.</p>
-                    {/* 6 Detailed Sensor Telemetry Cards matching image_e0a5e9.png */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-                      {/* 1. Air Temperature */}
-                      <div className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm hover:border-border transition-all">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-                            <Thermometer size={16} className="text-emerald-500" />
-                            Air Temperature
-                          </span>
-                          <span
-                            className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${currentReading?.temperature_c &&
-                                currentReading.temperature_c >= 21 &&
-                                currentReading.temperature_c <= 27
-                                ? "bg-emerald-500/10 text-emerald-600"
-                                : "bg-amber-500/10 text-amber-600"
-                              }`}
-                          >
-                            {readingStale ? "Last known" : currentReading?.temperature_c == null ? "No reading" :
-                              currentReading.temperature_c >= 21 &&
-                              currentReading.temperature_c <= 27
-                              ? "Within range"
-                              : "Check range"}
-                          </span>
-                        </div>
-                        <div className="flex items-baseline justify-between mb-1">
-                          <span className="text-2xl font-bold tracking-tight text-foreground">
-                            {currentReading?.temperature_c !== null &&
-                              currentReading?.temperature_c !== undefined
-                              ? `${currentReading.temperature_c} °C`
-                              : "—"}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            Ref 21–27 °C
-                          </span>
-                        </div>
-                        <div className="mt-2 pt-2 border-t border-border/40">
-                          <Spark
-                            data={liveDeviceReadings
-                              .slice(0, 10).reverse()
-                              .flatMap((r) => r.temperature_c == null ? [] : [r.temperature_c])}
-                            color="#10b981"
-                          />
-                        </div>
-                      </div>
-
-                      {/* 2. Humidity */}
-                      <div className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm hover:border-border transition-all">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-                            <Droplets size={16} className="text-blue-500" />
-                            Humidity
-                          </span>
-                          <span
-                            className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${currentReading?.humidity_percent &&
-                                currentReading.humidity_percent >= 80 &&
-                                currentReading.humidity_percent <= 90
-                                ? "bg-emerald-500/10 text-emerald-600"
-                                : "bg-amber-500/10 text-amber-600"
-                              }`}
-                          >
-                            {readingStale ? "Last known" : currentReading?.humidity_percent == null ? "No reading" :
-                              currentReading.humidity_percent >= 80 &&
-                              currentReading.humidity_percent <= 90
-                              ? "Within range"
-                              : "Check range"}
-                          </span>
-                        </div>
-                        <div className="flex items-baseline justify-between mb-1">
-                          <span className="text-2xl font-bold tracking-tight text-foreground">
-                            {currentReading?.humidity_percent !== null &&
-                              currentReading?.humidity_percent !== undefined
-                              ? `${currentReading.humidity_percent} %`
-                              : "—"}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            Ref 80–90 %
-                          </span>
-                        </div>
-                        <div className="mt-2 pt-2 border-t border-border/40">
-                          <Spark
-                            data={liveDeviceReadings
-                              .slice(0, 10).reverse()
-                              .flatMap((r) => r.humidity_percent == null ? [] : [r.humidity_percent])}
-                            color="#3b82f6"
-                          />
-                        </div>
-                      </div>
-
-                      {/* 3. Fresh-Water Tank */}
-                      <div className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm hover:border-border transition-all">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-                            <Droplets size={16} className="text-amber-500" />
-                            Fresh-Water Tank
-                          </span>
-                          <span
-                            className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${currentReading?.water_level_percent &&
-                                currentReading.water_level_percent > 40
-                                ? "bg-emerald-500/10 text-emerald-600"
-                                : "bg-amber-500/10 text-amber-600"
-                              }`}
-                          >
-                            {readingStale ? "Last known" : currentReading?.water_level_percent == null ? "No reading" :
-                              currentReading.water_level_percent > 40
-                              ? "Within range"
-                              : "Getting low"}
-                          </span>
-                        </div>
-                        <div className="flex items-baseline justify-between mb-1">
-                          <span className="text-2xl font-bold tracking-tight text-foreground">
-                            {currentReading?.water_level_percent !== null &&
-                              currentReading?.water_level_percent !== undefined
-                              ? `${currentReading.water_level_percent} %`
-                              : "—"}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            Ref &gt; 40 %
-                          </span>
-                        </div>
-                        <div className="mt-2 pt-2 border-t border-border/40">
-                          <Spark
-                            data={liveDeviceReadings
-                              .slice(0, 10).reverse()
-                              .flatMap((r) => r.water_level_percent == null ? [] : [r.water_level_percent])}
-                            color="#f59e0b"
-                          />
-                        </div>
-                      </div>
-
-                      {/* 4. Water Temperature */}
-                      <div className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm hover:border-border transition-all">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-                            <Thermometer size={16} className="text-purple-500" />
-                            Water Temperature
-                          </span>
-                          <span
-                            className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${currentReading?.water_temperature_c &&
-                                currentReading.water_temperature_c >= 18 &&
-                                currentReading.water_temperature_c <= 22
-                                ? "bg-emerald-500/10 text-emerald-600"
-                                : "bg-amber-500/10 text-amber-600"
-                              }`}
-                          >
-                            {readingStale ? "Last known" : currentReading?.water_temperature_c == null ? "No reading" :
-                              currentReading.water_temperature_c >= 18 &&
-                              currentReading.water_temperature_c <= 22
-                              ? "Within range"
-                              : "Check range"}
-                          </span>
-                        </div>
-                        <div className="flex items-baseline justify-between mb-1">
-                          <span className="text-2xl font-bold tracking-tight text-foreground">
-                            {currentReading?.water_temperature_c !== null &&
-                              currentReading?.water_temperature_c !== undefined
-                              ? `${currentReading.water_temperature_c} °C`
-                              : "—"}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            Ref 18–22 °C
-                          </span>
-                        </div>
-                        <div className="mt-2 pt-2 border-t border-border/40">
-                          <Spark
-                            data={liveDeviceReadings
-                              .slice(0, 10).reverse()
-                              .flatMap((r) => r.water_temperature_c == null ? [] : [r.water_temperature_c])}
-                            color="#8b5cf6"
-                          />
-                        </div>
-                      </div>
-
-                      {/* 5. Light Level */}
-                      <div className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm hover:border-border transition-all">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-                            <Sun size={16} className="text-indigo-500" />
-                            Light Level
-                          </span>
-                          <span
-                            className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${currentReading?.light_lux !== null &&
-                                currentReading?.light_lux !== undefined &&
-                                currentReading.light_lux < 5
-                                ? "bg-emerald-500/10 text-emerald-600"
-                                : "bg-rose-500/10 text-rose-600"
-                              }`}
-                          >
-                            {readingStale ? "Last known" : currentReading?.light_lux == null ? "No reading" :
-                              currentReading.light_lux < 5
-                              ? "Nice & dark"
-                              : "Light detected"}
-                          </span>
-                        </div>
-                        <div className="flex items-baseline justify-between mb-1">
-                          <span className="text-2xl font-bold tracking-tight text-foreground">
-                            {currentReading?.light_lux !== null &&
-                              currentReading?.light_lux !== undefined
-                              ? `${currentReading.light_lux} lux`
-                              : "—"}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            Ref ~0 lux
-                          </span>
-                        </div>
-                        <div className="mt-2 pt-2 border-t border-border/40">
-                          <Spark
-                            data={liveDeviceReadings
-                              .slice(0, 10).reverse()
-                              .flatMap((r) => r.light_lux == null ? [] : [r.light_lux])}
-                            color="#6366f1"
-                          />
-                        </div>
-                      </div>
-
-                      {/* 6. Wastewater Tank */}
-                      <div className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm hover:border-border transition-all">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-                            <Droplets size={16} className="text-cyan-500" />
-                            Wastewater Tank
-                          </span>
-                          <span
-                            className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${currentReading?.wastewater_level_percent !== null &&
-                                currentReading?.wastewater_level_percent !== undefined &&
-                                currentReading.wastewater_level_percent < 85
-                                ? "bg-emerald-500/10 text-emerald-600"
-                                : "bg-rose-500/10 text-rose-600"
-                              }`}
-                          >
-                            {readingStale ? "Last known" : currentReading?.wastewater_level_percent == null ? "No reading" :
-                              currentReading.wastewater_level_percent < 85
-                              ? "Room available"
-                              : "Near full"}
-                          </span>
-                        </div>
-                        <div className="flex items-baseline justify-between mb-1">
-                          <span className="text-2xl font-bold tracking-tight text-foreground">
-                            {currentReading?.wastewater_level_percent !== null &&
-                              currentReading?.wastewater_level_percent !== undefined
-                              ? `${currentReading.wastewater_level_percent} %`
-                              : "—"}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            Ref &lt; 85 %
-                          </span>
-                        </div>
-                        <div className="mt-2 pt-2 border-t border-border/40">
-                          <Spark
-                            data={liveDeviceReadings
-                              .slice(0, 10).reverse()
-                              .flatMap((r) => r.wastewater_level_percent == null ? [] : [r.wastewater_level_percent])}
-                            color="#06b6d4"
-                          />
-                        </div>
-                      </div>
+                    <div className="telemetry-metric-grid">
+                      <TelemetryMetricCard
+                        label="Air Temperature" value={currentReading?.temperature_c} unit="°C" color="#10b981" icon={<Thermometer size={17} />}
+                        {...readingMetricStatus(currentReading?.temperature_c,21,27,{low:"Too cool",high:"Too warm",good:"In range"})}
+                        reference="21–27 °C" range={{min:21,max:27}} points={readingTrendPoints("temperature_c")}
+                      />
+                      <TelemetryMetricCard
+                        label="Humidity" value={currentReading?.humidity_percent} unit="%" color="#3b82f6" icon={<Droplets size={17} />}
+                        {...readingMetricStatus(currentReading?.humidity_percent,80,90,{low:"Too dry",high:"Too humid",good:"In range"})}
+                        reference="80–90%" range={{min:80,max:90}} points={readingTrendPoints("humidity_percent")}
+                      />
+                      <TelemetryMetricCard
+                        label="Fresh-Water Tank" value={currentReading?.water_level_percent} unit="%" color="#f59e0b" icon={<Droplets size={17} />}
+                        {...readingMetricStatus(currentReading?.water_level_percent,40,100,{low:"Getting low",high:"Check sensor",good:"Healthy"})}
+                        reference="Above 40%" range={{min:40,max:100}} points={readingTrendPoints("water_level_percent")}
+                      />
+                      <TelemetryMetricCard
+                        label="Water Temperature" value={currentReading?.water_temperature_c} unit="°C" color="#8b5cf6" icon={<Thermometer size={17} />}
+                        {...readingMetricStatus(currentReading?.water_temperature_c,18,22,{low:"Too cool",high:"Too warm",good:"In range"})}
+                        reference="18–22 °C" range={{min:18,max:22}} points={readingTrendPoints("water_temperature_c")}
+                      />
+                      <TelemetryMetricCard
+                        label="Light Level" value={currentReading?.light_lux} unit="lux" color="#6366f1" icon={<Sun size={17} />}
+                        {...readingMetricStatus(currentReading?.light_lux,0,5,{low:"Check sensor",high:"Light detected",good:"Dark"})}
+                        reference="Near 0 lux" range={{min:0,max:5}} points={readingTrendPoints("light_lux")}
+                      />
+                      <TelemetryMetricCard
+                        label="Wastewater Tank" value={currentReading?.wastewater_level_percent} unit="%" color="#06b6d4" icon={<Droplets size={17} />}
+                        {...readingMetricStatus(currentReading?.wastewater_level_percent,0,85,{low:"Check sensor",high:"Near full",good:"Room available"})}
+                        reference="Below 85%" range={{min:0,max:85}} points={readingTrendPoints("wastewater_level_percent")}
+                      />
                     </div>
 
-                    <p className="text-xs text-muted-foreground mb-6">
-                      {currentReading
-                        ? `Latest reading from ${deviceName(currentReading.device_id)} recorded at ${date(currentReading.recorded_at)}${readingStale
-                          ? " · Last known reading — live data unavailable"
-                          : ""
-                        }`
-                        : "No sensor readings available for this chamber selection."}
-                    </p>
-
+                    <div className="reading-current-banner">
+                      <span className={`reading-live-indicator ${!currentReading ? "reading-live-empty" : readingStale ? "reading-live-stale" : "reading-live-fresh"}`} aria-hidden="true" />
+                      <div className="reading-current-copy">
+                        <strong>{!currentReading ? "Waiting for sensor data" : readingStale ? "Last known packet" : "Live sensor packet"}</strong>
+                        <span>{currentReading ? `${deviceName(currentReading.device_id)} · ${date(currentReading.received_at ?? currentReading.recorded_at)}` : "Connect a chamber to see live measurements."}</span>
+                      </div>
+                      <div className="reading-chart-note">
+                        <strong>Raw packet trends</strong>
+                        <span>Each chart uses up to 12 raw packets from the chamber shown. The history below also includes saved averages.</span>
+                      </div>
+                    </div>
                     {/* Historical Telemetry Log */}
                     <SectionTitle
                       title="Historical Sensor Telemetry"
-                      subtitle="Chronological log of machine-reported chamber sensor packets."
+                      subtitle="Raw sensor packets and saved averages. Expand an average row to inspect its sample range."
                       action={
                         <div className="telemetry-export-actions">
                         <Btn
