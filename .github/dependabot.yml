@@ -2,37 +2,31 @@ version: 2
 updates:
   - package-ecosystem: npm
     directory: /
+    open-pull-requests-limit: 1
     schedule:
       interval: monthly
     groups:
-      npm-non-major:
+      npm-updates:
         applies-to: version-updates
         patterns:
           - "*"
-        update-types:
-          - minor
-          - patch
   - package-ecosystem: pip
     directory: /backend/api
+    open-pull-requests-limit: 1
     schedule:
       interval: monthly
     groups:
-      pip-non-major:
+      pip-updates:
         applies-to: version-updates
         patterns:
           - "*"
-        update-types:
-          - minor
-          - patch
   - package-ecosystem: github-actions
     directory: /
+    open-pull-requests-limit: 1
     schedule:
       interval: monthly
     groups:
-      actions-non-major:
+      actions-updates:
         applies-to: version-updates
         patterns:
           - "*"
-        update-types:
-          - minor
-          - patch
