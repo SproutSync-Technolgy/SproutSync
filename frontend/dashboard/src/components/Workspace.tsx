@@ -647,6 +647,32 @@ export default function Workspace({
     labels: {low: string; high: string; good: string},
     bounds?: {minInclusive?: boolean; maxInclusive?: boolean},
   ) => telemetryStatus(value,{min,max},readingStale,labels,bounds);
+  const irrigationTelemetry = data.devices.filter((device) => !device.is_demo).map((device) => {
+    const rows = [
+      ...data.readings.filter((reading) => reading.device_id === device.id),
+      ...live.liveTrail.filter((reading) => reading.device_id === device.id),
+      ...live.latestReadings.filter((reading) => reading.device_id === device.id),
+    ].filter((reading) => !reading.aggregation || reading.aggregation === "raw");
+    const byTimestamp = new Map<number, Reading | (typeof live.liveTrail)[number]>();
+    for (const reading of rows) {
+      const timestamp = Date.parse(reading.received_at ?? reading.recorded_at);
+      if (Number.isFinite(timestamp)) byTimestamp.set(timestamp,reading);
+    }
+    const samples = [...byTimestamp.entries()].sort(([left],[right]) => left-right).map(([,reading]) =>
+      controllerOff(reading.sensor_status)
+        ? {...reading,water_level_percent:null,wastewater_level_percent:null}
+        : reading,
+    );
+    const latest = samples[samples.length-1];
+    const lastPacketAt = latest?.received_at ?? latest?.recorded_at;
+    const packetTimestamp = Date.parse(lastPacketAt ?? "");
+    const stale = !latest || !Number.isFinite(packetTimestamp) || !deviceIsConnected(device,live.staleSeconds) || Date.now()-packetTimestamp > live.staleSeconds*1000;
+    const pointsFor = (metric: "water_level_percent" | "wastewater_level_percent"): TelemetryPoint[] =>
+      samples.slice(-12).map((reading) => ({value:reading[metric],timestamp:reading.received_at ?? reading.recorded_at}));
+    const statusFor = (value: number | null | undefined, min: number, max: number, labels: {low:string;high:string;good:string}, bounds?: {minInclusive?:boolean;maxInclusive?:boolean}) =>
+      telemetryStatus(value,{min,max},stale,labels,bounds);
+    return {device,latest,lastPacketAt,stale,pointsFor,statusFor};
+  });
   const readingNotice = !currentReading ? "No reading yet. Connect a chamber to start monitoring."
     : controllerOff(currentReading.sensor_status) ? "Controller off. Measurements are unavailable until the chamber resumes reporting."
     : readingStale ? "Last known reading. The chamber has not supplied fresh data. Check its power and connection."
@@ -1628,6 +1654,38 @@ export default function Workspace({
               )}
               {page === "irrigation" && (
                 <div className="space-y-6">
+                  <section className="surface">
+                    <SectionTitle
+                      title="Live water telemetry"
+                      subtitle="Fresh-water supply and wastewater capacity reported by each physical chamber."
+                    />
+                    {live.error && <p className="telemetry-storage-note" role="status">Live updates are unavailable. Saved readings remain visible until the connection recovers.</p>}
+                    {irrigationTelemetry.length ? <div className="irrigation-telemetry-devices">
+                      {irrigationTelemetry.map(({device,latest,lastPacketAt,stale,pointsFor,statusFor}) => (
+                        <article className="irrigation-telemetry-device" key={device.id}>
+                          <header className="irrigation-telemetry-heading">
+                            <div><h3>{device.name}</h3><span>{latest ? `Last packet ${date(lastPacketAt!)}` : "Waiting for its first sensor packet"}</span></div>
+                            <span className={`irrigation-telemetry-state ${!latest ? "empty" : stale ? "stale" : device.status === "fault" ? "attention" : "live"}`}>
+                              {!latest ? "No readings" : stale ? "Last known" : device.status === "fault" ? "Connected · needs attention" : "Live"}
+                            </span>
+                          </header>
+                          <div className="irrigation-telemetry-grid">
+                            <TelemetryMetricCard
+                              label="Fresh-Water Tank" value={latest?.water_level_percent} unit="%" color="#f59e0b" icon={<Droplets size={17} />}
+                              {...statusFor(latest?.water_level_percent,40,100,{low:"Getting low",high:"Check sensor",good:"Healthy"},{minInclusive:false})}
+                              reference="Above 40%" range={{min:40,max:100}} points={pointsFor("water_level_percent")}
+                            />
+                            <TelemetryMetricCard
+                              label="Wastewater Tank" value={latest?.wastewater_level_percent} unit="%" color="#06b6d4" icon={<Droplets size={17} />}
+                              {...statusFor(latest?.wastewater_level_percent,0,85,{low:"Check sensor",high:"Near full",good:"Room available"},{maxInclusive:false})}
+                              reference="Below 85%" range={{min:0,max:85}} points={pointsFor("wastewater_level_percent")}
+                            />
+                          </div>
+                        </article>
+                      ))}
+                    </div> : <p className="irrigation-telemetry-empty">No physical chamber is connected yet. Connect one to see its tank sensors here.</p>}
+                    <p className="irrigation-telemetry-note">Tank levels are the water measurements currently sent by the device. Pump, valve, and flow status are not reported by the installed firmware; saved schedules do not start irrigation.</p>
+                  </section>
                   <section className="surface">
                     <SectionTitle
                       title="Irrigation schedule"

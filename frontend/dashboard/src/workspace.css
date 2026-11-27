@@ -2064,6 +2064,19 @@ button:disabled {
 .telemetry-chart-empty { display: grid; height: 68px; margin-top: 2px; place-items: center; color: var(--muted-foreground); font-size: 11px; }
 .telemetry-card-footer { display: flex; justify-content: space-between; gap: 8px; padding-top: 8px; border-top: 1px solid color-mix(in srgb,var(--metric-color) 13%,var(--border)); color: var(--muted-foreground); font-size: 10px; }
 .telemetry-card-footer strong { color: var(--foreground); font-weight: 650; }
+.irrigation-telemetry-devices { display: grid; gap: 14px; margin-top: 16px; }
+.irrigation-telemetry-device { min-width: 0; padding: 15px; border: 1px solid var(--border); border-radius: 15px; background: linear-gradient(145deg,color-mix(in srgb,#247d4e 3%,var(--card)),var(--card) 55%); }
+.irrigation-telemetry-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 1px 12px; }
+.irrigation-telemetry-heading h3 { margin: 0; color: var(--foreground); font-size: 14px; font-weight: 700; }
+.irrigation-telemetry-heading div > span { display: block; margin-top: 3px; color: var(--muted-foreground); font-size: 11px; }
+.irrigation-telemetry-state { flex: 0 0 auto; padding: 5px 9px; border: 1px solid transparent; border-radius: 999px; font-size: 10px; font-weight: 700; }
+.irrigation-telemetry-state.live { color: #176b43; background: #eaf6ee; border-color: #d2ead9; }
+.irrigation-telemetry-state.stale { color: #765b18; background: #fff8e8; border-color: #eedfb5; }
+.irrigation-telemetry-state.attention { color: #965313; background: #fff4e5; border-color: #f1dfc5; }
+.irrigation-telemetry-state.empty { color: #657168; background: #f0f3f0; border-color: #e1e7e2; }
+.irrigation-telemetry-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.irrigation-telemetry-note,.irrigation-telemetry-empty { margin: 14px 0 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.6; }
+.irrigation-telemetry-empty { padding: 22px 16px; border: 1px dashed var(--border); border-radius: 12px; text-align: center; }
 .reading-current-banner { display: flex; align-items: center; gap: 11px; margin: 0 0 20px; padding: 13px 15px; border: 1px solid var(--border); border-radius: 13px; background: linear-gradient(100deg,var(--secondary),var(--card) 72%); }
 .reading-live-indicator { position: relative; width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; background: #269663; }
 .reading-live-fresh { box-shadow: 0 0 0 4px rgba(38,150,99,.12); }
@@ -2079,6 +2092,9 @@ button:disabled {
 @media (max-width: 960px) { .telemetry-metric-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media (max-width: 620px) {
   .telemetry-metric-grid { grid-template-columns: 1fr; gap: 10px; }
+  .irrigation-telemetry-grid { grid-template-columns: 1fr; gap: 10px; }
+  .irrigation-telemetry-device { padding: 12px; }
+  .irrigation-telemetry-heading { align-items: flex-start; }
   .telemetry-metric-card { padding: 14px 15px 11px; }
   .reading-current-banner { align-items: flex-start; }
   .reading-chart-note { display: none; }
