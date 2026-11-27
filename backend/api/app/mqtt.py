@@ -1,4 +1,4 @@
-"""Read-only MQTT bridge. Browser clients never publish hardware commands."""
+"""MQTT telemetry ingestion and bounded, device-scoped actuator tests."""
 
 import logging
 import queue
@@ -15,6 +15,7 @@ from pydantic import (
     Field,
     StrictBool,
     StrictFloat,
+    StrictInt,
     ValidationError,
     model_validator,
 )
@@ -68,6 +69,11 @@ class SensorPacket(BaseModel):
     lux: StrictFloat | None = None
     waterLevel: StrictFloat | None = None
     wastewaterLevel: StrictFloat | None = None
+    pumpActive: StrictBool | None = None
+    valveActive: StrictBool | None = None
+    actuatorTestId: str | None = Field(default=None, max_length=36)
+    actuatorTestState: str | None = Field(default=None, max_length=24)
+    actuatorTestSecondsRemaining: StrictInt | None = Field(default=None, ge=0, le=10)
     voltage: StrictFloat | None = Field(default=None, ge=0, le=100)
     sdOK: StrictBool | None = None
     status: str = Field(default="NONE", min_length=1, max_length=120)
@@ -177,6 +183,11 @@ def ingest_message(
     current = {
         "device_id": device.id,
         **values,
+        "pump_active": packet.pumpActive,
+        "valve_active": packet.valveActive,
+        "actuator_test_id": packet.actuatorTestId,
+        "actuator_test_state": packet.actuatorTestState,
+        "actuator_test_seconds_remaining": packet.actuatorTestSecondsRemaining,
         "voltage": packet.voltage,
         "sd_ok": packet.sdOK,
         "sensor_status": sensor_status,
@@ -247,7 +258,7 @@ def ingest_message(
 
 
 class MQTTBridge:
-    """One subscriber per API process, with bounded buffering and automatic reconnect."""
+    """One subscriber per API process with scoped, non-retained command publishing."""
 
     def __init__(self, session_factory=SessionLocal):
         self.session_factory = session_factory
@@ -308,6 +319,23 @@ class MQTTBridge:
             self._thread.join(timeout=5)
         self.connected = False
         self.latest.clear()
+
+    def publish_command(self, topic: str, payload: str, timeout: float = 2.0) -> bool:
+        """Publish one non-retained device command and wait for broker PUBACK."""
+        client = self.client
+        if not self.connected or client is None or "+" in topic or "#" in topic:
+            return False
+        try:
+            info = client.publish(topic, payload, qos=1, retain=False)
+        except (RuntimeError, ValueError):
+            return False
+        if info.rc != mqtt.MQTT_ERR_SUCCESS:
+            return False
+        try:
+            info.wait_for_publish(timeout=timeout)
+        except (RuntimeError, ValueError):
+            return False
+        return info.is_published()
 
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         self.connected = not reason_code.is_failure

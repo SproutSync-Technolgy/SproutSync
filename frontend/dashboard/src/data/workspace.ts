@@ -73,6 +73,11 @@ export type Reading = {
   window_started_at?: string | null;
   window_ended_at?: string | null;
   provisional?: boolean;
+  pump_active?: boolean | null;
+  valve_active?: boolean | null;
+  actuator_test_id?: string | null;
+  actuator_test_state?: string | null;
+  actuator_test_seconds_remaining?: number | null;
 };
 export type Watering = {
   id: number;

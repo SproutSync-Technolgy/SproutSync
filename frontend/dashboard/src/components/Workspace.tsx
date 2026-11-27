@@ -80,6 +80,7 @@ import { Logo, Btn, Modal, NotebookInspectIcon } from "./ProtoPrimitives";
 import { PersonalDetails } from "./PersonalDetails";
 import { WaterUseChart, QualityGradeChart } from "./ProtoCharts";
 import {TelemetryMetricCard, type TelemetryPoint} from "./TelemetryMetricCard";
+import {IrrigationActuatorControls} from "./IrrigationActuatorControls";
 import { CalendarDatePicker } from "./CalendarDatePicker";
 import { mergeReadings, useLiveTelemetry } from "../data/liveTelemetry";
 import { DeviceConnectionForm } from "./DeviceConnection";
@@ -300,6 +301,32 @@ export default function Workspace({
   const dialogErrorRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => { if (dialogError) dialogErrorRef.current?.focus(); }, [dialogError]);
   const [toast, setToast] = useState("");
+  const [actuatorPendingDevice, setActuatorPendingDevice] = useState<number | null>(null);
+  const requestActuatorTest = async (deviceId: number, action: "pump_test" | "valve_test" | "stop") => {
+    if (action !== "stop") {
+      const target = action === "pump_test" ? "pump" : "valve";
+      const safetyCheck = target === "pump"
+        ? "Confirm the pump is primed, its outlet is clear, and you can supervise the test."
+        : "Confirm the downstream water path is clear and you can supervise the test.";
+      if (!window.confirm(`Start the 10-second ${target} test? ${safetyCheck} The relay will turn off automatically after 10 seconds.`)) return;
+    }
+    setActuatorPendingDevice(deviceId);
+    try {
+      const response = await apiFetch(`/api/v1/devices/${deviceId}/actuator-test`, {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({action,request_id:crypto.randomUUID(),confirmed_safe:action !== "stop"}),
+        signal: AbortSignal.timeout(5000),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(typeof result?.detail === "string" ? result.detail : "The irrigation command could not be sent.");
+      setToast(typeof result?.detail === "string" ? result.detail : "Command published; waiting for the chamber's telemetry.");
+    } catch (failure) {
+      setToast(errorMessage(failure));
+    } finally {
+      setActuatorPendingDevice(null);
+    }
+  };
   const [showWelcome, setShowWelcome] = useState(
     () => sessionStorage.getItem(`sproutsync-welcome-${profile.id}`) !== "seen",
   );
@@ -1669,6 +1696,13 @@ export default function Workspace({
                               {!latest ? "No readings" : stale ? "Last known" : device.status === "fault" ? "Connected · needs attention" : "Live"}
                             </span>
                           </header>
+                          {operator && <IrrigationActuatorControls
+                            device={device}
+                            reading={latest}
+                            stale={stale}
+                            pending={actuatorPendingDevice === device.id}
+                            onAction={requestActuatorTest}
+                          />}
                           <div className="irrigation-telemetry-grid">
                             <TelemetryMetricCard
                               label="Fresh-Water Tank" value={latest?.water_level_percent} unit="%" color="#f59e0b" icon={<Droplets size={17} />}

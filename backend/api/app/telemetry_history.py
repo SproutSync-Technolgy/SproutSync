@@ -58,7 +58,13 @@ def record_packet(db, device, state, reading, message_id):
     private["binding"] = binding
     save_summaries(db, device, completed)
     if transition:
-        values = {key: value for key, value in reading.items() if key != "device_id"}
+        # Actuator state belongs in the mutable live snapshot, not sensor-history
+        # columns. Persist only fields represented by the telemetry table.
+        values = {
+            key: value
+            for key, value in reading.items()
+            if key != "device_id" and key in TelemetryReading.__table__.columns.keys()
+        }
         values["recorded_at"] = datetime.fromisoformat(values["recorded_at"])
         values["received_at"] = datetime.fromisoformat(values["received_at"])
         values["aggregation"] = "event"

@@ -47,8 +47,10 @@ The shared HiveMQ test broker does not authenticate hardware identity or provide
 private topics. Detection means that fresh telemetry arrived on the selected
 topic; matching a printed serial in the UI is not proof of the physical sender.
 Use an authenticated broker with per-device topic ACLs before production use.
-This integration only subscribes. It does not send power, relay, irrigation, or
-calibration commands.
+Telemetry collection subscribes to device topics. The operator irrigation test
+publishes only non-retained, device-scoped pump/valve test messages; it does not
+publish to the legacy fleet-wide `sproutsync/power` topic. Broker credentials
+must permit publishing to the registered device's `<topic-prefix>/power` topic.
 
 ## Sensor packet
 
@@ -121,6 +123,24 @@ new telemetry restores online/fault status. The browser also retries automatical
 An API failure shows an error with a retry action. For a pending device, check
 its Wi-Fi and topic prefix, then retry detection; changing a prefix preserves
 stored history.
+
+## Supervised actuator test
+
+The operator page offers separate **Test pump · 10 sec**, **Test valve · 10 sec**,
+and **Stop outputs** actions for a physical, fresh, healthy chamber. Starting a
+test requires a browser confirmation. The API sends a UUID-tagged
+`PUMP_TEST:<uuid>` or `VALVE_TEST:<uuid>` message only to that chamber's `/power`
+topic; stop sends `STOP_TEST:<uuid>`. The ESP32 ignores duplicate IDs, rejects
+unhealthy or concurrent starts, and turns both active-low relay outputs off after
+10 seconds even if the network disappears. A stop request is best effort; the
+firmware timeout remains the fallback. Never use the pump test unless its water
+path is primed, safe, and supervised.
+
+The sample ESP32 program uses pump GPIO 32 and valve GPIO 33 (active-low). Confirm
+that the physical board and relay wiring match that example before flashing. The
+dashboard's relay indicators report firmware state; they do not prove water flow.
+Water-level fields remain null until supported sensors are wired and published.
+The feature does not make saved schedules execute automatically.
 
 The browser refreshes current packets every two seconds through the authenticated
 API or the RLS-scoped Supabase snapshot RPC. MQTT credentials never go to the

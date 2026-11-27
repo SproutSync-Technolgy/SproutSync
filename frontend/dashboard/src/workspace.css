@@ -2077,6 +2077,29 @@ button:disabled {
 .irrigation-telemetry-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
 .irrigation-telemetry-note,.irrigation-telemetry-empty { margin: 14px 0 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.6; }
 .irrigation-telemetry-empty { padding: 22px 16px; border: 1px dashed var(--border); border-radius: 12px; text-align: center; }
+.irrigation-actuator-controls { margin: 0 0 14px; padding: 14px; border: 1px solid var(--border); border-radius: 13px; background: color-mix(in srgb,var(--secondary) 55%,var(--card)); }
+.irrigation-actuator-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.irrigation-actuator-heading h4 { margin: 0; color: var(--foreground); font-size: 13px; font-weight: 700; }
+.irrigation-actuator-heading p,.irrigation-firmware-note { margin: 4px 0 0; color: var(--muted-foreground); font-size: 11px; line-height: 1.5; }
+.irrigation-test-status { flex: 0 0 auto; padding: 5px 8px; border: 1px solid transparent; border-radius: 999px; font-size: 10px; font-weight: 700; }
+.irrigation-test-status.ready { color: #176b43; background: #eaf6ee; border-color: #d2ead9; }
+.irrigation-test-status.running { color: #805300; background: #fff2d6; border-color: #f0d99f; }
+.irrigation-test-status.unavailable { color: #657168; background: #f0f3f0; border-color: #e1e7e2; }
+.irrigation-relay-states { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; margin-top: 12px; }
+.irrigation-relay-states > div { display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); font-size: 11px; }
+.irrigation-relay-states span { color: var(--muted-foreground); }
+.irrigation-relay-states strong { color: var(--foreground); font-weight: 700; }
+.irrigation-actuator-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.irrigation-actuator-button { min-height: 38px; padding: 8px 12px; border: 1px solid transparent; border-radius: 9px; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; transition: background .15s ease,border-color .15s ease,transform .15s ease; }
+.irrigation-actuator-button:focus-visible { outline: 3px solid color-mix(in srgb,var(--brand-600) 45%,transparent); outline-offset: 2px; }
+.irrigation-actuator-button:disabled { cursor: not-allowed; opacity: .48; }
+.irrigation-actuator-button:not(:disabled):active { transform: translateY(1px); }
+.irrigation-actuator-button.primary { color: white; background: var(--brand-700); }
+.irrigation-actuator-button.primary:not(:disabled):hover { background: var(--brand-800); }
+.irrigation-actuator-button.secondary { color: var(--foreground); border-color: var(--border); background: var(--card); }
+.irrigation-actuator-button.secondary:not(:disabled):hover { border-color: var(--brand-500); background: var(--secondary); }
+.irrigation-actuator-button.stop { color: #9f312b; border-color: #efc9c6; background: #fff3f1; }
+.irrigation-actuator-button.stop:not(:disabled):hover { background: #ffe5e2; }
 .reading-current-banner { display: flex; align-items: center; gap: 11px; margin: 0 0 20px; padding: 13px 15px; border: 1px solid var(--border); border-radius: 13px; background: linear-gradient(100deg,var(--secondary),var(--card) 72%); }
 .reading-live-indicator { position: relative; width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; background: #269663; }
 .reading-live-fresh { box-shadow: 0 0 0 4px rgba(38,150,99,.12); }
@@ -2095,6 +2118,8 @@ button:disabled {
   .irrigation-telemetry-grid { grid-template-columns: 1fr; gap: 10px; }
   .irrigation-telemetry-device { padding: 12px; }
   .irrigation-telemetry-heading { align-items: flex-start; }
+  .irrigation-actuator-heading { flex-direction: column; }
+  .irrigation-actuator-actions > button { flex: 1 1 100%; }
   .telemetry-metric-card { padding: 14px 15px 11px; }
   .reading-current-banner { align-items: flex-start; }
   .reading-chart-note { display: none; }

@@ -1,9 +1,18 @@
 """Authorized device binding and recovery snapshots for realtime clients."""
 
 from datetime import datetime, timezone
+from typing import Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -22,8 +31,6 @@ from app.models import (
     TelemetryReading,
     User,
 )
-from typing import Literal
-from uuid import UUID
 from app.mqtt import bridge, utc
 from app.discovery import DeviceIdentity, discovery
 
@@ -91,6 +98,26 @@ class ConnectRequest(BaseModel):
     @classmethod
     def trim(cls, value):
         return value.strip() if isinstance(value, str) else value
+
+
+class ActuatorTestRequest(BaseModel):
+    action: Literal["pump_test", "valve_test", "stop"]
+    request_id: UUID
+    confirmed_safe: StrictBool = False
+
+    @model_validator(mode="after")
+    def require_supervised_test_confirmation(self):
+        if self.action != "stop" and not self.confirmed_safe:
+            raise ValueError("Confirm the supervised 10-second hardware test before starting")
+        return self
+
+
+class ActuatorTestResponse(BaseModel):
+    status: Literal["published"]
+    action: Literal["pump_test", "valve_test", "stop"]
+    request_id: UUID
+    duration_seconds: int | None
+    detail: str
 
 
 def require_device_operator(user: User = Depends(get_current_user)):
@@ -508,6 +535,11 @@ class LatestReadingResponse(BaseModel):
     aggregation: str
     sample_count: int
     fault_count: int
+    pump_active: bool | None = None
+    valve_active: bool | None = None
+    actuator_test_id: str | None = None
+    actuator_test_state: str | None = None
+    actuator_test_seconds_remaining: int | None = None
 
 
 class BrokerResponse(BaseModel):
@@ -654,4 +686,79 @@ def live_devices(
             <= settings.mqtt_stale_seconds
         ],
         "stale_seconds": settings.mqtt_stale_seconds,
+    }
+
+
+@router.post("/{device_id}/actuator-test", response_model=ActuatorTestResponse)
+def actuator_test(
+    device_id: int,
+    payload: ActuatorTestRequest,
+    user: User = Depends(require_device_operator),
+    db: Session = Depends(get_db),
+):
+    """Run a supervised, firmware-bounded pump/valve test on one owned chamber.
+
+    Start requests are accepted only for a fresh, healthy physical device and
+    only after the operator confirms the supervised test. The firmware applies
+    a fixed 10-second cutoff. A broker PUBACK confirms publication only; the
+    dashboard waits for the next device telemetry packet to confirm relay state.
+    """
+    if user.role != "operator":
+        raise HTTPException(403, "Only the owning operator can run an irrigation test")
+    device = db.scalar(select(Device).where(Device.id == device_id).with_for_update())
+    if device is None or device.owner_id != user.id or device.is_demo:
+        raise HTTPException(404, "Physical chamber not available in your workspace.")
+    if not device.mqtt_topic_prefix:
+        raise HTTPException(409, "Connect this chamber to MQTT before running a test.")
+    if not settings.mqtt_enabled or not bridge.connected:
+        raise HTTPException(503, "The irrigation command broker is unavailable. Try again when it reconnects.")
+
+    duration_seconds = None
+    if payload.action != "stop":
+        now = datetime.now(timezone.utc)
+        if (
+            device.status != "online"
+            or device.last_seen_at is None
+            or (now - utc(device.last_seen_at)).total_seconds() > settings.mqtt_stale_seconds
+        ):
+            raise HTTPException(409, "The chamber must be online with a fresh packet before a test can start.")
+        state = db.get(DeviceLiveState, device.id)
+        latest = state.latest if state and state.owner_id == device.owner_id else None
+        if not latest:
+            raise HTTPException(409, "No current device telemetry is available to check chamber health.")
+        if latest.get("sensor_status", "NONE") not in ("NONE", "OK", "NORMAL") or latest.get("sd_ok") is False:
+            raise HTTPException(409, "The chamber reports a sensor or storage fault. Resolve it before testing irrigation.")
+        if latest.get("actuator_test_state") == "RUNNING":
+            raise HTTPException(409, "An actuator test is already running on this chamber.")
+        duration_seconds = 10
+
+    command = (
+        "PUMP_TEST:" if payload.action == "pump_test"
+        else "VALVE_TEST:" if payload.action == "valve_test"
+        else "STOP_TEST:"
+    ) + str(payload.request_id)
+    topic = device.mqtt_topic_prefix + "/power"
+    if not bridge.publish_command(topic, command):
+        raise HTTPException(503, "The broker did not confirm the command. Check the broker publish ACL and retry.")
+
+    db.add(
+        ActivityLog(
+            owner_id=device.owner_id,
+            actor_id=user.id,
+            action="irrigation_actuator_test",
+            resource=f"devices:{device.id}:{payload.action}:{payload.request_id}",
+        )
+    )
+    db.commit()
+    detail = (
+        "Stop command published. The board's 10-second cutoff remains the fallback if it cannot receive this request."
+        if payload.action == "stop"
+        else "Command published to the broker. Waiting for the chamber's telemetry to confirm relay state; the firmware stops after 10 seconds."
+    )
+    return {
+        "status": "published",
+        "action": payload.action,
+        "request_id": payload.request_id,
+        "duration_seconds": duration_seconds,
+        "detail": detail,
     }
