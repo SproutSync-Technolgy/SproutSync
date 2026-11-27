@@ -231,9 +231,12 @@ function telemetryStatus(
   range: {min: number; max: number},
   stale: boolean,
   labels: {low: string; high: string; good: string},
+  bounds: {minInclusive?: boolean; maxInclusive?: boolean} = {},
 ) {
   if (value == null || !Number.isFinite(value)) return {status: "No reading", statusTone: "empty" as const};
-  const condition = value < range.min ? labels.low : value > range.max ? labels.high : labels.good;
+  const belowRange = value < range.min || (bounds.minInclusive === false && value === range.min);
+  const aboveRange = value > range.max || (bounds.maxInclusive === false && value === range.max);
+  const condition = belowRange ? labels.low : aboveRange ? labels.high : labels.good;
   if (stale) return {status: `Last known · ${condition}`, statusTone: "stale" as const};
   return {status: condition, statusTone: condition === labels.good ? "good" as const : "attention" as const};
 }
@@ -642,7 +645,8 @@ export default function Workspace({
     min: number,
     max: number,
     labels: {low: string; high: string; good: string},
-  ) => telemetryStatus(value,{min,max},readingStale,labels);
+    bounds?: {minInclusive?: boolean; maxInclusive?: boolean},
+  ) => telemetryStatus(value,{min,max},readingStale,labels,bounds);
   const readingNotice = !currentReading ? "No reading yet. Connect a chamber to start monitoring."
     : controllerOff(currentReading.sensor_status) ? "Controller off. Measurements are unavailable until the chamber resumes reporting."
     : readingStale ? "Last known reading. The chamber has not supplied fresh data. Check its power and connection."
@@ -1476,7 +1480,7 @@ export default function Workspace({
                       />
                       <TelemetryMetricCard
                         label="Fresh-Water Tank" value={currentReading?.water_level_percent} unit="%" color="#f59e0b" icon={<Droplets size={17} />}
-                        {...readingMetricStatus(currentReading?.water_level_percent,40,100,{low:"Getting low",high:"Check sensor",good:"Healthy"})}
+                        {...readingMetricStatus(currentReading?.water_level_percent,40,100,{low:"Getting low",high:"Check sensor",good:"Healthy"},{minInclusive:false})}
                         reference="Above 40%" range={{min:40,max:100}} points={readingTrendPoints("water_level_percent")}
                       />
                       <TelemetryMetricCard
@@ -1486,12 +1490,12 @@ export default function Workspace({
                       />
                       <TelemetryMetricCard
                         label="Light Level" value={currentReading?.light_lux} unit="lux" color="#6366f1" icon={<Sun size={17} />}
-                        {...readingMetricStatus(currentReading?.light_lux,0,5,{low:"Check sensor",high:"Light detected",good:"Dark"})}
+                        {...readingMetricStatus(currentReading?.light_lux,0,5,{low:"Check sensor",high:"Light detected",good:"Dark"},{maxInclusive:false})}
                         reference="Near 0 lux" range={{min:0,max:5}} points={readingTrendPoints("light_lux")}
                       />
                       <TelemetryMetricCard
                         label="Wastewater Tank" value={currentReading?.wastewater_level_percent} unit="%" color="#06b6d4" icon={<Droplets size={17} />}
-                        {...readingMetricStatus(currentReading?.wastewater_level_percent,0,85,{low:"Check sensor",high:"Near full",good:"Room available"})}
+                        {...readingMetricStatus(currentReading?.wastewater_level_percent,0,85,{low:"Check sensor",high:"Near full",good:"Room available"},{maxInclusive:false})}
                         reference="Below 85%" range={{min:0,max:85}} points={readingTrendPoints("wastewater_level_percent")}
                       />
                     </div>
