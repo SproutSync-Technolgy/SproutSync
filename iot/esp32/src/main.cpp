@@ -139,12 +139,10 @@ bool autoCalibEnabled   = true;
 String faultReason      = "NONE";
 String lastLoggedFault  = "NONE"; // Tracks state changes for immediate SD logging
 
-enum class ActuatorTestTarget : uint8_t { None, Pump, Valve };
-constexpr unsigned long ACTUATOR_TEST_DURATION_MS = 10000;
-ActuatorTestTarget actuatorTestTarget = ActuatorTestTarget::None;
-unsigned long actuatorTestStartedAt = 0;
-String actuatorTestCommandId;
-String actuatorTestState = "IDLE";
+bool pumpActive = false;
+bool valveActive = false;
+String actuatorCommandId;
+String actuatorCommandState = "IDLE";
 
 // 3-Beep Looping Alarm State
 bool alarmLoopActive             = false;
@@ -205,9 +203,8 @@ void logToSDCard();
 void publishMQTT();
 void forceActuatorsOff();
 bool validCommandId(const String& value);
-void startActuatorTest(ActuatorTestTarget target, const String& commandId);
-void stopActuatorTest(const char* state);
-void updateActuatorTest();
+void setActuatorState(bool pump, bool active, const String& commandId);
+void turnAllActuatorsOff(const String& commandId, const char* state);
 
 // ==========================================
 // 5. SETUP
@@ -344,15 +341,19 @@ void setup() {
           alarmLoopActive   = false;
           pendingSystemBoot = true;
           startBeeps(1);
-        } else if (msg.startsWith("PUMP_TEST:")) {
-          startActuatorTest(ActuatorTestTarget::Pump, msg.substring(10));
-        } else if (msg.startsWith("VALVE_TEST:")) {
-          startActuatorTest(ActuatorTestTarget::Valve, msg.substring(11));
-        } else if (msg.startsWith("STOP_TEST:")) {
-          String commandId = msg.substring(10);
-          if (validCommandId(commandId)) {
-            actuatorTestCommandId = commandId;
-            stopActuatorTest("STOPPED");
+        } else if (msg.startsWith("PUMP_ON:")) {
+          setActuatorState(true, true, msg.substring(8));
+        } else if (msg.startsWith("PUMP_OFF:")) {
+          setActuatorState(true, false, msg.substring(9));
+        } else if (msg.startsWith("VALVE_ON:")) {
+          setActuatorState(false, true, msg.substring(9));
+        } else if (msg.startsWith("VALVE_OFF:")) {
+          setActuatorState(false, false, msg.substring(10));
+        } else if (msg.startsWith("ALL_OFF:")) {
+          String commandId = msg.substring(8);
+          if (validCommandId(commandId) && commandId != actuatorCommandId) {
+            turnAllActuatorsOff(commandId, "APPLIED");
+            if (isOnline) publishMQTT();
           }
         }
       }
@@ -380,7 +381,6 @@ void setup() {
 void loop() {
   maintainDiscovery();
   maintainConnectivity();
-  updateActuatorTest();
   updateBuzzer();
   handlePushButton();
   readVoltageAndCheckShortage();
@@ -467,9 +467,7 @@ void loop() {
       if (!sdCardOK && faultReason == "NONE") faultReason = "SD CARD ERR";
       digitalWrite(LED_GREEN, LOW);
       digitalWrite(LED_RED, HIGH);
-      if (faultDetected) {
-        forceActuatorsOff(); // Only cut pump/valve on real sensor faults
-      }
+      forceActuatorsOff(); // Cut irrigation outputs on sensor or SD faults.
 
       if (!alarmLoopActive) {
         alarmLoopActive = true;
@@ -999,20 +997,14 @@ bool initializeSDCard() {
 void publishMQTT() {
   char payload[768];
   String messageId = deviceSerial + "-" + String(bootNonce, HEX) + "-" + String(++messageSequence);
-  const unsigned long elapsed = actuatorTestTarget == ActuatorTestTarget::None
-    ? ACTUATOR_TEST_DURATION_MS
-    : millis() - actuatorTestStartedAt;
-  const unsigned long remainingSeconds = elapsed >= ACTUATOR_TEST_DURATION_MS
-    ? 0
-    : (ACTUATOR_TEST_DURATION_MS - elapsed + 999) / 1000;
   snprintf(payload, sizeof(payload),
-    "{\"serialNumber\":\"%s\",\"messageId\":\"%s\",\"airTemp\":%.2f,\"airHum\":%.2f,\"waterTemp\":%.2f,\"lux\":%.1f,\"voltage\":%.2f,\"sdOK\":%s,\"autoCalib\":%s,\"autoCalibCount\":%d,\"calT\":%.2f,\"calH\":%.2f,\"calW\":%.2f,\"calL\":%.2f,\"pumpActive\":%s,\"valveActive\":%s,\"actuatorTestId\":\"%s\",\"actuatorTestState\":\"%s\",\"actuatorTestSecondsRemaining\":%lu,\"status\":\"%s\"}",
+    "{\"serialNumber\":\"%s\",\"messageId\":\"%s\",\"airTemp\":%.2f,\"airHum\":%.2f,\"waterTemp\":%.2f,\"lux\":%.1f,\"voltage\":%.2f,\"sdOK\":%s,\"autoCalib\":%s,\"autoCalibCount\":%d,\"calT\":%.2f,\"calH\":%.2f,\"calW\":%.2f,\"calL\":%.2f,\"pumpActive\":%s,\"valveActive\":%s,\"actuatorCommandId\":\"%s\",\"actuatorCommandState\":\"%s\",\"status\":\"%s\"}",
     deviceSerial.c_str(), messageId.c_str(), rAirTemp, rAirHum, rWatTemp,
     rLux, sysVoltage, sdCardOK ? "true" : "false", autoCalibEnabled ? "true" : "false",
     autoCalibCount, calAirTemp, calAirHum, calWatTemp, calLux,
-    actuatorTestTarget == ActuatorTestTarget::Pump ? "true" : "false",
-    actuatorTestTarget == ActuatorTestTarget::Valve ? "true" : "false",
-    actuatorTestCommandId.c_str(), actuatorTestState.c_str(), remainingSeconds,
+    pumpActive ? "true" : "false",
+    valveActive ? "true" : "false",
+    actuatorCommandId.c_str(), actuatorCommandState.c_str(),
     faultReason.c_str()
   );
   mqtt.publish(topicTelemetry.c_str(), payload);
@@ -1034,41 +1026,37 @@ bool validCommandId(const String& value) {
   return true;
 }
 
-void startActuatorTest(ActuatorTestTarget target, const String& commandId) {
-  if (!validCommandId(commandId) || commandId == actuatorTestCommandId) return;
-  if (actuatorTestTarget != ActuatorTestTarget::None) {
-    if (isOnline) publishMQTT();
-    return;
-  }
-  actuatorTestCommandId = commandId;
-  const bool safeToStart = systemPowerOn && !shortageTripped && !alarmLoopActive &&
-    faultReason == "NONE" && sdCardOK && sht4OK && bh1750OK && ds18b20OK;
-  if (!safeToStart) {
-    actuatorTestState = "REJECTED";
-    if (isOnline) publishMQTT();
-    return;
+void setActuatorState(bool pump, bool active, const String& commandId) {
+  if (!validCommandId(commandId) || commandId == actuatorCommandId) return;
+  actuatorCommandId = commandId;
+  if (active) {
+    const bool safeToStart = systemPowerOn && !shortageTripped && !alarmLoopActive &&
+      faultReason == "NONE" && sdCardOK && sht4OK && bh1750OK && ds18b20OK;
+    if (!safeToStart) {
+      actuatorCommandState = "REJECTED";
+      if (isOnline) publishMQTT();
+      return;
+    }
   }
 
-  actuatorTestTarget = target;
-  actuatorTestStartedAt = millis();
-  actuatorTestState = "RUNNING";
-  digitalWrite(target == ActuatorTestTarget::Pump ? RELAY_PUMP : RELAY_VALVE, LOW);
+  if (pump) {
+    pumpActive = active;
+    digitalWrite(RELAY_PUMP, active ? LOW : HIGH);
+  } else {
+    valveActive = active;
+    digitalWrite(RELAY_VALVE, active ? LOW : HIGH);
+  }
+  actuatorCommandState = "APPLIED";
   if (isOnline) publishMQTT();
 }
 
-void stopActuatorTest(const char* state) {
+void turnAllActuatorsOff(const String& commandId, const char* state) {
+  actuatorCommandId = commandId;
+  pumpActive = false;
+  valveActive = false;
   digitalWrite(RELAY_PUMP, HIGH);
   digitalWrite(RELAY_VALVE, HIGH);
-  actuatorTestTarget = ActuatorTestTarget::None;
-  actuatorTestState = state;
-}
-
-void updateActuatorTest() {
-  if (actuatorTestTarget != ActuatorTestTarget::None &&
-      millis() - actuatorTestStartedAt >= ACTUATOR_TEST_DURATION_MS) {
-    stopActuatorTest("COMPLETED");
-    if (isOnline) publishMQTT();
-  }
+  actuatorCommandState = state;
 }
 
 void loadCalibration() {
@@ -1089,9 +1077,11 @@ void saveCalibration(float t, float h, float w, float l) {
 }
 
 void forceActuatorsOff() {
-  if (actuatorTestTarget != ActuatorTestTarget::None) {
-    stopActuatorTest("INTERRUPTED");
+  if (pumpActive || valveActive) {
+    turnAllActuatorsOff(actuatorCommandId, "SAFE_OFF");
   } else {
+    pumpActive = false;
+    valveActive = false;
     digitalWrite(RELAY_PUMP, HIGH);
     digitalWrite(RELAY_VALVE, HIGH);
   }

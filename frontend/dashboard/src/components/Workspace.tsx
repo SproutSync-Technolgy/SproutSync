@@ -302,25 +302,25 @@ export default function Workspace({
   useEffect(() => { if (dialogError) dialogErrorRef.current?.focus(); }, [dialogError]);
   const [toast, setToast] = useState("");
   const [actuatorPendingDevice, setActuatorPendingDevice] = useState<number | null>(null);
-  const requestActuatorTest = async (deviceId: number, action: "pump_test" | "valve_test" | "stop") => {
-    if (action !== "stop") {
-      const target = action === "pump_test" ? "pump" : "valve";
+  const requestActuatorControl = async (deviceId: number, action: "pump_on" | "pump_off" | "valve_on" | "valve_off" | "all_off") => {
+    if (action === "pump_on" || action === "valve_on") {
+      const target = action === "pump_on" ? "pump" : "valve";
       const safetyCheck = target === "pump"
-        ? "Confirm the pump is primed, its outlet is clear, and you can supervise the test."
-        : "Confirm the downstream water path is clear and you can supervise the test.";
-      if (!window.confirm(`Start the 10-second ${target} test? ${safetyCheck} The relay will turn off automatically after 10 seconds.`)) return;
+        ? "Confirm the pump is primed and its water path is clear."
+        : "Confirm the downstream water path is clear.";
+      if (!window.confirm(`Turn the ${target} on? ${safetyCheck} It will stay on until you turn it off or the controller enters a safety shutdown. Losing the MQTT connection will not turn it off. There is no flow sensor to verify water movement.`)) return;
     }
     setActuatorPendingDevice(deviceId);
     try {
-      const response = await apiFetch(`/api/v1/devices/${deviceId}/actuator-test`, {
+      const response = await apiFetch(`/api/v1/devices/${deviceId}/actuators`, {
         method: "POST",
         headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({action,request_id:crypto.randomUUID(),confirmed_safe:action !== "stop"}),
+        body: JSON.stringify({action,request_id:crypto.randomUUID(),confirmed_safe:action === "pump_on" || action === "valve_on"}),
         signal: AbortSignal.timeout(5000),
       });
       const result = await response.json().catch(() => null);
       if (!response.ok) throw new Error(typeof result?.detail === "string" ? result.detail : "The irrigation command could not be sent.");
-      setToast(typeof result?.detail === "string" ? result.detail : "Command published; waiting for the chamber's telemetry.");
+      setToast(typeof result?.detail === "string" ? result.detail : "Command published; waiting for the chamber's relay telemetry.");
     } catch (failure) {
       setToast(errorMessage(failure));
     } finally {
@@ -1701,7 +1701,7 @@ export default function Workspace({
                             reading={latest}
                             stale={stale}
                             pending={actuatorPendingDevice === device.id}
-                            onAction={requestActuatorTest}
+                            onAction={requestActuatorControl}
                           />}
                           <div className="irrigation-telemetry-grid">
                             <TelemetryMetricCard

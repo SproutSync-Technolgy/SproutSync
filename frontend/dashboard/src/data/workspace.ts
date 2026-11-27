@@ -75,9 +75,8 @@ export type Reading = {
   provisional?: boolean;
   pump_active?: boolean | null;
   valve_active?: boolean | null;
-  actuator_test_id?: string | null;
-  actuator_test_state?: string | null;
-  actuator_test_seconds_remaining?: number | null;
+  actuator_command_id?: string | null;
+  actuator_command_state?: string | null;
 };
 export type Watering = {
   id: number;

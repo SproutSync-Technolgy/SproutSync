@@ -2081,16 +2081,18 @@ button:disabled {
 .irrigation-actuator-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .irrigation-actuator-heading h4 { margin: 0; color: var(--foreground); font-size: 13px; font-weight: 700; }
 .irrigation-actuator-heading p,.irrigation-firmware-note { margin: 4px 0 0; color: var(--muted-foreground); font-size: 11px; line-height: 1.5; }
-.irrigation-test-status { flex: 0 0 auto; padding: 5px 8px; border: 1px solid transparent; border-radius: 999px; font-size: 10px; font-weight: 700; }
-.irrigation-test-status.ready { color: #176b43; background: #eaf6ee; border-color: #d2ead9; }
-.irrigation-test-status.running { color: #805300; background: #fff2d6; border-color: #f0d99f; }
-.irrigation-test-status.unavailable { color: #657168; background: #f0f3f0; border-color: #e1e7e2; }
+.irrigation-output-status { flex: 0 0 auto; padding: 5px 8px; border: 1px solid transparent; border-radius: 999px; font-size: 10px; font-weight: 700; }
+.irrigation-output-status.ready { color: #176b43; background: #eaf6ee; border-color: #d2ead9; }
+.irrigation-output-status.warning { color: #805300; background: #fff2d6; border-color: #f0d99f; }
+.irrigation-output-status.unavailable { color: #657168; background: #f0f3f0; border-color: #e1e7e2; }
 .irrigation-relay-states { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; margin-top: 12px; }
 .irrigation-relay-states > div { display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); font-size: 11px; }
 .irrigation-relay-states span { color: var(--muted-foreground); }
 .irrigation-relay-states strong { color: var(--foreground); font-weight: 700; }
-.irrigation-actuator-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.irrigation-actuator-button { min-height: 38px; padding: 8px 12px; border: 1px solid transparent; border-radius: 9px; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; transition: background .15s ease,border-color .15s ease,transform .15s ease; }
+.irrigation-actuator-actions { display: grid; gap: 8px; margin-top: 12px; }
+.irrigation-actuator-row { display: grid; grid-template-columns: 56px repeat(2,minmax(0,1fr)); align-items: center; gap: 8px; }
+.irrigation-actuator-row > strong { color: var(--foreground); font-size: 12px; }
+.irrigation-actuator-button { min-height: 44px; padding: 8px 12px; border: 1px solid transparent; border-radius: 9px; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; transition: background .15s ease,border-color .15s ease,transform .15s ease; }
 .irrigation-actuator-button:focus-visible { outline: 3px solid color-mix(in srgb,var(--brand-600) 45%,transparent); outline-offset: 2px; }
 .irrigation-actuator-button:disabled { cursor: not-allowed; opacity: .48; }
 .irrigation-actuator-button:not(:disabled):active { transform: translateY(1px); }
@@ -2119,7 +2121,7 @@ button:disabled {
   .irrigation-telemetry-device { padding: 12px; }
   .irrigation-telemetry-heading { align-items: flex-start; }
   .irrigation-actuator-heading { flex-direction: column; }
-  .irrigation-actuator-actions > button { flex: 1 1 100%; }
+  .irrigation-actuator-row { grid-template-columns: 45px repeat(2,minmax(0,1fr)); gap: 6px; }
   .telemetry-metric-card { padding: 14px 15px 11px; }
   .reading-current-banner { align-items: flex-start; }
   .reading-chart-note { display: none; }

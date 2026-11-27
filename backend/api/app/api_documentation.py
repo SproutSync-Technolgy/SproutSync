@@ -44,12 +44,13 @@ was running cannot be reconstructed. Existing history is retained unchanged.
 Cloud Wi-Fi discovery scans the **backend server's LAN**, not a user's home LAN.
 Bluetooth identity reads happen in a supported client browser; the server cannot
 pair with the user's radio. A read identity is not cryptographic device attestation.
-The API exposes an operator-only supervised pump/valve test for an owned physical
-chamber. Each start is fixed at 10 seconds in the ESP32 firmware and requires a
-fresh healthy device packet plus explicit operator confirmation. The API publishes
-only to that device's `/power` topic; it does not provide persistent ON commands,
-scheduled dispatch, or arbitrary durations. A broker PUBACK is not proof that a
-relay or water flow changed; the UI waits for the next device telemetry packet.
+The API exposes operator-only pump and valve relay controls for an owned physical
+chamber. Each ON requires a fresh healthy device packet plus explicit operator
+confirmation. Relay states remain latched until an OFF command or a local
+controller safety shutdown. The API publishes only to that device's `/power`
+topic. A broker PUBACK confirms publication only; the controller's relay
+telemetry does not prove that water flowed. There is no flow sensor or automatic
+flow verification, so pump operation requires direct operator supervision.
 
 Dates use ISO 8601 (include a timezone in submitted timestamps). Missing/faulty
 measurements are null, not invented zero readings. Handled HTTP errors use `detail`;
