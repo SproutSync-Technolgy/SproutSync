@@ -724,13 +724,7 @@ def control_actuators(
     if not latest:
         raise HTTPException(
             409,
-            "No current device telemetry is available to confirm actuator firmware support.",
-        )
-    if not isinstance(latest.get("pump_active"), bool) or not isinstance(
-        latest.get("valve_active"), bool
-    ):
-        raise HTTPException(
-            409, "Update the chamber firmware to enable pump and valve control."
+            "No device telemetry is available yet. Wait for the chamber's first sensor packet.",
         )
 
     is_on = payload.action in ("pump_on", "valve_on")
@@ -755,19 +749,19 @@ def control_actuators(
                 "The chamber reports a sensor or storage fault. Resolve it before starting irrigation.",
             )
 
-    command = (
-        {
-            "pump_on": "PUMP_ON",
-            "pump_off": "PUMP_OFF",
-            "valve_on": "VALVE_ON",
-            "valve_off": "VALVE_OFF",
-            "all_off": "ALL_OFF",
-        }[payload.action]
-        + ":"
-        + str(payload.request_id)
-    )
     topic = device.mqtt_topic_prefix + "/power"
-    if not bridge.publish_command(topic, command):
+    # Match the currently deployed ESP32 sketch: it compares the whole payload
+    # with these literal strings and does not parse a request-id suffix.
+    commands = {
+        "pump_on": ("PUMP_ON",),
+        "pump_off": ("PUMP_OFF",),
+        "valve_on": ("VALVE_ON",),
+        "valve_off": ("VALVE_OFF",),
+        # This sketch has no ALL_OFF branch, so stop each relay explicitly.
+        "all_off": ("PUMP_OFF", "VALVE_OFF"),
+    }[payload.action]
+    published = [bridge.publish_command(topic, command) for command in commands]
+    if not all(published):
         raise HTTPException(
             503,
             "The broker did not confirm the command. Check the broker publish ACL and retry.",
@@ -782,7 +776,7 @@ def control_actuators(
         )
     )
     db.commit()
-    detail = "Command published. Waiting for device telemetry to report the relay state. Relay state does not confirm water flow."
+    detail = "Command sent to the relay controller. Current firmware does not report relay state, and no flow sensor confirms water movement."
     return {
         "status": "published",
         "action": payload.action,

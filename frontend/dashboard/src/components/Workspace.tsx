@@ -76,7 +76,7 @@ import {
   type EvaluatorSummary,
   type AccessRequest,
 } from "../data/workspace";
-import { Logo, Btn, Modal, NotebookInspectIcon } from "./ProtoPrimitives";
+import { Logo, Btn, Modal, NotebookInspectIcon, Skeleton } from "./ProtoPrimitives";
 import { PersonalDetails } from "./PersonalDetails";
 import { WaterUseChart, QualityGradeChart } from "./ProtoCharts";
 import {TelemetryMetricCard, type TelemetryPoint} from "./TelemetryMetricCard";
@@ -328,7 +328,7 @@ export default function Workspace({
     }
   };
   const [showWelcome, setShowWelcome] = useState(
-    () => sessionStorage.getItem(`sproutsync-welcome-${profile.id}`) !== "seen",
+    () => sessionStorage.getItem(`sproutsync-welcome-v2-${profile.id}`) !== "seen",
   );
   const [query, setQuery] = useState("");
   const [batchFilter, setBatchFilter] = useState("all");
@@ -663,7 +663,7 @@ export default function Workspace({
     }
     return [...byTimestamp.values()]
       .sort((a,b) => Date.parse(a.received_at ?? a.recorded_at)-Date.parse(b.received_at ?? b.recorded_at))
-      .slice(-12);
+      .slice(-1000);
   })();
   const readingTrendPoints = (metric: "temperature_c" | "humidity_percent" | "water_level_percent" | "water_temperature_c" | "light_lux" | "wastewater_level_percent"): TelemetryPoint[] =>
     readingTrend.map((reading) => ({value: reading[metric], timestamp: reading.received_at ?? reading.recorded_at}));
@@ -695,7 +695,7 @@ export default function Workspace({
     const packetTimestamp = Date.parse(lastPacketAt ?? "");
     const stale = !latest || !Number.isFinite(packetTimestamp) || !deviceIsConnected(device,live.staleSeconds) || Date.now()-packetTimestamp > live.staleSeconds*1000;
     const pointsFor = (metric: "water_level_percent" | "wastewater_level_percent"): TelemetryPoint[] =>
-      samples.slice(-12).map((reading) => ({value:reading[metric],timestamp:reading.received_at ?? reading.recorded_at}));
+      samples.slice(-1000).map((reading) => ({value:reading[metric],timestamp:reading.received_at ?? reading.recorded_at}));
     const statusFor = (value: number | null | undefined, min: number, max: number, labels: {low:string;high:string;good:string}, bounds?: {minInclusive?:boolean;maxInclusive?:boolean}) =>
       telemetryStatus(value,{min,max},stale,labels,bounds);
     return {device,latest,lastPacketAt,stale,pointsFor,statusFor};
@@ -724,6 +724,7 @@ export default function Workspace({
   const title =
     nav.find((item) => item.key === page)?.title ??
     (page === "settings" ? "Profile & settings" : "Overview");
+  const PageIcon = nav.find((item) => item.key === page)?.icon ?? LayoutDashboard;
   const table = (headings: string[], rows: ReactNode[][], empty: string) => (
     <DataTable headings={headings} rows={rows} empty={empty} />
   );
@@ -816,7 +817,10 @@ export default function Workspace({
           </button>
           <div className="topbar-page-title">
             <p className="text-xs text-muted-foreground">Workspace / {title}</p>
-            <h1 ref={pageHeading} tabIndex={-1} className="workspace-page-heading text-lg font-bold">{title}</h1>
+            <div className="topbar-page-heading">
+              <span className="topbar-page-icon" aria-hidden="true"><PageIcon size={19} /></span>
+              <h1 ref={pageHeading} tabIndex={-1} className="workspace-page-heading text-lg font-bold">{title}</h1>
+            </div>
           </div>
           <WorkspaceSearch key={profile.id} pages={[...nav, {key: "settings", title: "Profile & settings"}, {key: "help", title: "Help & role guide"}]} actions={strictOperator ? [
             {key: "device", title: "Add device", keywords: "connect chamber register ESP32"},
@@ -953,20 +957,7 @@ export default function Workspace({
               {updated && " Previously loaded records are shown below."}
             </div>
           )}
-          {loading ? (
-            <div
-              role="status"
-              aria-label="Loading workspace"
-              className="grid gap-4 sm:grid-cols-2"
-            >
-              {[1, 2, 3, 4].map((i) => (
-                <div
-                  key={i}
-                  className="h-36 animate-pulse rounded-2xl bg-secondary"
-                />
-              ))}
-            </div>
-          ) : (
+          {loading ? <Skeleton /> : (
             <motion.div
               key={page}
               initial={reduceMotion ? false : { opacity: 0, y: 10, filter: "blur(3px)" }}
@@ -974,6 +965,35 @@ export default function Workspace({
               transition={{ duration: reduceMotion ? 0 : 0.24, ease: [0.22, 1, 0.36, 1] }}
               className="workspace-page space-y-6"
             >
+              {page === "home" && (hasGrant || superadmin) && showWelcome && (
+                <section className="welcome-panel" aria-labelledby="workspace-welcome-title">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-widest text-emerald-200">
+                      {superadmin ? "Your administration workspace" : operator ? "Your growing space" : "Your evaluation space"}
+                    </p>
+                    <h2 id="workspace-welcome-title">Welcome back, {welcomeName || "there"}.</h2>
+                    <p>
+                      {superadmin ? "Manage accounts, provision chambers, and review fleet activity." : operator
+                        ? "A clear view of your batches, chamber, and daily operations."
+                        : "Review shared batches, inspect evidence, and submit your assessment."}
+                    </p>
+                    {data.batches.some((b) => b.is_demo) && (
+                      <span className="preview-label">
+                        Sample records · Saved in your workspace
+                      </span>
+                    )}
+                  </div>
+                  <Sprout className="welcome-leaf" size={88} aria-hidden="true" />
+                  <button
+                    type="button"
+                    className="welcome-dismiss"
+                    aria-label="Dismiss welcome message"
+                    onClick={() => { sessionStorage.setItem(`sproutsync-welcome-v2-${profile.id}`, "seen"); setShowWelcome(false); }}
+                  >
+                    <X size={17} aria-hidden="true" />
+                  </button>
+                </section>
+              )}
               {page === "home" && (profile.role === "pending" || (!hasGrant && !superadmin)) ? (
                 profile.role === "pending" ? (
                   <div className="surface text-center py-12 px-6 max-w-lg mx-auto space-y-5 my-8">
@@ -1127,34 +1147,6 @@ export default function Workspace({
                   onGrant={() => open({ kind: "superadmin-grant-serial" })} onNavigate={navigate} />
               ) : page === "home" && (
                 <>
-                  {showWelcome && (
-                    <section className="welcome-panel">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-widest text-emerald-200">
-                          {superadmin ? "Your administration workspace" : operator ? "Your growing space" : "Your evaluation space"}
-                        </p>
-                        <h2>Welcome back, {welcomeName || "there"}.</h2>
-                        <p>
-                          {superadmin ? "Manage accounts, provision chambers, and review fleet activity." : operator
-                            ? "A clear view of your batches, chamber, and daily operations."
-                            : "Review shared batches, inspect evidence, and submit your assessment."}
-                        </p>
-                        {data.batches.some((b) => b.is_demo) && (
-                          <span className="preview-label">
-                            Sample records · Saved in your workspace
-                          </span>
-                        )}
-                      </div>
-                      <Sprout className="welcome-leaf" size={88} />
-                      <button
-                        className="welcome-dismiss"
-                        aria-label="Dismiss welcome"
-                        onClick={() => { sessionStorage.setItem(`sproutsync-welcome-${profile.id}`, "seen"); setShowWelcome(false); }}
-                      >
-                        <X size={17} />
-                      </button>
-                    </section>
-                  )}
                   <details className="workspace-guide"><summary><HelpCircle size={16} /> How this workspace works</summary>
                   <section className="role-brief" aria-labelledby="role-scope-title">
                     <span className="role-brief-icon" aria-hidden="true">
@@ -1519,7 +1511,7 @@ export default function Workspace({
                     </div>
 
                     {readingNotice && <p className="reading-notice" role="status"><AlertTriangle size={16} />{readingNotice}</p>}
-                    <p className="telemetry-storage-note">Live measurements refresh every 2 seconds. History saves 5-minute averages in fault-free windows and 1-minute averages in windows with faults. State changes are saved immediately.</p>
+                    <p className="telemetry-storage-note telemetry-compact-help"><span className="irrigation-help-tooltip" tabIndex={0} title="Live readings refresh every 2 seconds. History stores 5-minute averages in normal conditions and 1-minute averages during faults."><HelpCircle size={15} aria-hidden="true" /></span><span>Live readings</span></p>
                     <div className="telemetry-metric-grid">
                       <TelemetryMetricCard
                         label="Air Temperature" value={currentReading?.temperature_c} unit="°C" color="#10b981" icon={<Thermometer size={17} />}
@@ -1558,10 +1550,6 @@ export default function Workspace({
                       <div className="reading-current-copy">
                         <strong>{!currentReading ? "Waiting for sensor data" : readingStale ? "Last known packet" : "Live sensor packet"}</strong>
                         <span>{currentReading ? `${deviceName(currentReading.device_id)} · ${date(currentReading.received_at ?? currentReading.recorded_at)}` : "Connect a chamber to see live measurements."}</span>
-                      </div>
-                      <div className="reading-chart-note">
-                        <strong>Raw packet trends</strong>
-                        <span>Each chart uses up to 12 raw packets from the chamber shown. The history below also includes saved averages.</span>
                       </div>
                     </div>
                     {/* Historical Telemetry Log */}
@@ -1718,7 +1706,7 @@ export default function Workspace({
                         </article>
                       ))}
                     </div> : <p className="irrigation-telemetry-empty">No physical chamber is connected yet. Connect one to see its tank sensors here.</p>}
-                    <p className="irrigation-telemetry-note">Tank levels are the water measurements currently sent by the device. Pump, valve, and flow status are not reported by the installed firmware; saved schedules do not start irrigation.</p>
+                    <p className="irrigation-telemetry-note"><span className="irrigation-help-tooltip" tabIndex={0} title="Current device firmware supports manual relay commands but does not report relay state or water flow." aria-label="About relay status"><HelpCircle size={15} aria-hidden="true" /></span> Tank levels are read from sensors. Manual pump and valve commands switch relays only; schedules do not run them.</p>
                   </section>
                   <section className="surface">
                     <SectionTitle

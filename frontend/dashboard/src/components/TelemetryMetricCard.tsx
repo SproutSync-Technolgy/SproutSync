@@ -1,4 +1,8 @@
-import type {CSSProperties, ReactNode} from "react";
+import {lazy, Suspense, useState, type CSSProperties, type ReactNode} from "react";
+import {Activity, Clock3, LoaderCircle} from "lucide-react";
+import {Modal} from "./ProtoPrimitives";
+
+const TelemetryDetailChart = lazy(() => import("./TelemetryDetailChart"));
 
 export type TelemetryPoint = {value: number | null | undefined; timestamp: string};
 
@@ -15,62 +19,57 @@ type Props = {
   points: TelemetryPoint[];
 };
 
-const WIDTH = 320;
-const TOP = 7;
-const BOTTOM = 66;
-
 function displayNumber(value: number) {
   return new Intl.NumberFormat(undefined, {maximumFractionDigits: 2}).format(value);
 }
 
-export function TelemetryMetricCard({label,value,unit,color,icon,status,statusTone,reference,range,points}: Props) {
-  const metricStyle = {"--metric-color":color,"--metric-tint":`${color}18`} as CSSProperties & {"--metric-color":string;"--metric-tint":string};
-  const samples = points.filter((point) => typeof point.value === "number" && Number.isFinite(point.value));
-  const values = samples.map((point) => Number(point.value));
-  const dataMin = Math.min(range.min,...values);
-  const dataMax = Math.max(range.max,...values);
-  const span = Math.max(dataMax-dataMin, Math.abs(dataMin)*0.04, 1);
-  const min = dataMin-span*0.12;
-  const max = dataMax+span*0.12;
-  const y = (reading: number) => BOTTOM-((reading-min)/(max-min))*(BOTTOM-TOP);
-  const plotted = samples.map((point,index) => ({
-    ...point,
-    x: samples.length < 2 ? WIDTH-3 : 3+(index/(samples.length-1))*(WIDTH-6),
-    y: y(Number(point.value)),
-  }));
-  const line = plotted.map((point) => `${point.x},${point.y}`).join(" ");
-  const area = plotted.length ? `3,${BOTTOM} ${line} ${plotted[plotted.length-1].x},${BOTTOM}` : "";
-  const bandTop = y(range.max);
-  const bandBottom = y(range.min);
-  const unitText = unit ? ` ${unit}` : "";
-  const spokenSamples = plotted.map((point) => `${displayNumber(Number(point.value))}${unitText} at ${new Date(point.timestamp).toLocaleString()}`).join("; ");
-  const currentText = value == null || !Number.isFinite(value) ? "No current sensor value" : `Current ${label}: ${displayNumber(value)}${unitText}`;
+function formatTimestamp(timestamp: number) {
+  return new Intl.DateTimeFormat(undefined, {month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}).format(timestamp);
+}
 
-  return <article className="telemetry-metric-card" style={metricStyle}>
-    <div className="telemetry-card-heading">
-      <span className="telemetry-card-icon" aria-hidden="true">{icon}</span>
-      <span className="telemetry-card-label">{label}</span>
-      <span className={`telemetry-status-chip telemetry-status-${statusTone}`}><span aria-hidden="true" />{status}</span>
-    </div>
-    <div className="telemetry-card-reading">
-      <span className="telemetry-reading-value">{value == null || !Number.isFinite(value) ? "—" : displayNumber(value)}</span>
-      {unit && <span className="telemetry-reading-unit">{unit}</span>}
-    </div>
-    <div className="telemetry-chart-heading">
-      <span>Recent raw readings</span>
-      <span>{samples.length} samples</span>
-    </div>
-    {plotted.length ? <svg className="telemetry-sparkline" viewBox={`0 0 ${WIDTH} 74`} preserveAspectRatio="none" role="img" aria-label={`${currentText}. Reference ${reference}. Recent raw readings: ${spokenSamples}`}>
-      <title>{currentText}; reference {reference}</title>
-      <rect x="0" y={bandTop} width={WIDTH} height={Math.max(0,bandBottom-bandTop)} rx="3" className="telemetry-target-band" />
-      <line x1="0" x2={WIDTH} y1={bandTop} y2={bandTop} className="telemetry-target-edge" />
-      <line x1="0" x2={WIDTH} y1={bandBottom} y2={bandBottom} className="telemetry-target-edge" />
-      {plotted.length > 1 && <polygon points={area} className="telemetry-trend-area" />}
-      {plotted.length > 1 && <polyline points={line} className="telemetry-trend-line" />}
-      {plotted.map((point,index) => <circle key={`${point.timestamp}-${index}`} cx={point.x} cy={point.y} r={index === plotted.length-1 ? 4 : 2.3} className={index === plotted.length-1 ? "telemetry-point-current" : "telemetry-point"}>
-        <title>{displayNumber(Number(point.value))}{unitText} · {new Date(point.timestamp).toLocaleString()}</title>
-      </circle>)}
-    </svg> : <div className="telemetry-chart-empty">Waiting for raw samples</div>}
-    <div className="telemetry-card-footer"><span>Reference</span><strong>{reference}</strong></div>
-  </article>;
+export function TelemetryMetricCard({label,value,unit,color,icon,status,statusTone,reference,range,points}: Props) {
+  const [open, setOpen] = useState(false);
+  const [period, setPeriod] = useState<"24h" | "7d" | "all">("all");
+  const metricStyle = {"--metric-color":color,"--metric-tint":`${color}18`} as CSSProperties & {"--metric-color":string;"--metric-tint":string};
+  const samples = points
+    .filter((point) => typeof point.value === "number" && Number.isFinite(point.value) && Number.isFinite(Date.parse(point.timestamp)))
+    .map((point) => ({...point,time:Date.parse(point.timestamp),value:Number(point.value)}));
+  const periodMs = period === "24h" ? 24 * 60 * 60 * 1000 : period === "7d" ? 7 * 24 * 60 * 60 * 1000 : null;
+  const cutoff = periodMs == null ? null : Date.now() - periodMs;
+  const visibleSamples = cutoff == null ? samples : samples.filter((sample) => sample.time >= cutoff);
+  const unitText = unit ? ` ${unit}` : "";
+
+  return <>
+    <button type="button" className="telemetry-metric-card telemetry-metric-trigger" style={metricStyle} onClick={() => setOpen(true)} title={`View ${label.toLowerCase()} chart and readings`} aria-label={`${label}: ${value == null || !Number.isFinite(value) ? "no current reading" : `${displayNumber(value)} ${unit}`}. ${status}. View chart and raw readings.`}>
+      <span className="telemetry-card-heading">
+        <span className="telemetry-card-icon" aria-hidden="true">{icon}</span>
+        <span className="telemetry-card-label">{label}</span>
+        <span className={`telemetry-status-chip telemetry-status-${statusTone}`} title={status}><span aria-hidden="true" />{statusTone === "good" ? "Live" : statusTone === "stale" ? "Last known" : statusTone === "attention" ? "Check" : "No data"}</span>
+      </span>
+      <span className="telemetry-card-reading">
+        <span className="telemetry-reading-value">{value == null || !Number.isFinite(value) ? "—" : displayNumber(value)}</span>
+        {unit && <span className="telemetry-reading-unit">{unit}</span>}
+      </span>
+      <span className="telemetry-card-compact-chart"><span className="telemetry-card-chart-caption"><span><Activity size={13} aria-hidden="true" /> View trend</span><span>{samples.length} samples</span></span></span>
+      <span className="telemetry-card-footer"><span>Reference</span><strong>{reference}</strong></span>
+    </button>
+    <Modal open={open} onClose={() => setOpen(false)} title={`${label} readings`} className="telemetry-detail-modal">
+      <div className="telemetry-detail-summary">
+        <span className="telemetry-card-icon" style={metricStyle} aria-hidden="true">{icon}</span>
+        <div><span className="telemetry-detail-label">Current reading</span><strong>{value == null || !Number.isFinite(value) ? "—" : `${displayNumber(value)} ${unit}`}</strong></div>
+        <span className={`telemetry-status-chip telemetry-status-${statusTone}`}><span aria-hidden="true" />{status}</span>
+      </div>
+      <section className="telemetry-detail-panel" aria-label={`${label} trend chart`}>
+        <div className="telemetry-detail-panel-heading"><div><strong>Raw sensor trend</strong><span>{visibleSamples.length} readings · {period === "all" ? "all available history" : `last ${period}`}{value == null || !Number.isFinite(value) ? " · no current value" : ""}</span></div><span className="telemetry-reference-chip">{reference}</span></div>
+        <div className="telemetry-range-picker" role="group" aria-label="Chart time range">
+          {([ ["24h", "24 hours"], ["7d", "7 days"], ["all", "All history"] ] as const).map(([key, title]) => <button key={key} type="button" aria-pressed={period === key} onClick={() => setPeriod(key)}>{title}</button>)}
+        </div>
+        {visibleSamples.length ? <Suspense fallback={<div className="telemetry-chart-loading" role="status"><LoaderCircle size={18} className="animate-spin" /> Loading chart…</div>}><TelemetryDetailChart samples={visibleSamples} label={label} unit={unit} color={color} range={range} formatNumber={displayNumber} formatTimestamp={formatTimestamp} /></Suspense> : <p className="telemetry-chart-empty">{samples.length ? "No saved readings in this time range. Choose a wider range to see earlier data." : "No saved readings for this sensor yet."}</p>}
+      </section>
+      <section className="telemetry-detail-history" aria-label={`${label} reading history`}>
+        <div className="telemetry-detail-panel-heading"><div><strong>Reading history</strong><span>Newest readings first</span></div><span className="telemetry-reference-chip"><Clock3 size={13} /> {samples.length}</span></div>
+        {visibleSamples.length ? <div className="telemetry-detail-table-wrap"><table className="telemetry-detail-table"><thead><tr><th scope="col">Recorded</th><th scope="col">Value</th></tr></thead><tbody>{[...visibleSamples].reverse().map((point,index) => <tr key={`${point.timestamp}-${index}`}><td>{new Date(point.timestamp).toLocaleString()}</td><td>{displayNumber(point.value)}{unitText}</td></tr>)}</tbody></table></div> : <p className="telemetry-detail-empty">{samples.length ? "No readings in this time range. Choose a wider range to view history." : "Sensor history will appear here when readings arrive."}</p>}
+      </section>
+    </Modal>
+  </>;
 }

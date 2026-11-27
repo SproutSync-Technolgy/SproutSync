@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useDialog } from './useDialog';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import {
@@ -8,6 +9,7 @@ import {
   CircleDot,
   Lock,
   Leaf,
+  LoaderCircle,
   type LucideIcon,
 } from 'lucide-react';
 import logoUrl from '../assets/logo.png';
@@ -55,6 +57,8 @@ export function Btn({
   className = '',
   type = 'button',
   disabled = false,
+  loading = false,
+  loadingLabel = 'Working…',
   title,
 }: {
   children: React.ReactNode;
@@ -64,18 +68,20 @@ export function Btn({
   size?: 'sm' | 'md' | 'lg' | string;
   className?: string;
   disabled?: boolean;
+  loading?: boolean;
+  loadingLabel?: string;
   title?: string;
 }) {
   const base =
-    'inline-flex items-center justify-center gap-2 font-semibold transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-50 disabled:pointer-events-none';
+    'inline-flex items-center justify-center gap-2 font-semibold transition-all duration-200 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none';
   const sizeStyles =
     size === 'sm'
-      ? 'rounded-lg px-2.5 py-1 text-xs'
+      ? 'min-h-9 rounded-lg px-2.5 py-1 text-xs'
       : size === 'lg'
-        ? 'rounded-xl px-6 py-3 text-base'
-        : 'rounded-xl px-4 py-2.5 text-sm';
+        ? 'min-h-12 rounded-xl px-6 py-3 text-base'
+        : 'min-h-11 rounded-xl px-4 py-2.5 text-sm';
   const styles = {
-    primary: 'bg-primary text-primary-foreground hover:bg-emerald-600 shadow-sm shadow-emerald-600/20',
+    primary: 'bg-primary text-primary-foreground shadow-sm shadow-primary/20 hover:bg-primary/90 hover:shadow-md hover:shadow-primary/20',
     outline: 'border border-border bg-card text-foreground hover:bg-secondary',
     ghost: 'text-muted-foreground hover:bg-secondary hover:text-foreground',
     subtle: 'bg-secondary text-secondary-foreground hover:bg-accent',
@@ -84,11 +90,12 @@ export function Btn({
     <button
       type={type}
       onClick={onClick}
-      disabled={disabled}
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
       title={title}
       className={`${base} ${sizeStyles} ${styles} ${className}`}
     >
-      {children}
+      {loading ? <><LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" /><span>{loadingLabel}</span></> : children}
     </button>
   );
 }
@@ -160,11 +167,12 @@ export function Modal({
   const titleId = React.useId();
   const reduceMotion = useReducedMotion();
 
-  return (
+  if (typeof document === 'undefined') return null;
+  return createPortal((
     <AnimatePresence>
       {open && (
         <motion.div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 backdrop-blur-sm sm:items-center sm:p-4"
+          className="workspace-modal-backdrop fixed inset-0 z-50 flex items-end justify-center backdrop-blur-sm sm:items-center sm:p-4"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -185,17 +193,20 @@ export function Modal({
             aria-modal="true"
             aria-labelledby={titleId}
           >
-            <div className="dialog-heading flex shrink-0 items-start gap-3 border-b border-border px-6 py-4">
-              <h3
-                id={titleId}
-                className="min-w-0 flex-1 break-words py-1 text-lg font-bold leading-snug text-foreground"
-              >
-                {title}
-              </h3>
+            <div className="dialog-heading flex shrink-0 items-start gap-3 border-b border-border px-5 py-4 sm:px-6">
+              <span className="dialog-brand-icon mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-xl" aria-hidden="true">
+                <Leaf className="h-5 w-5" />
+              </span>
+              <div className="min-w-0 flex-1 py-0.5">
+                <span className="dialog-eyebrow">SproutSync</span>
+                <h3 id={titleId} className="mt-0.5 break-words text-lg font-bold leading-snug text-foreground">
+                  {title}
+                </h3>
+              </div>
               <button
                 onClick={onClose}
                 aria-label="Close dialog"
-                className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-secondary"
+                className="dialog-close grid h-11 w-11 shrink-0 place-items-center rounded-xl text-muted-foreground"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -205,7 +216,7 @@ export function Modal({
         </motion.div>
       )}
     </AnimatePresence>
-  );
+  ), document.body);
 }
 
 /* ------------------------------------------------------------------ */
@@ -647,13 +658,22 @@ export function Evidence() {
 
 export function Skeleton() {
   return (
-    <div className="space-y-4">
+    <div className="workspace-skeleton space-y-5" role="status" aria-label="Loading workspace content">
+      <span className="sr-only">Loading workspace content…</span>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="h-32 animate-pulse rounded-2xl bg-secondary" />
+          <div key={i} className="skeleton-card rounded-2xl border border-border bg-card p-5">
+            <div className="flex items-center justify-between"><span className="skeleton-block h-10 w-10 rounded-xl" /><span className="skeleton-block h-5 w-16 rounded-full" /></div>
+            <span className="skeleton-block mt-5 block h-7 w-2/3 rounded-lg" />
+            <span className="skeleton-block mt-2 block h-4 w-1/2 rounded-md" />
+          </div>
         ))}
       </div>
-      <div className="h-56 animate-pulse rounded-2xl bg-secondary" />
+      <div className="skeleton-card rounded-2xl border border-border bg-card p-5">
+        <span className="skeleton-block block h-6 w-1/3 rounded-lg" />
+        <span className="skeleton-block mt-3 block h-4 w-2/3 rounded-md" />
+        <span className="skeleton-block mt-7 block h-40 rounded-xl" />
+      </div>
     </div>
   );
 }

@@ -275,11 +275,8 @@ export function ProtoAuth({
               {notice}
             </p>
           )}
-          <Btn type="submit" disabled={busy} className="w-full">
-            {busy && <LoaderCircle size={17} className="animate-spin" />}
-            {busy
-              ? "Please wait…"
-              : mode === "register"
+          <Btn type="submit" loading={busy} loadingLabel="Please wait…" className="w-full">
+            {mode === "register"
                 ? "Create account"
                 : mode === "reset"
                   ? "Send reset code"
